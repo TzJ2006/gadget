@@ -1,5 +1,7 @@
 """Hugo site deployment helper."""
 
+from __future__ import annotations
+
 import logging
 import platform
 import shutil
@@ -14,7 +16,14 @@ def run_hugo_update(hugo_site: Path) -> bool:
 
     Looks for ``update.sh`` (UNIX / Git Bash) or ``update.ps1`` (Windows).
     Returns True on success, False if no script found.
+
+    ``hugo_site`` may be relative (e.g. ``tools/website`` from config); it is
+    resolved against the gadget repo root so ``-File`` / bash script args stay
+    correct regardless of the process cwd.
     """
+    from common.paths import resolve_repo_path
+
+    hugo_site = resolve_repo_path(hugo_site)
     sh_script = hugo_site / "update.sh"
     ps_script = hugo_site / "update.ps1"
 

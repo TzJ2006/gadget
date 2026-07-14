@@ -95,24 +95,31 @@ def resolve_param(args, project, param_name: str, hardcoded_default):
 
 
 def get_hugo_site(args) -> Path:
-    """Resolve Hugo site path from CLI args or config."""
+    """Resolve Hugo site path from CLI args or config.
+
+    Relative values are rooted at the gadget repo (e.g. ``tools/website``).
+    """
+    from common.paths import resolve_repo_path
+
     cli_val = getattr(args, "hugo_site", None)
     if cli_val:
-        return Path(cli_val)
+        return resolve_repo_path(cli_val)
     cfg = load_scout_config()
     if cfg.get("hugo_site"):
-        return Path(cfg["hugo_site"]).expanduser()
+        return resolve_repo_path(cfg["hugo_site"])
     return DEFAULT_HUGO_SITE
 
 
 def get_reports_dir(args) -> Path:
     """Resolve reports output directory."""
+    from common.paths import resolve_repo_path
+
     cli_val = getattr(args, "reports_dir", None)
     if cli_val:
-        return Path(cli_val)
+        return resolve_repo_path(cli_val)
     cfg = load_scout_config()
     if cfg.get("reports_dir"):
-        return Path(cfg["reports_dir"]).expanduser()
+        return resolve_repo_path(cfg["reports_dir"])
     return REPORTS_DIR
 
 

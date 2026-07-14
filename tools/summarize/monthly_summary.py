@@ -46,7 +46,7 @@ from common.json_utils import (
     try_repair_result,
 )
 
-from .config import _resolve_output_dir, _load_config
+from .config import _resolve_output_dir, _load_config, resolve_hugo_site
 
 _DEFAULT_REPORTS_DIR = REPORTS_DIR / "summarize"
 _DEFAULT_CACHE_DIR = CACHE_DIR / "summarize" / "monthly"
@@ -985,8 +985,7 @@ def cmd_generate(args):
 
     # Hugo 部署
     if getattr(args, "deploy", False):
-        hugo_site = Path(getattr(args, "hugo_site",
-                                 str(Path(__file__).resolve().parent.parent / "website")))
+        hugo_site = resolve_hugo_site(getattr(args, "hugo_site", None))
         if not hugo_site.exists():
             print(f"[error] Hugo site directory not found: {hugo_site}")
             sys.exit(1)
@@ -1008,8 +1007,7 @@ def cmd_deploy(args):
     reports_dir = _resolve_output_dir(getattr(args, "output", None),
                                       "SUMMARIZE_REPORTS_DIR",
                                       "reports_dir", _DEFAULT_REPORTS_DIR)
-    hugo_site = Path(getattr(args, "hugo_site",
-                             str(Path(__file__).resolve().parent.parent / "website")))
+    hugo_site = resolve_hugo_site(getattr(args, "hugo_site", None))
     if not hugo_site.exists():
         print(f"[error] Hugo site directory not found: {hugo_site}")
         sys.exit(1)

@@ -378,6 +378,7 @@ gadgets:
     device_name: ""                     # empty = hostname
     logs_dir: ""                        # empty = default (~/.claude + codex log directory)
     reports_dir: ""                     # empty = outputs/reports
+    hugo_site: "tools/website"          # repo-relative Hugo site root
     rclone_remote: "gdrive:gadget/summarize"
     rclone_path: ""                     # empty = remote default
     default_api: claude_cli             # ollama | claude_cli | anthropic | openai; default: ollama
@@ -390,7 +391,7 @@ gadgets:
     semantic_scholar_api_key: ""        # setting this can raise the rate limit
   research_scout:                       # -> ~/.config/research_scout/config.json
     default_api: claude_cli
-    hugo_site: ""                       # empty = no deploy target
+    hugo_site: "tools/website"          # repo-relative Hugo site root
     default_lookback_days: 7
     default_max_results: 50             # recommended ~50 or fewer, to avoid screening timeouts
     default_top_papers_in_report: 5
@@ -2005,7 +2006,7 @@ Via `config --init` or by directly editing `~/.config/research_scout/config.json
 ```json
 {
   "default_api": "ollama",
-  "hugo_site": "/path/to/website",
+  "hugo_site": "tools/website",
   "default_lookback_days": 7,
   "default_max_results": 50,
   "default_top_papers_in_report": 5,
@@ -2019,7 +2020,7 @@ Overview of configurable parameters (Research Scout):
 | Parameter | Config key | Default |
 |------|-----------|--------|
 | LLM backend | `default_api` | `ollama` |
-| Hugo site path | `hugo_site` | `../website` |
+| Hugo site path | `hugo_site` | `tools/website` |
 | Lookback days | `default_lookback_days` | 7 |
 | Max search results | `default_max_results` | 50 |
 | Papers shown in report | `default_top_papers_in_report` | 5 |

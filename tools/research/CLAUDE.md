@@ -225,7 +225,7 @@ Config at `~/.config/research_scout/config.json`. Resolution: CLI flag > `projec
 | Parameter | Config key | Default |
 |-----------|-----------|---------|
 | LLM backend | `default_api` | `ollama` (local Qwen3.6-35B; also `claude_cli`/`anthropic`/`openai`) |
-| Hugo site path | `hugo_site` | `../website` |
+| Hugo site path | `hugo_site` | `tools/website` |
 | Lookback days | `default_lookback_days` | 7 |
 | Max search results | `default_max_results` | 50 |
 | Top papers in report | `default_top_papers_in_report` | 5 |
