@@ -3,7 +3,7 @@
     "device_name": "my-pc",
     "default_api": "ollama",
     "deploy": true,
-    "hugo_site": "",
+    "hugo_site": "tools/website",
     "workers": 4,
     "model": "qwen3.6-sum",
     "base_url": "http://127.0.0.1:11434/v1",
@@ -27,7 +27,7 @@
   "research_scout": {
     "default_api": "ollama",
     "default_language": "zh",
-    "hugo_site": "",
+    "hugo_site": "tools/website",
     "default_lookback_days": 7,
     "default_max_results": 50,
     "default_top_papers_in_report": 5,

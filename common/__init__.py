@@ -47,7 +47,7 @@ from common.engine import (
     DEFAULT_TRANSLATION_MODEL,
     SAMPLING_DEFAULTS,
 )
-from common.paths import GADGET_ROOT, OUTPUTS_DIR, REPORTS_DIR, LOGS_DIR, CACHE_DIR, DATA_DIR
+from common.paths import GADGET_ROOT, OUTPUTS_DIR, REPORTS_DIR, LOGS_DIR, CACHE_DIR, DATA_DIR, resolve_repo_path
 from common.site_staging import (
     resolve_site_staging_root,
     resolve_site_content_dir,
@@ -96,4 +96,5 @@ __all__ = [
     "resolve_site_staging_root", "resolve_site_content_dir", "resolve_site_static_dir",
     "write_site_content", "copy_site_static",
     "GADGET_ROOT", "OUTPUTS_DIR", "REPORTS_DIR", "LOGS_DIR", "CACHE_DIR", "DATA_DIR",
+    "resolve_repo_path",
 ]

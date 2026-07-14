@@ -38,18 +38,23 @@ def _save_summarize_config(cfg: dict, *, replace: bool = True) -> Path:
 
 def _resolve_output_dir(cli_value: Optional[str], env_key: str,
                         config_key: str, default: Path) -> Path:
-    """按优先级解析输出目录: CLI > 环境变量 > config.json > 默认路径。"""
+    """按优先级解析输出目录: CLI > 环境变量 > config.json > 默认路径。
+
+    Relative config/CLI paths are rooted at the gadget repo (not cwd).
+    """
+    from common.paths import resolve_repo_path
+
     if cli_value:
-        return Path(cli_value).expanduser()
+        return resolve_repo_path(cli_value)
 
     env_val = os.environ.get(env_key)
     if env_val:
-        return Path(env_val).expanduser()
+        return resolve_repo_path(env_val)
 
     cfg = _load_config()
     cfg_val = cfg.get(config_key)
     if cfg_val:
-        return Path(cfg_val).expanduser()
+        return resolve_repo_path(cfg_val)
 
     return default
 
@@ -58,6 +63,15 @@ def _get_device_name() -> str:
     """从 config 读取 device_name，fallback 到 platform.node()。"""
     cfg = _load_config()
     return cfg.get("device_name") or platform.node() or "unknown"
+
+
+def resolve_hugo_site(value: Optional[str | Path] = None) -> Path:
+    """Resolve Hugo site path; relative values are rooted at the gadget repo."""
+    from common.paths import GADGET_ROOT, resolve_repo_path
+
+    if value:
+        return resolve_repo_path(value)
+    return (GADGET_ROOT / "tools" / "website").resolve()
 
 
 # ─── CLI 默认值 & 环境变量桥接 ─────────────────────────────────────
@@ -77,9 +91,21 @@ _CLI_DEFAULTS_MAP = {
 
 def cli_defaults() -> dict:
     """可用作 argparse 默认值的 config 值，按 dest 命名。调用方在 parse_args 前
-    执行 `parser.set_defaults(**cli_defaults())` → CLI 显式参数 > config > 硬编码默认。"""
+    执行 `parser.set_defaults(**cli_defaults())` → CLI 显式参数 > config > 硬编码默认。
+
+    Empty strings / None are skipped so a blank ``hugo_site`` (or similar) does
+    not override argparse's hardcoded default (``Path("")`` → cwd).
+    """
     cfg = _load_config()
-    return {dest: cfg[key] for key, dest in _CLI_DEFAULTS_MAP.items() if key in cfg}
+    out = {}
+    for key, dest in _CLI_DEFAULTS_MAP.items():
+        if key not in cfg:
+            continue
+        val = cfg[key]
+        if val is None or val == "":
+            continue
+        out[dest] = val
+    return out
 
 
 # config key -> common/ 读取的环境变量（llm 的 ollama 路径 & engine 翻译）。

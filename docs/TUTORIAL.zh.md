@@ -378,6 +378,7 @@ gadgets:
     device_name: ""                     # 空 = hostname
     logs_dir: ""                        # 空 = 默认（~/.claude + codex log 目录）
     reports_dir: ""                     # 空 = outputs/reports
+    hugo_site: "tools/website"          # 相对仓库根的 Hugo 站点
     rclone_remote: "gdrive:gadget/summarize"
     rclone_path: ""                     # 空 = 远端默认
     default_api: claude_cli             # ollama | claude_cli | anthropic | openai; 默认: ollama
@@ -390,7 +391,7 @@ gadgets:
     semantic_scholar_api_key: ""        # 设置可提高速率上限
   research_scout:                       # -> ~/.config/research_scout/config.json
     default_api: claude_cli
-    hugo_site: ""                       # 空 = 无部署目标
+    hugo_site: "tools/website"          # 相对仓库根的 Hugo 站点
     default_lookback_days: 7
     default_max_results: 50             # 建议 ~50 以内，避免筛选超时
     default_top_papers_in_report: 5
@@ -2005,7 +2006,7 @@ python tools/research/research_scout.py deploy --force
 ```json
 {
   "default_api": "ollama",
-  "hugo_site": "/path/to/website",
+  "hugo_site": "tools/website",
   "default_lookback_days": 7,
   "default_max_results": 50,
   "default_top_papers_in_report": 5,
@@ -2019,7 +2020,7 @@ python tools/research/research_scout.py deploy --force
 | 参数 | Config key | 默认值 |
 |------|-----------|--------|
 | LLM 后端 | `default_api` | `ollama` |
-| Hugo 站点路径 | `hugo_site` | `../website` |
+| Hugo 站点路径 | `hugo_site` | `tools/website` |
 | 回溯天数 | `default_lookback_days` | 7 |
 | 最大搜索结果数 | `default_max_results` | 50 |
 | 报告中展示的论文数 | `default_top_papers_in_report` | 5 |

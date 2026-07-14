@@ -102,6 +102,42 @@ def test_resolve_output_dir_default(tmp_path, monkeypatch):
     assert result == default
 
 
+def test_resolve_output_dir_relative_config(tmp_path, monkeypatch):
+    """Relative logs_dir in config resolves against gadget repo root."""
+    import common.paths as paths
+
+    monkeypatch.setattr(paths, "GADGET_ROOT", tmp_path)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    monkeypatch.chdir(nested)
+
+    _write_summarize(tmp_path, monkeypatch, {"logs_dir": "outputs/logs/summarize"})
+    expected = (tmp_path / "outputs" / "logs" / "summarize").resolve()
+    result = _resolve_output_dir(
+        cli_value=None,
+        env_key="SUMMARIZE_NO_SUCH_ENV",
+        config_key="logs_dir",
+        default=tmp_path / "default",
+    )
+    assert result == expected
+
+
+def test_resolve_hugo_site_relative(tmp_path, monkeypatch):
+    import common.paths as paths
+    from summarize.config import resolve_hugo_site
+
+    monkeypatch.setattr(paths, "GADGET_ROOT", tmp_path)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    monkeypatch.chdir(nested)
+    (tmp_path / "tools" / "website").mkdir(parents=True)
+
+    assert resolve_hugo_site("tools/website") == (
+        tmp_path / "tools" / "website"
+    ).resolve()
+    assert resolve_hugo_site(None) == (tmp_path / "tools" / "website").resolve()
+
+
 # ── _get_device_name ─────────────────────────────────────────────────
 
 
@@ -136,6 +172,16 @@ def test_cli_defaults_empty_when_no_file(tmp_path, monkeypatch):
     monkeypatch.setenv("GADGET_CONFIG", str(tmp_path / "nope.json"))
     gadget_config.clear_cache()
     assert cli_defaults() == {}
+
+
+def test_cli_defaults_skips_empty_string(tmp_path, monkeypatch):
+    """Blank config values must not override argparse defaults (e.g. hugo_site)."""
+    _write_summarize(tmp_path, monkeypatch, {
+        "hugo_site": "",
+        "default_api": "ollama",
+        "deploy": False,
+    })
+    assert cli_defaults() == {"api": "ollama", "deploy": False}
 
 
 def test_cli_defaults_feeds_argparse(tmp_path, monkeypatch):
