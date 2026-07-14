@@ -94,10 +94,16 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     # Deploy to Hugo if requested
     if getattr(args, "deploy", False) and profiles:
         from research.output import deploy_to_hugo
+        from common.paths import GADGET_ROOT, resolve_repo_path
+
         raw_hugo = getattr(args, "hugo_site", None) or config.get("hugo_site", "")
         # Distinguish "unset" from a valid path with an empty .name (e.g. "."):
         # only fall back to the default site when no value was provided at all.
-        hugo_site = Path(raw_hugo) if raw_hugo else Path(__file__).parent.parent / "website"
+        hugo_site = (
+            resolve_repo_path(raw_hugo)
+            if raw_hugo
+            else (GADGET_ROOT / "tools" / "website")
+        )
         if hugo_site.exists():
             for p in profiles:
                 deploy_to_hugo(p, hugo_site)

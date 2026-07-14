@@ -34,6 +34,7 @@ from .config import (
     _get_device_name,
     _CONFIG_PATH,
     _save_summarize_config,
+    resolve_hugo_site,
 )
 from .remote import _rclone_upload, _rclone_upload_dir, _rclone_download_logs, _rclone_download_reports, _find_rclone
 from .parsers import (discover_all_dates, parse_claude_code, parse_codex,
@@ -468,7 +469,7 @@ def _cmd_merge_sync_all(args):
     # 全部处理完成后统一部署
     if args.deploy and ok > 0:
         print(f"\n[info] 开始批量部署 {ok} 天的报告...")
-        hugo_site = Path(args.hugo_site)
+        hugo_site = resolve_hugo_site(args.hugo_site)
         if not hugo_site.exists():
             print(f"[error] Hugo 站点目录不存在: {hugo_site}")
             return
@@ -724,7 +725,7 @@ def cmd_merge(args):
 
     # Hugo 部署
     if args.deploy:
-        hugo_site = Path(args.hugo_site)
+        hugo_site = resolve_hugo_site(args.hugo_site)
         if not hugo_site.exists():
             print(f"[error] Hugo 站点目录不存在: {hugo_site}")
             sys.exit(1)
@@ -815,7 +816,7 @@ def cmd_deploy(args):
     reports_dir = _resolve_output_dir(getattr(args, 'reports_dir', None),
                                       "SUMMARIZE_REPORTS_DIR",
                                       "reports_dir", _DEFAULT_REPORTS_DIR)
-    hugo_site = Path(args.hugo_site)
+    hugo_site = resolve_hugo_site(args.hugo_site)
 
     if not hugo_site.exists():
         print(f"[error] Hugo 站点目录不存在: {hugo_site}", file=sys.stderr)

@@ -118,20 +118,21 @@ def show_config(config: dict[str, Any]) -> None:
 
 def resolve_output_dir(config: dict[str, Any]) -> Path:
     """Resolve the output directory."""
+    from common.paths import DATA_DIR, resolve_repo_path
+
     custom = config.get("output_dir", "")
     if custom:
-        return Path(custom)
-    from common.paths import DATA_DIR
+        return resolve_repo_path(custom)
     return DATA_DIR / "research"
 
 
 def resolve_profiler_paths(config: dict[str, Any]) -> dict[str, Path]:
     """Resolve profiler output paths split across the unified outputs/ tree."""
-    from common.paths import REPORTS_DIR, CACHE_DIR, DATA_DIR
+    from common.paths import REPORTS_DIR, CACHE_DIR, DATA_DIR, resolve_repo_path
 
     custom = config.get("output_dir", "")
     if custom:
-        root = Path(custom)
+        root = resolve_repo_path(custom)
         return {
             "profiles": root / "profiles",
             "reports": root / "reports",

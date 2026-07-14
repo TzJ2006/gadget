@@ -28,10 +28,12 @@ from common.website_backup import (
 def resolve_site_staging_root(hugo_site: Path) -> Path:
     """The site root generated files are written into: ``hugo_site`` itself.
 
-    Kept under its historical name — callers treat it as "where does generated
-    site content live for this Hugo site".
+    Relative paths are resolved against the gadget repo root (see
+    :func:`common.paths.resolve_repo_path`).
     """
-    return Path(hugo_site)
+    from common.paths import resolve_repo_path
+
+    return resolve_repo_path(hugo_site)
 
 
 def resolve_site_content_dir(hugo_site: Path, *parts: str) -> Path:

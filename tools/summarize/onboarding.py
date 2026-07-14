@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Optional, TextIO
 
-from .config import _CONFIG_PATH, _load_config, _resolve_config_path
+from .config import _CONFIG_PATH, _load_config, _resolve_config_path, resolve_hugo_site
 from common.config import clear_cache as _clear_gadget_config_cache, resolve_config_path
 from .remote import _find_rclone
 from .usage import _ccusage_version
@@ -41,7 +41,7 @@ class RequirementResult:
 
 def default_hugo_site() -> Path:
     """Return the default Hugo site used by summarize deploy commands."""
-    return Path(__file__).resolve().parent.parent / "website"
+    return resolve_hugo_site()
 
 
 def _ok(key: str, label: str, detail: str, *, required: bool = True) -> RequirementResult:
@@ -264,7 +264,7 @@ def _check_ccusage() -> RequirementResult:
 
 
 def _check_hugo_deploy(hugo_site: Optional[str | Path]) -> list[RequirementResult]:
-    site = Path(hugo_site).expanduser() if hugo_site else default_hugo_site()
+    site = resolve_hugo_site(hugo_site) if hugo_site else default_hugo_site()
     results: list[RequirementResult] = []
 
     if site.is_dir():

@@ -553,7 +553,7 @@ def cmd_profile(args):
 
     if getattr(args, "deploy", False) and profiles:
         from research.output import deploy_to_hugo
-        hugo_site = Path(args.hugo_site) if args.hugo_site else get_hugo_site(args)
+        hugo_site = get_hugo_site(args)
         if hugo_site.exists():
             for p in profiles:
                 deploy_to_hugo(p, hugo_site)

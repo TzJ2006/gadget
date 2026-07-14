@@ -670,7 +670,7 @@ python tools/research/research_scout.py deploy --force
 ```json
 {
   "default_api": "claude_cli",
-  "hugo_site": "/path/to/website",
+  "hugo_site": "tools/website",
   "default_lookback_days": 7,
   "default_max_results": 50,
   "default_top_papers_in_report": 5,
