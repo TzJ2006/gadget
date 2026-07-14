@@ -39,20 +39,12 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 GADGET_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_DIR = Path("~/.config/gadget").expanduser()
-CONFIG_FILE = CONFIG_DIR / "sync.json"
 
-def _summarize_config_path() -> Path:
-    """镜像 tools/summarize/config.py 的解析顺序: SUMMARIZE_CONFIG 环境变量 >
-    仓库内 tools/summarize/config.json > ~/.config/summarize/config.json。"""
-    env = os.environ.get("SUMMARIZE_CONFIG")
-    if env:
-        return Path(env).expanduser()
-    repo = GADGET_ROOT / "tools" / "summarize" / "config.json"
-    return repo if repo.exists() else Path("~/.config/summarize/config.json").expanduser()
+# Unified repo-root config (section: sync). Override with GADGET_CONFIG.
+from common import config as gadget_config
 
+CONFIG_FILE = gadget_config.DEFAULT_CONFIG_PATH
 
-SUMMARIZE_CONFIG = _summarize_config_path()
 
 # DAG site — generated + deployed (not a GDrive-synced category).
 # ai-companion is now a separate repo checked out as a sibling (../ai-companion);
@@ -128,12 +120,9 @@ SYNC_FILES: dict[str, list[tuple[str, str]]] = {
     ],
 }
 
-# Config files for bootstrap — (remote_rel under base, local absolute path)
+# Config files for bootstrap — single root config.json
 BOOTSTRAP_CONFIGS: list[tuple[str, Path]] = [
-    ("config/gadget/sync.json", CONFIG_DIR / "sync.json"),
-    ("config/summarize/config.json", Path("~/.config/summarize/config.json").expanduser()),
-    ("config/research_scout/config.json", Path("~/.config/research_scout/config.json").expanduser()),
-    ("config/research/config.json", Path("~/.config/research/config.json").expanduser()),
+    ("config/config.json", gadget_config.DEFAULT_CONFIG_PATH),
 ]
 
 TOKENS_DIR = GADGET_ROOT / "tokens"
@@ -146,35 +135,23 @@ _config_cache: dict | None = None
 
 
 def load_config() -> dict:
+    """Load the ``sync`` section from the unified root config.json."""
     global _config_cache
     if _config_cache is not None:
         return _config_cache
 
-    cfg: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            pass
+    cfg = gadget_config.load_section("sync")
+    _config_cache = dict(cfg)
+    return _config_cache
 
-    # Fallback: derive from summarize config
-    if "rclone_remote" not in cfg and SUMMARIZE_CONFIG.exists():
-        try:
-            scfg = json.loads(SUMMARIZE_CONFIG.read_text(encoding="utf-8"))
-            sr = scfg.get("rclone_remote", "")
-            # e.g. "gdrive:gadget/summarize" → "gdrive:gadget"
-            if sr:
-                parts = sr.split("/")
-                if len(parts) > 1:
-                    cfg["rclone_remote"] = "/".join(parts[:-1])
-                else:
-                    # Can't derive parent; use as-is with warning
-                    print(f"[warn] 无法从 summarize config 推导基础路径 ({sr})")
-        except (OSError, json.JSONDecodeError):
-            pass
 
-    _config_cache = cfg
-    return cfg
+def save_sync_config(cfg: dict) -> Path:
+    """Write the ``sync`` section and invalidate local cache."""
+    global _config_cache
+    path = gadget_config.update_section("sync", cfg, replace=True)
+    _config_cache = None
+    gadget_config.clear_cache()
+    return path
 
 
 def get_remote() -> str:
@@ -421,17 +398,13 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
     print(f"=== Bootstrap: 一键初始化新设备 ===\n")
     print(f"远端: {remote}\n")
 
-    # Step 1: Write minimal sync.json so get_remote() works
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    # Step 1: Write minimal sync section so get_remote() works
     minimal_cfg = {"rclone_remote": remote}
     if not args.dry_run:
-        CONFIG_FILE.write_text(
-            json.dumps(minimal_cfg, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-        print(f"[ok] 已写入 {CONFIG_FILE}")
+        path = save_sync_config(minimal_cfg)
+        print(f"[ok] 已写入 {path} (section: sync)")
     else:
-        print(f"[dry-run] 将写入 {CONFIG_FILE}")
+        print(f"[dry-run] 将写入 {CONFIG_FILE} (section: sync)")
     _config_cache = None  # invalidate cache
 
     # Step 2: Verify remote connectivity
@@ -451,13 +424,10 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
         print(f"[error] 连接远端超时")
         sys.exit(1)
 
-    # Step 3: Pull config files
+    # Step 3: Pull unified config.json (may overwrite the minimal sync section)
     print("--- 拉取配置文件 ---\n")
     cfg_ok, cfg_fail = 0, 0
     for remote_rel, local_path in BOOTSTRAP_CONFIGS:
-        # Skip sync.json — we already wrote it
-        if local_path == CONFIG_FILE:
-            continue
         remote_path = f"{remote}/{remote_rel}"
         local_path.parent.mkdir(parents=True, exist_ok=True)
         print(f"  [config] {remote_path} → {local_path}")
@@ -467,6 +437,14 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
         else:
             cfg_fail += 1
     print(f"\n配置: {cfg_ok} 成功, {cfg_fail} 失败")
+
+    # Ensure sync.rclone_remote survives a missing/partial remote config
+    if not args.dry_run:
+        gadget_config.clear_cache()
+        _config_cache = None
+        sync_cfg = load_config()
+        if not sync_cfg.get("rclone_remote"):
+            save_sync_config({**sync_cfg, "rclone_remote": remote})
 
     # Step 4: Pull tokens (opt-in)
     if args.include_tokens:
@@ -496,16 +474,17 @@ def cmd_config(args: argparse.Namespace) -> None:
         if not cfg:
             print("未找到配置。运行 `python scripts/sync.py config --init` 初始化。")
             return
-        print(f"配置文件: {CONFIG_FILE}")
+        print(f"配置文件: {gadget_config.resolve_config_path()}  (section: sync)")
         for k, v in cfg.items():
             print(f"  {k}: {v}")
         return
 
     # Interactive init
     print("=== 初始化 gadget sync 配置 ===\n")
+    print(f"写入: {gadget_config.resolve_config_path()}  (section: sync)\n")
     cfg: dict = {}
 
-    remote = input(f"rclone 远端基础路径 (默认 gdrive:gadget): ").strip()
+    remote = input("rclone 远端基础路径 (默认 gdrive:gadget): ").strip()
     cfg["rclone_remote"] = remote or "gdrive:gadget"
 
     if not shutil.which("rclone"):
@@ -513,9 +492,8 @@ def cmd_config(args: argparse.Namespace) -> None:
         if rclone_path:
             cfg["rclone_path"] = rclone_path
 
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"\n[ok] 已保存配置到 {CONFIG_FILE}")
+    path = save_sync_config(cfg)
+    print(f"\n[ok] 已保存配置到 {path} (section: sync)")
     print(json.dumps(cfg, indent=2, ensure_ascii=False))
 
 

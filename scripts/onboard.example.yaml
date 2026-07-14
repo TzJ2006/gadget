@@ -64,23 +64,23 @@ install:
   pip_extras: [all]                     # (optional) subset of: summarize research benchmark website translator all; default: [all]
   global_npm: []                        # (optional) RISKY (prompts): extra `npm i -g` packages; default: none
 
-gadgets:                                # per-tool config JSON; omit a tool to skip it
+gadgets:                                # → repo-root config.json sections; omit a tool to skip it
   enabled: true                         # (optional) default: true
-  summarize:                            # (optional) -> ~/.config/summarize/config.json
+  summarize:                            # (optional) -> config.json "summarize"
     device_name: ""                     # (optional) blank = hostname
     logs_dir: ""                        # (optional) blank = default (~/.claude + codex log dirs)
     reports_dir: ""                     # (optional) blank = outputs/reports
     rclone_remote: "gdrive:gadget/summarize"  # (optional) default shown
     rclone_path: ""                     # (optional) blank = remote default
     default_api: claude_cli             # (optional) ollama | claude_cli | anthropic | openai; default: ollama
-  research:                             # (optional) -> ~/.config/research/config.json (reuses research.config.save_config)
+  research:                             # (optional) -> config.json "research"
     model: sonnet                       # (optional) default: sonnet
     default_mode: fast                  # (optional) default: fast
     default_depth: 1                    # (optional) default: 1
     max_students: 10                    # (optional) default: 10
     output_dir: ""                      # (optional) blank = outputs default
     semantic_scholar_api_key: ""        # (optional) raises rate limits if set
-  research_scout:                       # (optional) -> ~/.config/research_scout/config.json
+  research_scout:                       # (optional) -> config.json "research_scout"
     default_api: claude_cli             # (optional) default: ollama
     hugo_site: ""                       # (optional) blank = no deploy target
     default_lookback_days: 7            # (optional) default: 7

@@ -19,6 +19,27 @@ _RCLONE_FLAGS = [
     "--drive-chunk-size", "8M",
 ]
 
+_RCLONE_NOT_WORKING = (
+    "[warn] rclone is not currently working — "
+    "check `rclone config` / rclone_remote, then retry."
+)
+
+
+def _warn_rclone_failed(action: str, detail: str = "") -> None:
+    """Print a clear failure warning for any rclone error."""
+    msg = detail.strip() if detail and detail.strip() else "(no error details from rclone)"
+    print(f"[warn] rclone {action} failed: {msg}")
+    print(_RCLONE_NOT_WORKING)
+
+
+def _is_remote_dir_missing(stderr: str) -> bool:
+    """True only when the remote path/dir is absent (non-fatal on first sync).
+
+    Must not match config-file / remote-section errors that also contain
+    the substring "not found".
+    """
+    return "directory not found" in stderr.lower()
+
 
 def _find_rclone() -> Optional[str]:
     """查找 rclone 可执行文件：config rclone_path > PATH。"""
@@ -44,10 +65,15 @@ def _rclone_upload(*local_paths: Path, subdirectory: str = "") -> None:
 
     rclone_bin = _find_rclone()
     if not rclone_bin:
-        print("[warn] rclone 未找到，跳过上传（可在 config 中设置 rclone_path）")
+        _warn_rclone_failed(
+            "upload",
+            "rclone binary not found (set rclone_path in config or install rclone)",
+        )
         return
 
     dest = f"{remote}/{subdirectory}" if subdirectory else remote
+    uploaded = 0
+    failed = False
 
     for local_path in local_paths:
         if not local_path.exists():
@@ -59,15 +85,24 @@ def _rclone_upload(*local_paths: Path, subdirectory: str = "") -> None:
                 capture_output=True, text=True, timeout=300,
             )
             if result.returncode != 0:
-                print(f"[warn] rclone 上传失败 ({local_path.name}): {result.stderr.strip()}")
+                _warn_rclone_failed(
+                    f"upload ({local_path.name})",
+                    result.stderr or result.stdout,
+                )
+                failed = True
+            else:
+                uploaded += 1
         except subprocess.TimeoutExpired:
-            print(f"[warn] rclone 上传超时 ({local_path.name})，跳过")
+            _warn_rclone_failed(f"upload ({local_path.name})", "timed out")
             return
         except OSError as e:
-            print(f"[warn] rclone 执行失败: {e}")
+            _warn_rclone_failed("upload", str(e))
             return
 
-    print(f"[ok] rclone 上传完成 ({len(local_paths)} 个文件)")
+    if failed:
+        return
+    if uploaded:
+        print(f"[ok] rclone 上传完成 ({uploaded} 个文件)")
 
 
 def _rclone_upload_dir(local_dir: Path, subdirectory: str = "") -> None:
@@ -83,7 +118,10 @@ def _rclone_upload_dir(local_dir: Path, subdirectory: str = "") -> None:
 
     rclone_bin = _find_rclone()
     if not rclone_bin:
-        print("[warn] rclone 未找到，跳过上传（可在 config 中设置 rclone_path）")
+        _warn_rclone_failed(
+            "batch upload",
+            "rclone binary not found (set rclone_path in config or install rclone)",
+        )
         return
 
     dest = f"{remote}/{subdirectory}" if subdirectory else remote
@@ -94,13 +132,13 @@ def _rclone_upload_dir(local_dir: Path, subdirectory: str = "") -> None:
             capture_output=True, text=True, timeout=1800,
         )
         if result.returncode != 0:
-            print(f"[warn] rclone 批量上传失败: {result.stderr.strip()}")
+            _warn_rclone_failed("batch upload", result.stderr or result.stdout)
         else:
             print(f"[ok] rclone 批量上传完成 → {dest}/")
     except subprocess.TimeoutExpired:
-        print("[warn] rclone 批量上传超时（重跑即续传未完成的文件）")
+        _warn_rclone_failed("batch upload", "timed out (re-run resumes unfinished files)")
     except OSError as e:
-        print(f"[warn] rclone 执行失败: {e}")
+        _warn_rclone_failed("batch upload", str(e))
 
 
 def _rclone_download_reports(local_reports_dir: Path) -> list[Path]:
@@ -115,7 +153,10 @@ def _rclone_download_reports(local_reports_dir: Path) -> list[Path]:
 
     rclone_bin = _find_rclone()
     if not rclone_bin:
-        print("[warn] rclone 未找到，跳过报告同步")
+        _warn_rclone_failed(
+            "report download",
+            "rclone binary not found (set rclone_path in config or install rclone)",
+        )
         return []
 
     src = f"{remote}/reports/"
@@ -127,17 +168,17 @@ def _rclone_download_reports(local_reports_dir: Path) -> list[Path]:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
-            stderr = result.stderr.strip()
-            if "directory not found" in stderr.lower() or "not found" in stderr.lower():
+            stderr = (result.stderr or result.stdout).strip()
+            if _is_remote_dir_missing(stderr):
                 print("[info] 远端 reports/ 目录尚未创建，跳过下载")
                 return []
-            print(f"[warn] rclone 报告下载失败: {stderr}")
+            _warn_rclone_failed("report download", stderr)
             return []
     except subprocess.TimeoutExpired:
-        print("[warn] rclone 报告下载超时，跳过")
+        _warn_rclone_failed("report download", "timed out")
         return []
     except OSError as e:
-        print(f"[warn] rclone 执行失败: {e}")
+        _warn_rclone_failed("report download", str(e))
         return []
 
     matched = sorted(local_reports_dir.glob("*.json"))
@@ -163,7 +204,10 @@ def _rclone_download_logs(target_date: Optional[date], local_logs_dir: Path) -> 
 
     rclone_bin = _find_rclone()
     if not rclone_bin:
-        print("[warn] rclone 未找到，跳过同步（可在 config 中设置 rclone_path）")
+        _warn_rclone_failed(
+            "log download",
+            "rclone binary not found (set rclone_path in config or install rclone)",
+        )
         return []
 
     src = f"{remote}/logs/"
@@ -185,18 +229,18 @@ def _rclone_download_logs(target_date: Optional[date], local_logs_dir: Path) -> 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
-            stderr = result.stderr.strip()
-            # 远端目录不存在时非致命
-            if "directory not found" in stderr.lower() or "not found" in stderr.lower():
-                print(f"[info] 远端 logs/ 目录尚未创建，跳过下载")
+            stderr = (result.stderr or result.stdout).strip()
+            # 远端目录不存在时非致命（首次同步）
+            if _is_remote_dir_missing(stderr):
+                print("[info] 远端 logs/ 目录尚未创建，跳过下载")
                 return []
-            print(f"[warn] rclone 下载失败: {stderr}")
+            _warn_rclone_failed("log download", stderr)
             return []
     except subprocess.TimeoutExpired:
-        print("[warn] rclone 下载超时，跳过")
+        _warn_rclone_failed("log download", "timed out")
         return []
     except OSError as e:
-        print(f"[warn] rclone 执行失败: {e}")
+        _warn_rclone_failed("log download", str(e))
         return []
 
     # 收集本地匹配的文件
@@ -208,6 +252,6 @@ def _rclone_download_logs(target_date: Optional[date], local_logs_dir: Path) -> 
     if matched:
         print(f"[ok] rclone 同步完成，找到 {len(matched)} 个 log 文件")
     else:
-        print(f"[info] rclone 同步完成，但未找到匹配的 log 文件")
+        print("[info] rclone 同步完成，但未找到匹配的 log 文件")
 
     return matched

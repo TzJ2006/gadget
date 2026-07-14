@@ -1,15 +1,12 @@
 """Persisted translator model list — built-in defaults + user-managed additions.
 
-Stored at ``~/.config/gadget/translator_models.json`` as ``{"models": [...]}``.
+Stored in the ``translator.models`` key of the repo-root ``config.json``.
 The UI (app.py) reads this for the model dropdown and edits it via add/remove.
 """
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-from common.io import atomic_write
+from common import config as gadget_config
 
 # First entry is the GUI default. 7B / FP8 download + load on first selection.
 DEFAULT_MODELS = [
@@ -19,15 +16,12 @@ DEFAULT_MODELS = [
     "tencent/Hy-MT2-7B-FP8",
 ]
 
-CONFIG_PATH = Path.home() / ".config" / "gadget" / "translator_models.json"
+# Back-compat alias: path of the unified root config (not a separate models file).
+CONFIG_PATH = gadget_config.DEFAULT_CONFIG_PATH
 
 
 def _read() -> list[str] | None:
-    try:
-        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    models = data.get("models") if isinstance(data, dict) else None
+    models = gadget_config.load_section("translator").get("models")
     return models if isinstance(models, list) and models else None
 
 
@@ -37,8 +31,7 @@ def load_models() -> list[str]:
 
 
 def _save(models: list[str]) -> None:
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(CONFIG_PATH, json.dumps({"models": models}, ensure_ascii=False, indent=2))
+    gadget_config.update_section("translator", {"models": models}, replace=True)
 
 
 def add_model(model_id: str) -> list[str]:
@@ -59,9 +52,13 @@ def remove_model(model_id: str) -> list[str]:
 
 
 if __name__ == "__main__":  # self-check: add/remove/dedupe/persist round-trip
+    import os
     import tempfile
+    from pathlib import Path
 
-    CONFIG_PATH = Path(tempfile.mkdtemp()) / "translator_models.json"
+    tmp = Path(tempfile.mkdtemp()) / "config.json"
+    os.environ["GADGET_CONFIG"] = str(tmp)
+    gadget_config.clear_cache()
     assert load_models() == DEFAULT_MODELS, "fresh load must return defaults"
     assert add_model("foo/bar")[-1] == "foo/bar", "add appends"
     assert add_model("foo/bar").count("foo/bar") == 1, "add dedupes"
@@ -69,7 +66,7 @@ if __name__ == "__main__":  # self-check: add/remove/dedupe/persist round-trip
     assert "foo/bar" not in remove_model("foo/bar"), "remove drops it"
     assert remove_model("nope") == load_models(), "removing absent id is a no-op"
     # emptying everything falls back to defaults rather than an unusable empty list
-    for m in load_models():
+    for m in list(load_models()):
         remove_model(m)
     assert load_models() == DEFAULT_MODELS, "empty falls back to defaults"
     print("models.py self-check OK")

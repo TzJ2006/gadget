@@ -751,13 +751,16 @@ def cmd_config(args):
 
 def _config_show():
     """Display current config."""
-    print(f"配置文件路径: {_SCOUT_CONFIG_PATH}")
-    if _SCOUT_CONFIG_PATH.exists():
-        cfg = load_scout_config()
-        print("配置内容:")
+    from common.config import resolve_config_path
+
+    path = resolve_config_path()
+    print(f"配置文件路径: {path}  (section: research_scout)")
+    cfg = load_scout_config()
+    if cfg:
+        print("配置内容 (research_scout ∪ research):")
         print(json.dumps(cfg, ensure_ascii=False, indent=2))
     else:
-        print("(配置文件不存在，使用默认值)")
+        print("(配置段不存在，使用默认值)")
 
     print()
     print("当前生效路径:")
@@ -770,7 +773,6 @@ def _config_show():
 
     print()
     print("当前生效参数:")
-    cfg = load_scout_config()
     print(f"  default_api:              {cfg.get('default_api', 'ollama')}")
     print(f"  default_language:         {cfg.get('default_language', DEFAULT_LANGUAGE)}")
     print(f"  default_lookback_days:    {cfg.get('default_lookback_days', DEFAULT_LOOKBACK_DAYS)}")
@@ -782,10 +784,14 @@ def _config_show():
 
 
 def _config_init():
-    """Interactive config creation."""
-    print(f"配置文件路径: {_SCOUT_CONFIG_PATH}")
-    if _SCOUT_CONFIG_PATH.exists():
-        overwrite = input("配置文件已存在，是否覆盖？[y/N] ").strip().lower()
+    """Interactive config creation → research_scout section of root config.json."""
+    from common.config import load_section, resolve_config_path
+    from scout.config import save_scout_config
+
+    path = resolve_config_path()
+    print(f"配置文件路径: {path}  (section: research_scout)")
+    if load_section("research_scout"):
+        overwrite = input("research_scout 配置已存在，是否覆盖该段？[y/N] ").strip().lower()
         if overwrite != "y":
             print("取消")
             return
@@ -825,9 +831,8 @@ def _config_init():
     if s2_key:
         cfg["semantic_scholar_api_key"] = s2_key
 
-    _SCOUT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(_SCOUT_CONFIG_PATH, json.dumps(cfg, ensure_ascii=False, indent=2))
-    print(f"\n[ok] 配置已保存: {_SCOUT_CONFIG_PATH}")
+    saved = save_scout_config(cfg, replace=True)
+    print(f"\n[ok] 配置已保存: {saved}  (section: research_scout)")
     print(json.dumps(cfg, ensure_ascii=False, indent=2))
 
 

@@ -1,14 +1,15 @@
-"""Configuration management for the research tool."""
+"""Configuration management for the research tool.
+
+Reads/writes the ``research`` section of the repo-root ``config.json``
+(via ``common.config``). Override path with ``GADGET_CONFIG``.
+"""
 
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONFIG_DIR = Path.home() / ".config" / "research"
-DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.json"
+from common import config as gadget_config
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "model": "sonnet",
@@ -19,29 +20,49 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "semantic_scholar_api_key": "",
 }
 
+# Back-compat aliases (path is the unified root file).
+DEFAULT_CONFIG_PATH = gadget_config.DEFAULT_CONFIG_PATH
+DEFAULT_CONFIG_DIR = DEFAULT_CONFIG_PATH.parent
+
 
 def load_config(config_path: Path | None = None) -> dict[str, Any]:
-    """Load config from disk, falling back to defaults."""
-    path = config_path or DEFAULT_CONFIG_PATH
+    """Load research section from disk, falling back to defaults.
+
+    If *config_path* is given (tests), read that file's ``research`` section,
+    or treat a flat dict as the section itself.
+    """
     config = dict(DEFAULT_CONFIG)
-    if path.exists():
-        with open(path) as f:
-            stored = json.load(f)
-        config.update(stored)
+    if config_path is not None:
+        import json
+        if config_path.exists():
+            with open(config_path, encoding="utf-8") as f:
+                stored = json.load(f)
+            if isinstance(stored.get("research"), dict):
+                config.update(stored["research"])
+            elif isinstance(stored, dict):
+                config.update(stored)
+        return config
+
+    config.update(gadget_config.load_section("research"))
     return config
 
 
 def save_config(config: dict[str, Any], config_path: Path | None = None) -> None:
-    """Save config to disk."""
-    path = config_path or DEFAULT_CONFIG_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+    """Save research section to the unified root config (or *config_path* for tests)."""
+    if config_path is not None:
+        import json
+        from common.io import atomic_write
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(config_path, json.dumps(config, indent=2, ensure_ascii=False) + "\n")
+        return
+
+    gadget_config.update_section("research", config, replace=True)
 
 
 def interactive_config_init() -> dict[str, Any]:
     """Interactive config setup."""
     print("=== 研究者分析工具 — 配置初始化 ===\n")
+    print(f"写入: {gadget_config.resolve_config_path()}  (section: research)\n")
     config = load_config()
 
     model = input(f"默认 Claude 模型 [sonnet/opus/haiku] (当前: {config['model']}): ").strip()
@@ -70,13 +91,14 @@ def interactive_config_init() -> dict[str, Any]:
         config["semantic_scholar_api_key"] = s2_key
 
     save_config(config)
-    print(f"\n配置已保存到 {DEFAULT_CONFIG_PATH}")
+    print(f"\n配置已保存到 {gadget_config.resolve_config_path()} (section: research)")
     return config
 
 
 def show_config(config: dict[str, Any]) -> None:
     """Display current configuration."""
     print("=== 当前配置 ===")
+    print(f"文件: {gadget_config.resolve_config_path()} (section: research)")
     labels = {
         "model": "Claude 模型",
         "default_mode": "默认模式",

@@ -1,23 +1,22 @@
 """Unified configuration for Research Scout and Researcher Profiler.
 
-Loads from two config paths with fallback:
-  1. ~/.config/research_scout/config.json  (Scout primary)
-  2. ~/.config/research/config.json         (Profiler fallback)
+Reads the ``research_scout`` section of the repo-root ``config.json``,
+merging missing keys from the ``research`` section (same file).
+Override path with ``GADGET_CONFIG``. Fail-fast: no ``~/.config/...`` paths.
 
 Resolution order for parameters: CLI flag > project.json > merged config > hardcoded default.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
+from common import config as gadget_config
 from common.paths import (
-    GADGET_ROOT,
     TOOLS_DIR,
     REPORTS_DIR as _REPORTS_BASE,
     CACHE_DIR as _CACHE_BASE,
@@ -48,39 +47,40 @@ INSIGHT_TOP_N = 3
 MAX_FULLTEXT_CHARS = 40000
 INSIGHT_CACHE_DIR = CACHE_DIR / "insight"
 
-# ─── Config file paths ──────────────────────────────────────────────
-
-_SCOUT_CONFIG_PATH = Path.home() / ".config" / "research_scout" / "config.json"
-_PROFILER_CONFIG_PATH = Path.home() / ".config" / "research" / "config.json"
+# Unified root config path (display / existence).
+_SCOUT_CONFIG_PATH = gadget_config.DEFAULT_CONFIG_PATH
 
 _cached_config: Optional[dict] = None
 
 
 def load_scout_config() -> dict:
-    """Load merged config: Scout primary, Profiler fallback for missing keys.
+    """Load merged config: research_scout primary, research fills missing keys.
 
-    Cached after first call. Reads both config files and merges them
-    (Scout keys take precedence).
+    Cached after first call. Both sections live in the same root config.json.
     """
     global _cached_config
     if _cached_config is not None:
         return _cached_config
 
-    scout_cfg: dict = {}
-    profiler_cfg: dict = {}
-
-    for path, target in [(_SCOUT_CONFIG_PATH, scout_cfg), (_PROFILER_CONFIG_PATH, profiler_cfg)]:
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    target.update(json.load(f))
-            except (OSError, json.JSONDecodeError) as e:
-                get_logger().warning("Failed to load config %s: %s", path, e)
-
+    scout_cfg = gadget_config.load_section("research_scout")
+    profiler_cfg = gadget_config.load_section("research")
     # Merge: scout takes precedence, profiler fills gaps
-    merged = {**profiler_cfg, **scout_cfg}
-    _cached_config = merged
+    _cached_config = {**profiler_cfg, **scout_cfg}
     return _cached_config
+
+
+def clear_scout_config_cache() -> None:
+    """Drop scout merge cache (and root cache) after writes / in tests."""
+    global _cached_config
+    _cached_config = None
+    gadget_config.clear_cache()
+
+
+def save_scout_config(cfg: dict, *, replace: bool = True) -> Path:
+    """Write the ``research_scout`` section and invalidate caches."""
+    path = gadget_config.update_section("research_scout", cfg, replace=replace)
+    clear_scout_config_cache()
+    return path
 
 
 def resolve_param(args, project, param_name: str, hardcoded_default):
