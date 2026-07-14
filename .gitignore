@@ -1,0 +1,102 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+build/
+*.egg-info/
+
+# macOS
+.DS_Store
+._*
+
+# Local config
+.claude/
+.codex/
+!ai-companion/.claude/
+!ai-companion/.claude/**
+
+# Generated output (all tools write here)
+outputs/
+
+# Scraped data (large, reproducible)
+papers/CVPR-2025.html
+papers/CVPR.txt
+papers/filter_robotics_all.csv
+papers/filter_robotics_related.csv
+
+# Secrets / tokens
+tokens/
+
+# Hugo site (tools/website/)
+tools/website/public/
+tools/website/resources/
+tools/website/themes/
+tools/website/.hugo_build.lock
+tools/website/.last_build
+tools/website/.translation_state.json
+tools/website/.verify-public*/
+tools/website/static/images/
+# DAG site — generated + StatiCrypt-encrypted by sync.py --category dag (rebuilt each deploy)
+tools/website/static/dag/
+!tools/website/static/images/icon.png
+!tools/website/static/images/icon2.png
+tools/website/static/videos/
+tools/website/static/pdfs/
+tools/website/static/resume.pdf
+
+# Research profiler (legacy output dir)
+tools/research/output/
+
+# Personal data — synced via rclone, not tracked in git
+tools/summarize/logs/
+tools/summarize/reports/
+# Machine-specific config (device_name, paths, model). Copy config.example.json.
+tools/summarize/config.json
+tools/website/content/bugJournal/*.md
+tools/website/content/bugJournal/*.pdf
+!tools/website/content/bugJournal/_index.md
+tools/website/content/bugJournal/daily/*
+!tools/website/content/bugJournal/daily/_index.md
+!tools/website/content/bugJournal/daily/_index.zh.md
+tools/website/content/bugJournal/weekly/*
+!tools/website/content/bugJournal/weekly/_index.md
+!tools/website/content/bugJournal/weekly/_index.zh.md
+tools/website/content/bugJournal/monthly/*
+!tools/website/content/bugJournal/monthly/_index.md
+!tools/website/content/bugJournal/monthly/_index.zh.md
+tools/website/content/leetcode/
+tools/website/content/research/*
+!tools/website/content/research/_index.md
+!tools/website/content/research/_index.zh.md
+tools/website/content/benchmark.md
+tools/website/content/benchmark/
+tools/website/content/posts/
+tools/website/content/About.pdf
+tools/website/content/Resume.pdf
+tools/website/content/Random.md
+tools/website/static/benchmark/
+tools/website/static/benchmark-report/
+tools/research/cache/
+tools/research/projects/
+tools/research/reports/
+tools/research/logs/
+test/
+
+# Binary tools
+pdfsizeopt/
+.devcompanion/
+!ai-companion/.devcompanion/
+!ai-companion/.devcompanion/**
+
+# Archived by repo-tidy (junk moved here; root-level only)
+/archive/
+
+# Node (belt-and-suspenders; ai-companion has its own .gitignore too)
+node_modules/
+
+# Python / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+tools/website/content/Resume.md
+tools/website/content/Resume.zh.md

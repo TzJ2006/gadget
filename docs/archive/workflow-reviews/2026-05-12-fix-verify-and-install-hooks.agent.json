@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0",
+  "task_id": "fix-verify-and-install-hooks",
+  "timestamp": "2026-05-12T21:42:39.425342+00:00",
+  "duration_seconds": 0,
+  "spec": {
+    "goal": "Fix verify.py crash on no spec + add hooks deployment to install.py",
+    "success_criteria": []
+  },
+  "plan": [
+    {
+      "step": 1,
+      "description": "Fix verify.py to gracefully handle missing spec",
+      "files": [
+        "workflow/verify.py"
+      ]
+    },
+    {
+      "step": 2,
+      "description": "Add hooks/ copy and PreToolUse config to install.py",
+      "files": [
+        "workflow/install.py"
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "file": "workflow/verify.py",
+      "lines": [
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81
+      ],
+      "type": "modify",
+      "description": "Wrap run_verification() in try/except SpecNotFoundError, exit 0 with message",
+      "reason": {
+        "because": "Stop hook runs verify.py after every session, but no spec exists between tasks",
+        "therefore": "Gracefully exit with informational message instead of crashing"
+      }
+    },
+    {
+      "file": "workflow/install.py",
+      "lines": [
+        28,
+        34,
+        40,
+        60
+      ],
+      "type": "modify",
+      "description": "Add hooks/ directory copy + PreToolUse hook config to install_workflow()",
+      "reason": {
+        "because": "Other repos need the confirmation gate (check_spec.py) deployed automatically",
+        "therefore": "install.py now copies hooks/ dir and registers PreToolUse hook in settings.json"
+      }
+    }
+  ],
+  "reasoning_chain": [
+    {
+      "observation": "Stop hook crashes with SpecNotFoundError when no task is active",
+      "because": "verify.py calls load_spec() unconditionally, which raises if file missing",
+      "therefore": "Added try/except at __main__ level to catch SpecNotFoundError and exit 0",
+      "confidence": "HIGH"
+    },
+    {
+      "observation": "install.py only deployed Stop hook, not PreToolUse confirmation gate",
+      "because": "The hooks/ directory and PreToolUse config were added after initial install.py",
+      "therefore": "Added hooks/ copytree and PreToolUse entry to settings.json generation",
+      "confidence": "HIGH"
+    }
+  ],
+  "verification": {
+    "status": "pass",
+    "tests": [
+      {
+        "name": "pytest workflow/tests/ -q",
+        "status": "pass",
+        "output": "33 passed"
+      },
+      {
+        "name": "verify.py no-spec graceful exit",
+        "status": "pass",
+        "output": "No active spec — nothing to verify."
+      }
+    ]
+  },
+  "debug_history": [],
+  "next_steps": [
+    "Re-install workflow to TokenMonitor and LifeCopilot to deploy hooks"
+  ],
+  "entire_session_ref": ""
+}

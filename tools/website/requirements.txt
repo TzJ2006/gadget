@@ -1,0 +1,9 @@
+# Image processing
+Pillow>=10.0.0
+
+# Translation engine (local inference)
+torch>=2.0.0
+transformers>=4.40.0
+
+# Optional: vLLM for Linux (faster batch inference)
+# vllm>=0.8.0

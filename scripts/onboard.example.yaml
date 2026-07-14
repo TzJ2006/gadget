@@ -1,0 +1,99 @@
+# gadget onboarding sheet. Copy to tokens/onboard.yaml and fill in, then run:
+#   cp scripts/onboard.example.yaml tokens/onboard.yaml
+#   python scripts/onboard.py
+#
+# Safe steps auto-apply; risky steps (SSH keys, key-push, extra global npm)
+# prompt unless --yes. Re-running skips finished steps (idempotent).
+#
+# Each value below is marked (required) or (optional). (optional) ones already
+# hold a working default — leave them as-is unless you need to change them.
+# (required) ones must be filled before that step will work.
+#
+# PER-SERVER CONTROL: each top-level section has `enabled:`. By default the
+# script runs every section whose enabled==true, so each machine keeps its own
+# tokens/onboard.yaml with the right steps switched on. CLI overrides for one-off
+# runs:  --only ssh,claude  (run exactly those)  /  --skip sync  /  --list.
+#
+# EXTEND: to add a new onboarding, write step_<name>(cfg, ctx) in
+# scripts/onboard.py, add it to STEPS, and add a <name>: section here.
+
+ssh:
+  enabled: true                         # (optional) run the SSH step on this server? default: true
+  hosts:                                # (optional) omit/empty to skip SSH entirely
+    - alias: gpu1                       # (required) `ssh gpu1` afterwards
+      hostname: gpu1.example.edu        # (required) host to connect to
+      user: thomas                      # (required) remote username
+      port: 22                          # (optional) default: 22
+      identity_file: ~/.ssh/id_ed25519  # (optional) default: ~/.ssh/id_ed25519
+      install_private_key:              # (optional) RISKY (prompts): drop a key onto THIS machine; omit to skip
+        from: tokens/keys/id_ed25519    # (required if install_private_key) repo-relative or absolute path
+        to: ~/.ssh/id_ed25519           # (optional) default: ~/.ssh/id_ed25519 — chmod 600 (POSIX) / icacls (Windows)
+      push_public_key: false            # (optional) RISKY (prompts): append pubkey to remote authorized_keys; default: false
+      public_key: ~/.ssh/id_ed25519.pub # (optional) default: identity_file + ".pub"
+
+claude:
+  enabled: true                         # (optional) default: true
+  install: true                         # (optional) npm i -g @anthropic-ai/claude-code (skip if `claude --version`); default: true
+  codex:
+    install: true                       # (optional) default: true
+    package: "@openai/codex"            # (optional) default: "@openai/codex" — override if the package name differs
+  auth_mode: api                        # (required) api | bedrock | platform_aws — only the matching block below is read
+  api:
+    ANTHROPIC_API_KEY: "sk-ant-..."     # (required if auth_mode=api)
+  bedrock:
+    AWS_REGION: us-east-1               # (required if auth_mode=bedrock)
+    AWS_PROFILE: ""                     # (optional) one of PROFILE / access keys / bearer token is required for bedrock
+    AWS_ACCESS_KEY_ID: ""               # (optional)
+    AWS_SECRET_ACCESS_KEY: ""           # (optional)
+    AWS_SESSION_TOKEN: ""               # (optional)
+    AWS_BEARER_TOKEN_BEDROCK: ""        # (optional)
+    ANTHROPIC_DEFAULT_OPUS_MODEL: ""    # (optional) e.g. us.anthropic.claude-opus-4-8
+    ANTHROPIC_DEFAULT_SONNET_MODEL: ""  # (optional)
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: ""   # (optional)
+    awsAuthRefresh: ""                  # (optional) top-level settings.json key (command string)
+  platform_aws:                         # Claude Platform on AWS — Anthropic-operated API via AWS (NOT Bedrock)
+    ANTHROPIC_AWS_WORKSPACE_ID: "wrkspc_..."   # (required if auth_mode=platform_aws)
+    AWS_REGION: us-east-1               # (required if auth_mode=platform_aws)
+    ANTHROPIC_AWS_API_KEY: ""           # (optional) OR leave blank and rely on AWS SigV4 creds in env
+    ANTHROPIC_AWS_BASE_URL: ""          # (optional) corporate proxy
+
+install:
+  enabled: true                         # (optional) default: true
+  ai_companion: true                    # (optional) npx tsx ../ai-companion/scripts/install.ts . --enforce (skills/hooks/harness, claude+codex); default: true
+  claude_plugins: []                    # (optional) RISKY (prompts): list of `claude plugin install <id>`; default: none
+  pip_extras: [all]                     # (optional) subset of: summarize research benchmark website translator all; default: [all]
+  global_npm: []                        # (optional) RISKY (prompts): extra `npm i -g` packages; default: none
+
+gadgets:                                # per-tool config JSON; omit a tool to skip it
+  enabled: true                         # (optional) default: true
+  summarize:                            # (optional) -> ~/.config/summarize/config.json
+    device_name: ""                     # (optional) blank = hostname
+    logs_dir: ""                        # (optional) blank = default (~/.claude + codex log dirs)
+    reports_dir: ""                     # (optional) blank = outputs/reports
+    rclone_remote: "gdrive:gadget/summarize"  # (optional) default shown
+    rclone_path: ""                     # (optional) blank = remote default
+    default_api: claude_cli             # (optional) ollama | claude_cli | anthropic | openai; default: ollama
+  research:                             # (optional) -> ~/.config/research/config.json (reuses research.config.save_config)
+    model: sonnet                       # (optional) default: sonnet
+    default_mode: fast                  # (optional) default: fast
+    default_depth: 1                    # (optional) default: 1
+    max_students: 10                    # (optional) default: 10
+    output_dir: ""                      # (optional) blank = outputs default
+    semantic_scholar_api_key: ""        # (optional) raises rate limits if set
+  research_scout:                       # (optional) -> ~/.config/research_scout/config.json
+    default_api: claude_cli             # (optional) default: ollama
+    hugo_site: ""                       # (optional) blank = no deploy target
+    default_lookback_days: 7            # (optional) default: 7
+    default_max_results: 50             # (optional) default: 50 (cap ~50 to avoid screening timeout)
+    default_top_papers_in_report: 5     # (optional) default: 5
+    max_high_relevance: 20              # (optional) default: 20
+    default_insight_top_n: 3            # (optional) default: 3
+  benchmark: {}                         # (optional) no config file; pip extra + import check only
+  translator: {}                        # (optional) no config file; pip extra + import check only
+  website: {}                           # (optional) no config file; pip extra + import check only
+
+sync:
+  enabled: false                        # (optional) off by default; flip on per server that needs rclone; default: false
+  bootstrap: false                      # (optional) if true: python scripts/sync.py bootstrap; default: false
+  remote: "gdrive:gadget"               # (required if sync enabled) rclone remote root
+  include_tokens: false                 # (optional) RISKY (prompts): also pull tokens/ (API keys); default: false

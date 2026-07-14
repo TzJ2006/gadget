@@ -1,0 +1,6 @@
+"""Entry point: `python -m translator` launches the Gradio GUI."""
+
+from translator.app import main
+
+if __name__ == "__main__":
+    main()

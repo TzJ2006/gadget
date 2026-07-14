@@ -1,0 +1,98 @@
+name: Queue Benchmark Submission
+
+on:
+  repository_dispatch:
+    types:
+      - benchmark_submission
+  workflow_dispatch:
+    inputs:
+      payload_json:
+        description: "JSON object to queue (row or {\"submission\": {...}})"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: queue-benchmark-submission
+  cancel-in-progress: false
+
+jobs:
+  queue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Append submission to queue
+        env:
+          PAYLOAD_JSON: ${{ github.event.inputs.payload_json || '' }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+          event_path = Path(os.environ["GITHUB_EVENT_PATH"])
+          event = json.loads(event_path.read_text(encoding="utf-8"))
+
+          if event_name == "repository_dispatch":
+            payload = event.get("client_payload") or {}
+          elif event_name == "workflow_dispatch":
+            raw = os.environ.get("PAYLOAD_JSON", "").strip()
+            if not raw:
+              raise SystemExit("payload_json input is required for workflow_dispatch")
+            payload = json.loads(raw)
+          else:
+            raise SystemExit(f"Unsupported event: {event_name}")
+
+          submission = payload.get("submission", payload) if isinstance(payload, dict) else payload
+          if not isinstance(submission, dict):
+            raise SystemExit("Submission must be a JSON object.")
+
+          record = {
+            "received_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "submission": submission,
+            "source": payload.get("source", {}) if isinstance(payload, dict) else {},
+            "meta": {
+              "event_name": event_name,
+              "actor": os.environ.get("GITHUB_ACTOR", "unknown"),
+            },
+          }
+
+          queue_path = Path("data/pending_submissions.ndjson")
+          queue_path.parent.mkdir(parents=True, exist_ok=True)
+          with queue_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True))
+            handle.write("\n")
+
+          print(f"Queued submission to {queue_path}")
+          PY
+
+      - name: Commit queued submission
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- data/pending_submissions.ndjson; then
+            echo "No queue changes to commit."
+            exit 0
+          fi
+
+          git add data/pending_submissions.ndjson
+          git commit -m "queue: benchmark submission"
+
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash || true
+            if git push; then
+              echo "Push succeeded."
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+
+          echo "Push failed after retries."
+          exit 1

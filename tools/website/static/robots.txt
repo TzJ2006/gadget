@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+
+# Encrypted / protected content — keep out of search indexes
+Disallow: /dag/
+
+Sitemap: https://tzj2006.github.io/sitemap.xml

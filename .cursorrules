@@ -1,0 +1,7 @@
+# Cursor Rules
+
+Read and follow AGENTS.md for the agentic workflow protocol (AI Dev Companion pipeline:
+/ccdiscuss → /ccplan → /ccedit → /ccdebug; plans live in docs/ecl/*.yaml).
+
+Before modifying any code, paraphrase the task and get explicit confirmation (confirmation gate).
+For non-trivial changes, prefer the pipeline over ad-hoc edits.
