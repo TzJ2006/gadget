@@ -1,0 +1,161 @@
+baseURL: https://tzj2006.github.io/
+relativeURLs: false
+canonifyURLs: true
+title: TzJ's Net
+theme:
+  - PaperMod
+
+defaultContentLanguage: en
+defaultContentLanguageInSubdir: false
+
+languages:
+  en:
+    languageName: English
+    languageCode: en-us
+    weight: 1
+  zh:
+    languageName: 中文
+    languageCode: zh-cn
+    weight: 2
+    menu:
+      main:
+        - identifier: search
+          name: Search
+          url: /search/
+          weight: 10
+        - identifier: bugJournal
+          name: bugJournal
+          url: /bugjournal/daily/
+          weight: 20
+        - identifier: bugJournal-daily
+          parent: bugJournal
+          name: Daily
+          url: /bugjournal/daily/
+          weight: 21
+        - identifier: bugJournal-weekly
+          parent: bugJournal
+          name: Weekly
+          url: /bugjournal/weekly/
+          weight: 22
+        - identifier: bugJournal-monthly
+          parent: bugJournal
+          name: Monthly
+          url: /bugjournal/monthly/
+          weight: 23
+        - identifier: leetcode
+          name: leetcode
+          url: /leetcode/
+          weight: 30
+        - identifier: posts
+          name: posts & notes
+          url: /posts/
+          weight: 35
+        - identifier: benchmark
+          name: benchmark
+          url: /benchmark/
+          weight: 40
+
+markup:
+  highlight:
+    noClasses: false
+    guessSyntax: true
+  goldmark:
+    renderer:
+      unsafe: true
+
+menu:
+  main:
+    - identifier: search
+      name: Search
+      url: /search/
+      weight: 10
+    - identifier: bugJournal
+      name: bugJournal
+      url: /bugjournal/daily/
+      weight: 20
+    - identifier: bugJournal-daily
+      parent: bugJournal
+      name: Daily
+      url: /bugjournal/daily/
+      weight: 21
+    - identifier: bugJournal-weekly
+      parent: bugJournal
+      name: Weekly
+      url: /bugjournal/weekly/
+      weight: 22
+    - identifier: bugJournal-monthly
+      parent: bugJournal
+      name: Monthly
+      url: /bugjournal/monthly/
+      weight: 23
+    - identifier: leetcode
+      name: leetcode
+      url: /leetcode/
+      weight: 30
+    - identifier: posts
+      name: posts & notes
+      url: /posts/
+      weight: 35
+    - identifier: benchmark
+      name: benchmark
+      url: /benchmark/
+      weight: 40
+
+params:
+  ShowCodeCopyButtons: true
+  ShowBreadCrumbs: true
+  ShowReadingTime: true
+  ShowBusuanzi: true
+  mathjax: true
+  math: true
+  mainSections:
+    - bugJournal
+    - leetcode
+    - posts
+  defaultTheme: auto
+  disableThemeToggle: false
+  displayFullLangName: true
+  assets:
+    favicon: "/images/icon.png"
+    favicon16x16: "/images/icon.png"
+    favicon32x32: "/images/icon.png"
+  fuseOpts:
+    isCaseSensitive: false
+    includeMatches: true
+    shouldSort: true
+    location: 0
+    distance: 1000
+    threshold: 0.4
+    minMatchCharLength: 0
+    keys: ["title", "permalink", "summary", "content"]
+
+  profileMode:
+    enabled: true
+    title: "TzJ's Net" # optional default will be site title
+    # subtitle: "This is subtitle"
+    imageUrl: "/images/icon.png" # optional
+    # imageTitle: "<title of image as alt>" # optional
+    imageWidth: 240 # custom size
+    imageHeight: 120 # custom size
+    buttons:
+      - name: Leetcode
+        url: https://leetcode.com/u/tzj2006/
+      - name: Github
+        url: "https://github.com/tzj2006"
+      - name: Google Scholar
+        url: "https://scholar.google.com/citations?user=Cbmd1GIAAAAJ"
+
+  # socialIcons: # optional
+    # - name: "<platform>"
+    #   url: "<link>"
+    # - name: "<platform 2>"
+    #   url: "<link2>"
+
+  busuanzi:
+    enable: true
+
+outputs:
+  home:
+    - HTML
+    - RSS
+    - JSON # necessary for search

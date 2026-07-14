@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Usage footer card — demo</title>
+<style>
+  /* Demo shell only — not part of the component */
+  body {
+    margin: 0;
+    padding: 4rem 1.25rem;
+    background: #fff;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .demo-post { max-width: 1000px; margin: 0 auto; }
+  .demo-prose { color: #555; line-height: 1.7; }
+  @media (prefers-color-scheme: dark) { body { background: #101012; } .demo-prose { color: #aaa; } }
+</style>
+
+<!-- ══════════ usage-card component styles (copy from here) ══════════ -->
+<style>
+  .usage-card {
+    /* ── Design tokens — override these in your site CSS, e.g.
+          .usage-card { --usage-cost-main: var(--opus); }              ── */
+    --usage-bg: #fafaf9;
+    --usage-border: rgba(0, 0, 0, 0.08);
+    --usage-text: #1a1a1a;
+    --usage-muted: #8a8880;
+    --usage-cost-main: #d0724a;      /* Claude Code — TokenMonitor --opus  */
+    --usage-cost-secondary: #4a8db8; /* Codex       — TokenMonitor --codex */
+    --usage-cache: #c9c7c0;          /* cache reads — recessive neutral    */
+    --usage-active: #5a8878;         /* active tokens — TokenMonitor --o3  */
+    --usage-bar-bg: rgba(0, 0, 0, 0.05);
+
+    box-sizing: border-box;
+    background: var(--usage-bg);
+    border: 1px solid var(--usage-border);
+    border-radius: 10px;
+    padding: 1.5rem 1.75rem 1.375rem;
+    color: var(--usage-text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.4;
+  }
+  .usage-card *, .usage-card *::before { box-sizing: inherit; }
+
+  @media (prefers-color-scheme: dark) {
+    .usage-card {
+      --usage-bg: #141416;
+      --usage-border: rgba(255, 255, 255, 0.09);
+      --usage-text: rgba(255, 255, 255, 0.93);
+      --usage-muted: rgba(255, 255, 255, 0.45);
+      --usage-cache: #4a4a48;
+      --usage-bar-bg: rgba(255, 255, 255, 0.06);
+    }
+  }
+
+  /* header row */
+  .usage-card__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .usage-card__title { font-size: 0.875rem; font-weight: 600; letter-spacing: 0.01em; }
+  .usage-card__source { font-size: 0.75rem; color: var(--usage-muted); }
+
+  /* stat row */
+  .usage-card__stats {
+    display: grid;
+    /* intrinsic: 4-up in a full post column, 2x2 in narrow columns/phones */
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 1rem 1.5rem;
+    margin: 1.25rem 0 1.5rem;
+  }
+  .usage-card__stat { display: flex; flex-direction: column-reverse; gap: 0.2rem; }
+  .usage-card__stat dd { margin: 0; font-size: 1.3125rem; font-weight: 600; letter-spacing: -0.01em; }
+  .usage-card__stat dt {
+    font-size: 0.6875rem;
+    color: var(--usage-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* bars */
+  .usage-card__row { margin-top: 1rem; }
+  .usage-card__row-labels {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    font-size: 0.75rem;
+    margin-bottom: 0.45rem;
+  }
+  .usage-card__row-name { color: var(--usage-text); font-weight: 500; }
+  .usage-card__row-detail { color: var(--usage-muted); }
+  .usage-card__item { white-space: nowrap; }
+  .usage-card__dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    margin-right: 0.3em;
+    vertical-align: 0.02em;
+  }
+  .usage-card__bar {
+    display: flex;
+    gap: 2px;                      /* hairline gap between segments */
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--usage-bar-bg);
+  }
+  .usage-card__bar span { border-radius: 2px; }
+
+  /* footnote */
+  .usage-card__note {
+    margin: 1.375rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--usage-muted);
+  }
+
+</style>
+<!-- ══════════ usage-card component styles (copy to here) ══════════ -->
+</head>
+
+<body>
+  <div class="demo-post">
+    <p class="demo-prose">…and that wraps up the month. Below is the usage appendix
+    generated from the summarize pipeline.</p>
+
+    <!-- ══════════ usage-card component markup (copy from here) ══════════ -->
+    <footer class="usage-card">
+      <div class="usage-card__head">
+        <span class="usage-card__title">AI Usage · June 2026</span>
+        <span class="usage-card__source">Claude Code + Codex</span>
+      </div>
+
+      <dl class="usage-card__stats">
+        <div class="usage-card__stat"><dt>Total cost</dt><dd>$3,106.56</dd></div>
+        <div class="usage-card__stat"><dt>Total tokens</dt><dd>2.54B</dd></div>
+        <div class="usage-card__stat"><dt>Output tokens</dt><dd>24M</dd></div>
+        <div class="usage-card__stat"><dt>Cache read</dt><dd>89.8%</dd></div>
+      </dl>
+
+      <div class="usage-card__row">
+        <div class="usage-card__row-labels">
+          <span class="usage-card__row-name">Cost split</span>
+          <span class="usage-card__row-detail">
+            <span class="usage-card__item"><span class="usage-card__dot" style="background:var(--usage-cost-main)"></span>Claude Code $2,990</span> ·
+            <span class="usage-card__item"><span class="usage-card__dot" style="background:var(--usage-cost-secondary)"></span>Codex $117</span>
+          </span>
+        </div>
+        <div class="usage-card__bar" role="img"
+             aria-label="Cost split: Claude Code $2,990 (96%), Codex $117 (4%)">
+          <span style="width:96.2%; background:var(--usage-cost-main)"></span>
+          <span style="width:3.8%; background:var(--usage-cost-secondary)"></span>
+        </div>
+      </div>
+
+      <div class="usage-card__row">
+        <div class="usage-card__row-labels">
+          <span class="usage-card__row-name">Token character</span>
+          <span class="usage-card__row-detail">
+            <span class="usage-card__item"><span class="usage-card__dot" style="background:var(--usage-cache)"></span>Cache reads 89.8%</span> ·
+            <span class="usage-card__item"><span class="usage-card__dot" style="background:var(--usage-active)"></span>Active 10.2%</span>
+          </span>
+        </div>
+        <div class="usage-card__bar" role="img"
+             aria-label="Token character: cache reads 89.8%, active tokens 10.2%">
+          <span style="width:89.8%; background:var(--usage-cache)"></span>
+          <span style="width:10.2%; background:var(--usage-active)"></span>
+        </div>
+      </div>
+
+      <p class="usage-card__note">
+        Most token volume came from cache reads; Claude Code drove nearly all cost.
+      </p>
+    </footer>
+    <!-- ══════════ usage-card component markup (copy to here) ══════════ -->
+  </div>
+</body>
+</html>

@@ -1,0 +1,226 @@
+{
+  "schema_version": "1.0",
+  "task_id": "baseline-summarize-v0.1",
+  "timestamp": "2026-05-12T20:56:41.253970+00:00",
+  "duration_seconds": 0,
+  "spec": {
+    "task_id": "baseline-summarize-v0.1",
+    "goal": "Summarize pipeline baseline",
+    "scope": [
+      "summarize/"
+    ],
+    "constraints": [
+      "Read-only"
+    ],
+    "non_goals": [],
+    "success_criteria": [
+      {
+        "command": "python -m pytest summarize/tests/ -q",
+        "expected": "all pass"
+      }
+    ],
+    "tech_stack": "Python"
+  },
+  "plan": [
+    {
+      "step": 1,
+      "description": "Document summarize module state",
+      "files": []
+    }
+  ],
+  "changes": [
+    {
+      "file": "summarize/tests/",
+      "lines": [],
+      "type": "existing",
+      "description": "Sub-module with 6 files",
+      "reason": {
+        "because": "Core component of summarize pipeline",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/__init__.py",
+      "lines": [],
+      "type": "existing",
+      "description": "__init__.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/__main__.py",
+      "lines": [],
+      "type": "existing",
+      "description": "__main__.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/auto.py",
+      "lines": [],
+      "type": "existing",
+      "description": "auto.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/charts.py",
+      "lines": [],
+      "type": "existing",
+      "description": "charts.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/cli.py",
+      "lines": [],
+      "type": "existing",
+      "description": "cli.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/config.py",
+      "lines": [],
+      "type": "existing",
+      "description": "config.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/daily.py",
+      "lines": [],
+      "type": "existing",
+      "description": "daily.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/daily_summary.py",
+      "lines": [],
+      "type": "existing",
+      "description": "daily_summary.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/formatter.py",
+      "lines": [],
+      "type": "existing",
+      "description": "formatter.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/llm_backends.py",
+      "lines": [],
+      "type": "existing",
+      "description": "llm_backends.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/monthly_summary.py",
+      "lines": [],
+      "type": "existing",
+      "description": "monthly_summary.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/parsers.py",
+      "lines": [],
+      "type": "existing",
+      "description": "parsers.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/remote.py",
+      "lines": [],
+      "type": "existing",
+      "description": "remote.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/summarizer.py",
+      "lines": [],
+      "type": "existing",
+      "description": "summarizer.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/usage.py",
+      "lines": [],
+      "type": "existing",
+      "description": "usage.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    },
+    {
+      "file": "summarize/weekly_summary.py",
+      "lines": [],
+      "type": "existing",
+      "description": "weekly_summary.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the summarize baseline"
+      }
+    }
+  ],
+  "reasoning_chain": [
+    {
+      "observation": "summarize/ is a multi-phase pipeline (export -> merge -> deploy)",
+      "because": "Handles daily/weekly/monthly AI conversation reports",
+      "therefore": "Core tool for the user workflow",
+      "confidence": "HIGH"
+    }
+  ],
+  "verification": {
+    "status": "fail",
+    "tests": [
+      {
+        "name": "D:/Miniconda3/envs/AI/python.exe -m pytest summarize/tests/ -q",
+        "status": "fail",
+        "output": "026-03-20' in '# Daily Report — 2026-03-20\\n\\n## Daily Overview\\n\\n- **What was done:** Refactored config module\\n- **How it was don...ries\\n\\n**✅ Config module extraction**\\n_10:00:00 | claude_code_\\nExtracted config loading into summarize/config.py.\\n'\n\nsummarize\\tests\\test_formatter.py:138: AssertionError\n=========================== short test summary info ===========================\nFAILED summarize/tests/test_formatter.py::test_generate_markdown_basic - Asse...\n1 failed, 73 passed in 0.25s"
+      }
+    ]
+  },
+  "debug_history": [],
+  "next_steps": [
+    "Refer to summarize/CLAUDE.md for detailed module docs"
+  ],
+  "entire_session_ref": ""
+}

@@ -1,0 +1,236 @@
+{
+  "schema_version": "1.0",
+  "task_id": "baseline-research-v0.1",
+  "timestamp": "2026-05-12T20:56:39.482345+00:00",
+  "duration_seconds": 0,
+  "spec": {
+    "task_id": "baseline-research-v0.1",
+    "goal": "Research toolkit baseline",
+    "scope": [
+      "research/"
+    ],
+    "constraints": [
+      "Read-only"
+    ],
+    "non_goals": [],
+    "success_criteria": [],
+    "tech_stack": "Python"
+  },
+  "plan": [
+    {
+      "step": 1,
+      "description": "Document research module state",
+      "files": []
+    }
+  ],
+  "changes": [
+    {
+      "file": "research/apis/",
+      "lines": [],
+      "type": "existing",
+      "description": "Sub-module with 5 files",
+      "reason": {
+        "because": "Core component of research toolkit",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/cache/",
+      "lines": [],
+      "type": "existing",
+      "description": "Sub-module with 1 files",
+      "reason": {
+        "because": "Core component of research toolkit",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/projects/",
+      "lines": [],
+      "type": "existing",
+      "description": "Sub-module with 1 files",
+      "reason": {
+        "because": "Core component of research toolkit",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/reports/",
+      "lines": [],
+      "type": "existing",
+      "description": "Sub-module with 1 files",
+      "reason": {
+        "because": "Core component of research toolkit",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/scout/",
+      "lines": [],
+      "type": "existing",
+      "description": "Sub-module with 11 files",
+      "reason": {
+        "because": "Core component of research toolkit",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/__init__.py",
+      "lines": [],
+      "type": "existing",
+      "description": "__init__.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/__main__.py",
+      "lines": [],
+      "type": "existing",
+      "description": "__main__.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/analysis.py",
+      "lines": [],
+      "type": "existing",
+      "description": "analysis.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/cache.py",
+      "lines": [],
+      "type": "existing",
+      "description": "cache.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/cli.py",
+      "lines": [],
+      "type": "existing",
+      "description": "cli.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/config.py",
+      "lines": [],
+      "type": "existing",
+      "description": "config.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/homepage_discovery.py",
+      "lines": [],
+      "type": "existing",
+      "description": "homepage_discovery.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/llm.py",
+      "lines": [],
+      "type": "existing",
+      "description": "llm.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/models.py",
+      "lines": [],
+      "type": "existing",
+      "description": "models.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/output.py",
+      "lines": [],
+      "type": "existing",
+      "description": "output.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/prompts.py",
+      "lines": [],
+      "type": "existing",
+      "description": "prompts.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/research_scout.py",
+      "lines": [],
+      "type": "existing",
+      "description": "research_scout.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/scoring.py",
+      "lines": [],
+      "type": "existing",
+      "description": "scoring.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    },
+    {
+      "file": "research/student_discovery.py",
+      "lines": [],
+      "type": "existing",
+      "description": "student_discovery.py",
+      "reason": {
+        "because": "Top-level module file",
+        "therefore": "Part of the research baseline"
+      }
+    }
+  ],
+  "reasoning_chain": [
+    {
+      "observation": "research/ is a unified toolkit with scout/, profiler, and citation graph",
+      "because": "Handles arXiv paper discovery, researcher profiling, and citation analysis",
+      "therefore": "Core research tool for the user",
+      "confidence": "HIGH"
+    }
+  ],
+  "verification": {
+    "status": "skip",
+    "tests": []
+  },
+  "debug_history": [],
+  "next_steps": [
+    "Refer to research/CLAUDE.md for detailed module docs",
+    "Add tests for research modules"
+  ],
+  "entire_session_ref": ""
+}
