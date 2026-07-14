@@ -98,18 +98,14 @@ def test_ssh_config_idempotent_and_preserves(tmp_path, monkeypatch):
     assert "Host other" in text                          # unrelated block untouched
 
 
-# --- gadgets: research reuses save_config -----------------------------------
+# --- gadgets: research section merge ---------------------------------------
 
 
-def test_research_config_reuses_save_config(monkeypatch):
-    rc = __import__("research.config", fromlist=["config"])
-    captured = {}
-    monkeypatch.setattr(rc, "save_config", lambda cfg, path=None: captured.update(cfg=cfg))
-    monkeypatch.setattr(rc, "load_config", lambda path=None: {"model": "sonnet", "max_students": 10})
-
+def test_research_config_merges_into_root(monkeypatch):
     ctx = onboard.Ctx(dry_run=False, assume_yes=True, sheet={})
-    onboard._write_research_config({"model": "opus", "output_dir": ""}, ctx)
+    root = {"research": {"model": "sonnet", "max_students": 10}}
+    onboard._write_research_config({"model": "opus", "output_dir": ""}, root, ctx)
 
-    assert captured["cfg"]["model"] == "opus"            # sheet value wins
-    assert captured["cfg"]["max_students"] == 10         # merged from current
-    assert "output_dir" not in captured["cfg"]           # empty value dropped, not written
+    assert root["research"]["model"] == "opus"            # sheet value wins
+    assert root["research"]["max_students"] == 10         # preserved from current
+    assert "output_dir" not in root["research"]           # empty value dropped

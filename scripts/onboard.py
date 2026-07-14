@@ -498,25 +498,27 @@ def step_install(cfg: dict, ctx: Ctx) -> StepResult:
 # ---------------------------------------------------------------------------
 
 
-def _write_research_config(rc: dict, ctx: Ctx) -> None:
-    try:
-        from research.config import load_config, save_config
-    except Exception as e:  # research tool not installed
-        print(f"  [warn] cannot import research.config ({e}); skipping research config")
-        return
+def _write_research_config(rc: dict, cfg_root: dict, ctx: Ctx) -> None:
     desired = _non_empty(dict(rc))
-    current = load_config()
-    merged = {**current, **desired}
-    if merged == current:
-        print("  [skip] ~/.config/research/config.json already up to date")
+    existing = dict(cfg_root.get("research") or {})
+    merged = {**existing, **desired}
+    if merged == existing:
+        print("  [skip] research section already up to date")
         return
-    print("  [write] ~/.config/research/config.json")
+    print("  [write] config.json → research")
     if not ctx.dry_run:
-        save_config(merged)
+        cfg_root["research"] = merged
 
 
 def step_gadgets(cfg: dict, ctx: Ctx) -> StepResult:
+    """Write gadget tool settings into the unified repo-root config.json."""
+    from common import config as gadget_config
+    from common.io import atomic_write
+
+    path = gadget_config.resolve_config_path()
+    root = dict(gadget_config.load_root_config())
     done = []
+
     if "summarize" in cfg:
         s = cfg["summarize"] or {}
         desired = _non_empty({
@@ -527,16 +529,39 @@ def step_gadgets(cfg: dict, ctx: Ctx) -> StepResult:
             "rclone_path": s.get("rclone_path", ""),
             "default_api": s.get("default_api", ""),
         })
-        _write_json_config(Path("~/.config/summarize/config.json").expanduser(),
-                           desired, dry_run=ctx.dry_run)
+        existing = dict(root.get("summarize") or {})
+        merged = {**existing, **desired}
+        if merged == existing:
+            print("  [skip] summarize section already up to date")
+        else:
+            print(f"  [write] {path} → summarize")
+            if not ctx.dry_run:
+                root["summarize"] = merged
         done.append("summarize")
+
     if "research" in cfg:
-        _write_research_config(cfg["research"] or {}, ctx)
+        _write_research_config(cfg["research"] or {}, root, ctx)
         done.append("research")
+
     if "research_scout" in cfg:
-        _write_json_config(Path("~/.config/research_scout/config.json").expanduser(),
-                           _non_empty(dict(cfg["research_scout"] or {})), dry_run=ctx.dry_run)
+        desired = _non_empty(dict(cfg["research_scout"] or {}))
+        existing = dict(root.get("research_scout") or {})
+        merged = {**existing, **desired}
+        if merged == existing:
+            print("  [skip] research_scout section already up to date")
+        else:
+            print(f"  [write] {path} → research_scout")
+            if not ctx.dry_run:
+                root["research_scout"] = merged
         done.append("research_scout")
+
+    if not ctx.dry_run and done:
+        # Persist if anything changed vs disk
+        disk = gadget_config.load_root_config()
+        if root != disk:
+            atomic_write(path, json.dumps(root, indent=2, ensure_ascii=False) + "\n")
+            gadget_config.clear_cache()
+
     return StepResult("gadgets", "ok", f"configured: {', '.join(done) or 'none'}")
 
 

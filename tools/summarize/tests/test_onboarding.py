@@ -87,25 +87,21 @@ def test_hugo_deploy_check_passes_for_site_with_hugo_and_bash(monkeypatch, tmp_p
 
 
 def test_init_config_rechecks_freshly_written_config(monkeypatch, tmp_path):
-    """--init-config must validate the config it just wrote — not the stale
-    import-time _CONFIG_PATH, which pointed at a nonexistent home config on a
-    first-time machine (that made init exit(1) right after succeeding)."""
+    """--init-config must validate the config it just wrote."""
+    from common import config as gadget_config
     from summarize import config as config_mod
 
     repo_cfg = tmp_path / "config.json"
-    stale = tmp_path / "stale-missing.json"
-    monkeypatch.setattr(config_mod, "_REPO_CONFIG_PATH", repo_cfg)
-    monkeypatch.setattr(config_mod, "_HOME_CONFIG_PATH", tmp_path / "home.json")
-    monkeypatch.setattr(config_mod, "_CONFIG_PATH", stale)
-    monkeypatch.setattr(config_mod, "_cached_config", None)
-    monkeypatch.setattr(onboarding, "_CONFIG_PATH", stale)
-    monkeypatch.delenv("SUMMARIZE_CONFIG", raising=False)
+    monkeypatch.setenv("GADGET_CONFIG", str(repo_cfg))
+    gadget_config.clear_cache()
+    monkeypatch.setattr(onboarding, "_CONFIG_PATH", repo_cfg)
 
     def fake_init():
         repo_cfg.write_text(
-            json.dumps({"rclone_remote": "gdrive:gadget/summarize"}),
+            json.dumps({"summarize": {"rclone_remote": "gdrive:gadget/summarize"}}),
             encoding="utf-8",
         )
+        gadget_config.clear_cache()
 
     monkeypatch.setattr("summarize.daily._config_init", fake_init)
     monkeypatch.setattr(onboarding, "_find_rclone", lambda: "/usr/bin/rclone")

@@ -1,0 +1,47 @@
+{
+  "summarize": {
+    "device_name": "my-pc",
+    "default_api": "ollama",
+    "deploy": true,
+    "hugo_site": "",
+    "workers": 4,
+    "model": "qwen3.6-sum",
+    "base_url": "http://127.0.0.1:11434/v1",
+    "reasoning_effort": "none",
+    "translation_model": "tencent/Hy-MT2-1.8B-GGUF",
+    "translation_model_ollama": "hf.co/tencent/Hy-MT2-1.8B-GGUF",
+    "translation_backend": "ollama",
+    "logs_dir": "",
+    "reports_dir": "",
+    "rclone_remote": "gdrive:gadget/summarize",
+    "rclone_path": ""
+  },
+  "research": {
+    "model": "sonnet",
+    "default_mode": "fast",
+    "default_depth": 1,
+    "max_students": 10,
+    "output_dir": "",
+    "semantic_scholar_api_key": ""
+  },
+  "research_scout": {
+    "default_api": "ollama",
+    "default_language": "zh",
+    "hugo_site": "",
+    "default_lookback_days": 7,
+    "default_max_results": 50,
+    "default_top_papers_in_report": 5,
+    "max_high_relevance": 20,
+    "default_insight_top_n": 3,
+    "semantic_scholar_api_key": ""
+  },
+  "sync": {
+    "rclone_remote": "gdrive:gadget",
+    "rclone_path": ""
+  },
+  "translator": {
+    "models": [
+      "tencent/Hy-MT2-1.8B"
+    ]
+  }
+}

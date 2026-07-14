@@ -1,6 +1,16 @@
 """Common utilities shared across gadget tools."""
 
 from common.io import atomic_write, content_hash, load_json_config
+from common.config import (
+    resolve_config_path,
+    load_root_config,
+    load_section,
+    update_section,
+    save_root_config,
+    clear_cache as clear_config_cache,
+    DEFAULT_CONFIG_PATH,
+    EXAMPLE_CONFIG_PATH,
+)
 from common.cache import DiskCache
 from common.json_utils import (
     parse_json_response,
@@ -65,6 +75,9 @@ from common.translation import (
 
 __all__ = [
     "atomic_write", "content_hash", "load_json_config",
+    "resolve_config_path", "load_root_config", "load_section",
+    "update_section", "save_root_config", "clear_config_cache",
+    "DEFAULT_CONFIG_PATH", "EXAMPLE_CONFIG_PATH",
     "DiskCache",
     "parse_json_response", "try_parse_json", "try_repair_result", "repair_json_with_llm",
     "call_llm", "call_llm_raw", "call_anthropic", "call_openai", "call_claude_cli",

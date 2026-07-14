@@ -1,0 +1,65 @@
+ecl_version: "1.0"
+feature: "unified-root-config"
+status: "implemented"
+created: "2026-07-14"
+updated: "2026-07-14"
+
+context:
+  problem: >
+    Tools each read/wrote separate config files (tools/summarize/config.json,
+    ~/.config/summarize|research|research_scout/, ~/.config/gadget/sync.json,
+    translator_models.json), making setup and GitHub publishing fragmented.
+  approach: >
+    Single repo-root config.json (gitignored personal) + config.example.json
+    (tracked). common.config loads/saves namespaced sections. Fail-fast: no
+    legacy ~/.config or per-tool path fallbacks. GADGET_CONFIG env for tests.
+
+requirements:
+  - id: REQ-001
+    text: "One repo-root config.json for all tool runtime settings."
+    status: "implemented"
+    acceptance_criteria:
+      - "summarize / research / research_scout / sync / translator read sections from root config.json"
+      - "config --init and onboard write only root config.json"
+  - id: REQ-002
+    text: "Tracked config.example.json at repo root for GitHub / new clones."
+    status: "implemented"
+  - id: REQ-003
+    text: "Fail-fast: no fallback to ~/.config/* or tools/summarize/config.json."
+    status: "implemented"
+  - id: REQ-004
+    text: "GADGET_CONFIG env overrides path (tests / multi-config)."
+    status: "implemented"
+
+functions:
+  - id: FN-001
+    name: "common.config load/save"
+    file: "common/config.py"
+    depends_on: []
+    output: "resolve_config_path, load_section, update_section"
+    verify: "python -m pytest common/tests/test_config.py -q"
+    status: "implemented"
+  - id: FN-002
+    name: "summarize section wiring"
+    file: "tools/summarize/config.py"
+    depends_on: ["FN-001"]
+    output: "_load_config / _save_summarize_config use summarize section"
+    verify: "python -m pytest tools/summarize/tests/test_config.py tools/summarize/tests/test_onboarding.py -q"
+    status: "implemented"
+  - id: FN-003
+    name: "research + scout + sync + translator + onboard"
+    file: "tools/research/config.py"
+    depends_on: ["FN-001"]
+    output: "all writers/readers use root sections"
+    verify: "python -m pytest common/tests/test_config.py scripts/tests/test_onboard.py -q"
+    status: "implemented"
+
+feature_guard:
+  key_files:
+    - common/config.py
+    - config.example.json
+  invariants:
+    - "Runtime config path is GADGET_CONFIG or <GADGET_ROOT>/config.json only"
+    - "Sections: summarize, research, research_scout, sync, translator"
+    - "config.json is gitignored; config.example.json is tracked"
+  verification: "python -m pytest common/tests/test_config.py tools/summarize/tests/test_config.py -q"

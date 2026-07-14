@@ -17,7 +17,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Optional, TextIO
 
-from .config import _CONFIG_PATH, _load_config
+from .config import _CONFIG_PATH, _load_config, _resolve_config_path
+from common.config import clear_cache as _clear_gadget_config_cache, resolve_config_path
 from .remote import _find_rclone
 from .usage import _ccusage_version
 
@@ -56,18 +57,27 @@ def _warn(key: str, label: str, detail: str, action: str = "") -> RequirementRes
 
 
 def _check_config_file() -> RequirementResult:
-    if _CONFIG_PATH.exists():
+    path = resolve_config_path()
+    cfg = _load_config()
+    if path.exists() and cfg:
         return _ok(
             "config-file",
             "summarize config",
-            f"Found {_CONFIG_PATH}",
+            f"Found {path} (summarize section)",
             required=False,
+        )
+    if path.exists():
+        return _warn(
+            "config-file",
+            "summarize config",
+            f"{path} exists but has no summarize section; defaults will be used.",
+            "Run: python -m summarize onboard --init-config",
         )
     return _warn(
         "config-file",
         "summarize config",
-        f"{_CONFIG_PATH} does not exist; defaults will be used.",
-        "Run: python -m summarize onboard --init-config",
+        f"{path} does not exist; defaults will be used.",
+        "Run: python -m summarize onboard --init-config  (copies schema into repo-root config.json)",
     )
 
 
@@ -78,7 +88,7 @@ def _check_rclone_remote(cfg: dict) -> RequirementResult:
             "rclone-remote",
             "rclone remote",
             "summarize auto currently uses daily merge --sync-all, which needs "
-            f"rclone_remote in the summarize config ({_CONFIG_PATH}).",
+            f"rclone_remote in the summarize section of {resolve_config_path()}.",
             "Run: python -m summarize onboard --init-config",
         )
     if ":" not in remote:
@@ -396,16 +406,12 @@ def ensure_auto_ready(
 def cmd_onboard(args) -> None:
     """CLI handler for ``python -m summarize onboard``."""
     if getattr(args, "init_config", False):
-        from . import config as config_mod
         from .daily import _config_init
 
         _config_init()
-        # _config_init writes the repo-local config, but _CONFIG_PATH was resolved
-        # at import time (before the file existed). Re-resolve it in both modules
-        # so the readiness checks below see the config we just wrote.
+        _clear_gadget_config_cache()
         global _CONFIG_PATH
-        _CONFIG_PATH = config_mod._CONFIG_PATH = config_mod._resolve_config_path()
-        config_mod._cached_config = None
+        _CONFIG_PATH = _resolve_config_path()
 
     results = check_auto_requirements(
         api=getattr(args, "api", "claude_cli"),

@@ -28,7 +28,13 @@ from common.llm import ChunkTimeoutError, cleanup_chunk_cache as _cleanup_chunk_
 from common.paths import LOGS_DIR, REPORTS_DIR, CACHE_DIR
 from common.site_staging import resolve_site_content_dir, write_site_content
 
-from .config import _load_config, _resolve_output_dir, _get_device_name, _CONFIG_PATH, _REPO_CONFIG_PATH, _cached_config
+from .config import (
+    _load_config,
+    _resolve_output_dir,
+    _get_device_name,
+    _CONFIG_PATH,
+    _save_summarize_config,
+)
 from .remote import _rclone_upload, _rclone_upload_dir, _rclone_download_logs, _rclone_download_reports, _find_rclone
 from .parsers import (discover_all_dates, parse_claude_code, parse_codex,
                       parse_chatgpt_export, parse_generic, collect_conversations)
@@ -935,13 +941,16 @@ def cmd_config(args):
 
 def _config_show():
     """显示当前配置。"""
-    print(f"配置文件路径: {_CONFIG_PATH}")
-    if _CONFIG_PATH.exists():
-        cfg = _load_config()
-        print(f"配置内容:")
+    from common.config import resolve_config_path
+
+    path = resolve_config_path()
+    print(f"配置文件路径: {path}  (section: summarize)")
+    cfg = _load_config()
+    if cfg:
+        print("配置内容:")
         print(json.dumps(cfg, ensure_ascii=False, indent=2))
     else:
-        print("(配置文件不存在，使用默认值)")
+        print("(summarize 段不存在，使用默认值)")
 
     print()
     print("当前生效路径:")
@@ -953,7 +962,6 @@ def _config_show():
     print(f"  logs_dir:     {logs_dir}")
     print(f"  reports_dir:  {reports_dir}")
 
-    cfg = _load_config()
     remote = cfg.get("rclone_remote")
     if remote:
         rclone_bin = _find_rclone()
@@ -969,10 +977,14 @@ def _config_show():
 
 
 def _config_init():
-    """交互式创建配置文件（写入仓库内 tools/summarize/config.json）。"""
-    print(f"配置文件路径: {_REPO_CONFIG_PATH}")
-    if _REPO_CONFIG_PATH.exists():
-        overwrite = input("配置文件已存在，是否覆盖？[y/N] ").strip().lower()
+    """交互式创建 summarize 段，写入仓库根目录 config.json。"""
+    from common.config import resolve_config_path
+
+    path = resolve_config_path()
+    print(f"配置文件路径: {path}  (section: summarize)")
+    existing = _load_config()
+    if existing:
+        overwrite = input("summarize 配置已存在，是否覆盖该段？[y/N] ").strip().lower()
         if overwrite != "y":
             print("取消")
             return
@@ -1030,7 +1042,6 @@ def _config_init():
     if workers.isdigit():
         cfg["workers"] = int(workers)
 
-    # 写入
-    _atomic_write(_REPO_CONFIG_PATH, json.dumps(cfg, ensure_ascii=False, indent=2))
-    print(f"\n[ok] 配置已保存: {_REPO_CONFIG_PATH}")
+    saved = _save_summarize_config(cfg, replace=True)
+    print(f"\n[ok] 配置已保存: {saved}  (section: summarize)")
     print(json.dumps(cfg, ensure_ascii=False, indent=2))

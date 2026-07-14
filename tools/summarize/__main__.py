@@ -87,7 +87,7 @@ def _main_onboard():
     parser.add_argument("--hugo-site", type=str, default=None,
                         help="Hugo site root directory for --deploy")
     parser.add_argument("--init-config", action="store_true",
-                        help="Interactively create the repo-local tools/summarize/config.json")
+                        help="Interactively create/update the summarize section in repo-root config.json")
     parser.add_argument("--json", action="store_true",
                         help="Print machine-readable check results")
     from summarize.config import cli_defaults
