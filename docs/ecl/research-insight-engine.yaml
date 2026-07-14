@@ -1,0 +1,383 @@
+ecl_version: "1.0"
+feature: "research-insight-engine"
+status: phase-10-implemented
+created: 2026-03-30
+updated: 2026-03-30
+
+# ═══════════════════════════════════════════════════════════════════════
+# PROMPT CALIBRATION (Phase 0)
+# ═══════════════════════════════════════════════════════════════════════
+
+prompt_calibration:
+  raw_input: |
+    我还需要一个功能。就是能让这个research里面搜索出来的东西能够帮助我的research.
+    比如能总结搜索文章的写作格式，为什么他们的发文章这种概念，提取他们的精华，
+    还有从openreview里面读取reviewer对这个文章的看法，
+    来帮我更好的理解概念并且完成代码和文章的写作。
+  intent_decomposition:
+    total_intents: 5
+    total_tracks: 3
+    tracks:
+      - track_id: T1
+        name: "Paper Insight Engine"
+        priority: 1
+      - track_id: T2
+        name: "OpenReview Integration"
+        priority: 2
+      - track_id: T3
+        name: "Research Writing Assistant"
+        priority: 3
+
+# ═══════════════════════════════════════════════════════════════════════
+# DECISIONS LOG
+# ═══════════════════════════════════════════════════════════════════════
+
+decisions:
+  - id: DEC-001
+    decision: "Architecture: Pipeline Extension (Stage 4 + Stage 5)"
+    date: 2026-03-30
+  - id: DEC-002
+    decision: "Full-text: 复用 profiler arxiv_client.download_fulltext(), 截断到 40K chars"
+    date: 2026-03-30
+  - id: DEC-003
+    decision: "Trigger: opt-in via --insight flag (critic finding #5 修正)"
+    date: 2026-03-30
+  - id: DEC-004
+    decision: "OpenReview auth: guest API 优先, env var 认证可选"
+    date: 2026-03-30
+  - id: DEC-005
+    decision: "Analysis depth: 结构化摘要, 单次 LLM 调用 (critic finding #4 修正)"
+    date: 2026-03-30
+  - id: DEC-006
+    decision: "Analysis count: 可配置, 默认 top 3, CLI --insight-top-n"
+    date: 2026-03-30
+  - id: DEC-007
+    decision: "Import strategy: lazy import (matching analyze_citations pattern)"
+    date: 2026-03-30
+  - id: DEC-008
+    decision: "AAAI removed from venue list (not on OpenReview)"
+    date: 2026-03-30
+
+# ═══════════════════════════════════════════════════════════════════════
+# REQUIREMENTS (validated after adversarial filtering)
+# ═══════════════════════════════════════════════════════════════════════
+
+requirements:
+  - id: REQ-001
+    text: "Scout 管线可获取论文全文 (截断到 40K chars)"
+    status: verified
+    confidence: 0.95
+    acceptance_criteria:
+      - "对 arXiv 论文调用 download_fulltext() 获取全文, 截断到 MAX_FULLTEXT_CHARS=40000"
+      - "全文缓存到 DiskCache (namespace: api/pdfs, 无 TTL)"
+      - "非 arXiv 论文: bioRxiv 尝试 DOI 全文, PubMed 降级到 abstract"
+      - "全文获取失败时 graceful skip (log warning, 不中断管线)"
+    track: T1
+    critic_resolutions:
+      - "Finding #1 (CRITICAL): 添加 40K char 截断上限"
+      - "Finding #2 (HIGH): 使用 lazy import 避免耦合"
+      - "Finding #7 (MEDIUM): 定义三层降级: fulltext / abstract-reduced / skip"
+
+  - id: REQ-002
+    text: "LLM 单次调用分析论文三维度: 写作结构 + 发表要素 + 核心知识"
+    status: verified
+    confidence: 0.9
+    acceptance_criteria:
+      - "单次 LLM 调用输出统一 JSON (非三次独立调用)"
+      - "writing_structure: narrative_flow, section_pattern, argument_style"
+      - "publishability: key_strengths, positioning_strategy, experiment_design"
+      - "knowledge_extraction: core_insights (3-5), reusable_techniques, implementation_hints"
+      - "abstract-only 论文使用精简 prompt (省略 section_pattern/narrative_flow)"
+    track: T1
+    critic_resolutions:
+      - "Finding #4 (MEDIUM): 合并三个分析为单次 LLM 调用, 消除重叠"
+      - "Finding #1 (CRITICAL): prompt 模板包含截断全文 + 结构化输出约束"
+
+  - id: REQ-003
+    text: "OpenReview API 客户端"
+    status: verified
+    confidence: 0.85
+    acceptance_criteria:
+      - "通过 title fuzzy matching (normalized + Levenshtein) 映射 arXiv → OpenReview"
+      - "获取所有 reviews (rating, confidence, strengths, weaknesses, questions)"
+      - "guest API (无认证) 为默认; env var OPENREVIEW_USERNAME/PASSWORD 为可选增强"
+      - "覆盖 ICLR/NeurIPS/ICML (AAAI 不支持, 非 OpenReview 平台)"
+      - "rate limiter: 2 req/s (保守, OpenReview 未公布限制)"
+      - "DiskCache 缓存, namespace api/openreview/, 7-day TTL"
+      - "title match 失败时返回 None (非异常), 下游 graceful skip"
+    track: T2
+    critic_resolutions:
+      - "Finding #3 (HIGH): 使用 fuzzy matching; 移除 AAAI; 设计 no-match 为常态"
+      - "Finding #8 (HIGH): guest API 为默认, 密码认证为可选; validate early"
+
+  - id: REQ-004
+    text: "审稿共识分析"
+    status: verified
+    confidence: 0.85
+    acceptance_criteria:
+      - "LLM 分析多 reviewer 意见的共识和分歧"
+      - "输出: average_rating, consensus_strengths, consensus_weaknesses, controversies"
+      - "0 reviews → skip (不输出 review_analysis)"
+      - "1 review → 输出单 reviewer 摘要 (不做 consensus)"
+      - "2 reviews → limited consensus (标注 reviewer count)"
+      - "3+ reviews → full consensus analysis"
+      - "meta-review 单独标注 (如果有)"
+    track: T2
+    critic_resolutions:
+      - "Finding #9 (MEDIUM): 定义 0/1/2/3+ reviewer 行为"
+
+  - id: REQ-005
+    text: "报告增加写作指南 section"
+    status: verified
+    confidence: 0.9
+    acceptance_criteria:
+      - "独立 LLM 综合调用 (WRITING_GUIDE_PROMPT): 浓缩所有论文 insight 为 500 字指南"
+      - "四部分: 领域写作规范、审稿重点、方法论 takeaways、代码参考"
+      - "目标受众: 准备写论文的研究者 (project-contextualized)"
+      - "集成到 generate_report_markdown() 同一 Hugo post"
+      - "每篇论文的 insight 详情在独立 subsection 中"
+    track: T3
+    critic_resolutions:
+      - "Finding #10 (MEDIUM): 添加综合 LLM 调用; 定义受众和长度上限"
+
+  - id: REQ-006
+    text: "CLI 集成和配置"
+    status: verified
+    confidence: 0.95
+    acceptance_criteria:
+      - "report 命令增加 --insight 标志 (opt-in, 非默认)"
+      - "--insight-top-n N 控制分析数量 (默认 3)"
+      - "insight_top_n 自动 capped 到 <= top_papers_in_report"
+      - "config.json 支持 insight_top_n, openreview 相关配置"
+      - "--no-cache 同时跳过 insight 缓存"
+    track: T1+T2+T3
+    critic_resolutions:
+      - "Finding #5 (HIGH): 改为 opt-in (--insight)"
+      - "Finding #11 (LOW): insight_top_n capped to top_papers_in_report"
+      - "Finding #6 (MEDIUM): --no-cache 传播到 insight cache"
+
+# ═══════════════════════════════════════════════════════════════════════
+# FEATURES
+# ═══════════════════════════════════════════════════════════════════════
+
+features:
+  - id: FEAT-001
+    name: "Full-text download bridge"
+    parent: REQ-001
+    modules: [MOD-001]
+    dependencies: []
+    complexity: small
+
+  - id: FEAT-002
+    name: "Insight analysis pipeline (Stage 4)"
+    parent: REQ-002
+    modules: [MOD-002, MOD-003]
+    dependencies: [FEAT-001]
+    complexity: medium
+
+  - id: FEAT-003
+    name: "OpenReview API client"
+    parent: REQ-003
+    modules: [MOD-004]
+    dependencies: []
+    complexity: medium
+
+  - id: FEAT-004
+    name: "Review consensus analysis (Stage 5)"
+    parent: REQ-004
+    modules: [MOD-002, MOD-003]
+    dependencies: [FEAT-003]
+    complexity: medium
+
+  - id: FEAT-005
+    name: "Writing guide report section"
+    parent: REQ-005
+    modules: [MOD-005]
+    dependencies: [FEAT-002, FEAT-004]
+    complexity: medium
+
+  - id: FEAT-006
+    name: "CLI flags & config"
+    parent: REQ-006
+    modules: [MOD-006, MOD-007]
+    dependencies: [FEAT-002, FEAT-004]
+    complexity: small
+
+# ═══════════════════════════════════════════════════════════════════════
+# MODULES (implementation units)
+# ═══════════════════════════════════════════════════════════════════════
+
+modules:
+  - id: MOD-001
+    name: "Full-text bridge"
+    file_path: "research/scout/insight.py"
+    functions:
+      - "download_paper_fulltext(paper: dict, cache: DiskCache) -> str"
+      - "MAX_FULLTEXT_CHARS = 40000"
+
+  - id: MOD-002
+    name: "Insight analysis engine"
+    file_path: "research/scout/insight.py"
+    functions:
+      - "analyze_paper_insight(paper, fulltext, api, lang) -> dict"
+      - "analyze_review_consensus(paper, reviews, api, lang) -> dict"
+      - "synthesize_writing_guide(papers_with_insights, project, api, lang) -> dict"
+      - "run_insight_analysis(papers, project, api, lang, top_n, cache) -> list[dict]"
+      - "_insight_cache_key(paper_id, fulltext_hash) -> str"
+
+  - id: MOD-003
+    name: "Insight prompt templates"
+    file_path: "research/scout/prompts.py"
+    additions:
+      - "INSIGHT_ANALYSIS_PROMPT (fulltext → writing_structure + publishability + knowledge)"
+      - "INSIGHT_ABSTRACT_PROMPT (abstract-only reduced version)"
+      - "REVIEW_CONSENSUS_PROMPT (reviews → consensus analysis)"
+      - "WRITING_GUIDE_PROMPT (cross-paper synthesis → 500-word guide)"
+
+  - id: MOD-004
+    name: "OpenReview API client"
+    file_path: "research/apis/openreview_client.py"
+    functions:
+      - "OpenReviewClient.__init__(username=None, password=None)"
+      - "search_submission(title, authors=None, venue_hint=None) -> dict | None"
+      - "fetch_reviews(forum_id) -> list[dict]"
+      - "fetch_paper_reviews(paper_dict) -> dict | None"
+      - "_normalize_title(title) -> str"
+      - "_fuzzy_match(query_title, candidate_titles, threshold=0.85) -> str | None"
+    new_dep: "openreview-py>=1.40.0"
+
+  - id: MOD-005
+    name: "Writing guide report section"
+    file_path: "research/scout/report.py"
+    additions:
+      - "generate_writing_guide_section(papers_with_insights) -> str"
+      - "render_insight_details(paper) -> str"
+      - "render_review_summary(paper) -> str"
+
+  - id: MOD-006
+    name: "Config extensions"
+    file_path: "research/scout/config.py"
+    additions:
+      - "INSIGHT_TOP_N = 3"
+      - "INSIGHT_CACHE_DIR = CACHE_DIR / 'insight'"
+      - "MAX_FULLTEXT_CHARS = 40000"
+
+  - id: MOD-007
+    name: "CLI integration"
+    file_path: "research/scout/cli.py"
+    additions:
+      - "report subparser: --insight flag (opt-in)"
+      - "report subparser: --insight-top-n N (default 3)"
+      - "run_evaluation_pipeline(): integrate run_insight_analysis"
+
+# ═══════════════════════════════════════════════════════════════════════
+# DEPENDENCY GRAPH (implementation order)
+# ═══════════════════════════════════════════════════════════════════════
+
+dependency_graph:
+  FEAT-001: []           # Can start immediately
+  FEAT-003: []           # Can start immediately (parallel with FEAT-001)
+  FEAT-002: [FEAT-001]   # Needs fulltext bridge
+  FEAT-004: [FEAT-003]   # Needs OpenReview client
+  FEAT-005: [FEAT-002, FEAT-004]  # Needs both insight + reviews
+  FEAT-006: [FEAT-002, FEAT-004]  # Needs both to wire CLI
+
+# Parallel tracks:
+#   Track A: FEAT-001 → FEAT-002
+#   Track B: FEAT-003 → FEAT-004
+#   Merge:   FEAT-005, FEAT-006
+
+# ═══════════════════════════════════════════════════════════════════════
+# ADVERSARIAL FINDINGS (Phase 5 + 8)
+# ═══════════════════════════════════════════════════════════════════════
+
+adversarial_findings:
+  total: 11
+  resolved: 11
+  critical_resolutions:
+    - finding: "Context window bomb (CRITICAL)"
+      resolution: "40K char truncation + single combined LLM call"
+      status: resolved
+    - finding: "Default-on triples cost (HIGH)"
+      resolution: "Changed to opt-in --insight flag"
+      status: resolved
+    - finding: "AAAI not on OpenReview (HIGH)"
+      resolution: "Removed AAAI; documented supported venues"
+      status: resolved
+    - finding: "Password auth security (HIGH)"
+      resolution: "Guest API default; password auth optional"
+      status: resolved
+    - finding: "Import coupling (HIGH)"
+      resolution: "Lazy import matching existing pattern"
+      status: resolved
+
+# ═══════════════════════════════════════════════════════════════════════
+# FEASIBILITY PROBES (Phase 7)
+# ═══════════════════════════════════════════════════════════════════════
+
+probes:
+  - target: FEAT-003
+    type: assumption
+    question: "openreview-py available and supports guest access?"
+    verdict: feasible
+    evidence: "openreview-py 1.58.1 on PyPI; guest client confirmed"
+  - target: FEAT-003
+    type: assumption
+    question: "Can map arXiv papers to OpenReview submissions?"
+    verdict: needs-modification
+    evidence: "No arXiv ID field in OpenReview schema; title matching required"
+  - target: FEAT-003
+    type: assumption
+    question: "Rate limits for OpenReview API?"
+    verdict: feasible
+    evidence: "Undocumented; conservative 2 req/s recommended"
+  - target: FEAT-001
+    type: assumption
+    question: "DiskCache pattern reusable for insight caching?"
+    verdict: feasible
+    evidence: "Existing DiskCache + rate_limiter patterns ready to use"
+
+# ═══════════════════════════════════════════════════════════════════════
+# RISK REGISTER
+# ═══════════════════════════════════════════════════════════════════════
+
+risk_register:
+  - id: RISK-001
+    description: "OpenReview title matching false negatives (论文改名后匹配失败)"
+    probability: medium
+    impact: low
+    mitigation: "Graceful skip; insight analysis still valuable without reviews"
+  - id: RISK-002
+    description: "OpenReview API rate limiting 导致 timeout"
+    probability: low
+    impact: medium
+    mitigation: "2 req/s limiter + exponential backoff on 429"
+  - id: RISK-003
+    description: "全文提取质量差 (PDF artifact, 公式乱码)"
+    probability: medium
+    impact: low
+    mitigation: "HTML first (cleaner); LLM 对噪声有鲁棒性"
+  - id: RISK-004
+    description: "LLM 输出质量不稳定 (insight 分析的 JSON 格式错误)"
+    probability: low
+    impact: medium
+    mitigation: "复用现有 parse_json_response + try_repair_result 机制"
+
+# ═══════════════════════════════════════════════════════════════════════
+# ESTIMATED SCOPE
+# ═══════════════════════════════════════════════════════════════════════
+
+scope:
+  new_files:
+    - "research/scout/insight.py (~300 lines)"
+    - "research/apis/openreview_client.py (~250 lines)"
+  modified_files:
+    - "research/scout/prompts.py (+4 prompt templates, ~100 lines)"
+    - "research/scout/report.py (+3 functions, ~120 lines)"
+    - "research/scout/config.py (+3 constants, ~15 lines)"
+    - "research/scout/cli.py (+2 flags, pipeline integration, ~40 lines)"
+    - "research/apis/rate_limiter.py (+1 limiter, ~2 lines)"
+    - "research/requirements.txt (+openreview-py)"
+  total_new_lines: "~830 lines"
+  new_dependencies: ["openreview-py>=1.40.0"]
+  llm_cost_per_run: "~150K-300K tokens (3 papers * ~50K tokens/paper for insight + ~30K for reviews + ~20K for writing guide)"

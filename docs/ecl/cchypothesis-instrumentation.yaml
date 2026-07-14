@@ -1,0 +1,176 @@
+ecl_version: "1.0"
+feature: "cchypothesis-instrumentation"
+status: completed
+created: "2026-03-28"
+updated: "2026-03-28"
+
+prompt_calibration:
+  raw_input: |
+    整合 Franz debug-mode-skill 的插桩日志 + git restore 清理模式，
+    doraemonkeys 的假设标签化日志 [DEBUG Hx]，以及人工确认环节
+    到现有 cchypothesis skill 中。
+  status: completed
+  intent_decomposition:
+    total_intents: 1
+    total_tracks: 1
+    tracks:
+      - track_id: T1
+        name: "cchypothesis instrumented debugging integration"
+        priority: 1
+        intents:
+          - raw: "整合插桩调试 + git 安全 + 假设标签日志 + 人工确认到 cchypothesis"
+            type: enhancement
+  tracks:
+    T1:
+      calibrated_scenario: |
+        增强 cchypothesis skill 的 Phase 3 (Investigation) 和 Phase 4 (Fix & Validate)：
+        1. Phase 3 重构为智能双轨调查：自动分流静态分析/插桩探测
+        2. 插桩探测使用 [DEBUG Hx] 标签 + #region DEBUG 标记
+        3. 每次插桩后 git restore 清理，Phase 3 入口增加 git safety
+        4. Phase 4 增加可选人工确认环节
+        5. 诊断文档增加插桩日志记录
+      intent_dimensions:
+        task: { status: present, value: "整合4种调试模式到 cchypothesis" }
+        input: { status: enriched, value: "Franz/doraemonkeys 模式 + 现有 SKILL.md" }
+        output: { status: present, value: "更新后的 SKILL.md + cchypothesis.md + diagnostic-schema.md" }
+        constraints: { status: present, value: "不破坏并行 subagent 架构；保持通用性" }
+        context: { status: enriched, value: "Phase 3 目前 READ-ONLY; Phase 4 已有 git stash" }
+        success_criteria: { status: resolved, value: "新增插桩调查能力 + git 安全 + 人工确认 + 诊断记录" }
+
+pending_input: null
+
+decisions:
+  - id: DEC-001
+    phase: 3
+    decision: "采用方案 C: Phase 3 智能双轨 (static + instrumented)"
+    rationale: "保留并行优势，自动分流，git safety 内置"
+    date: "2026-03-28"
+
+requirements:
+  - id: REQ-001
+    text: "Phase 3 入口增加 Git Safety Checkpoint"
+    status: verified
+    confidence: 0.9
+    acceptance_criteria:
+      - "Phase 3 开始前检查 git status"
+      - "如有未提交改动，自动 git stash push"
+      - "调试结束后 git stash pop 恢复"
+    decomposition:
+      features: [FEAT-001]
+    challenges:
+      - "如果 bug 在未提交代码中，stash 会导致调试错误状态"
+      - "Resolution: 分类处理 — bug-in-uncommitted 时不 stash"
+
+  - id: REQ-002
+    text: "每个假设自动分类调查方式: static vs needs-instrumentation"
+    status: verified
+    confidence: 0.85
+    acceptance_criteria:
+      - "基于假设类型自动判断: 代码结构/配置 → static; 运行时状态/时序 → instrumented"
+      - "分类记录在假设结构中"
+    decomposition:
+      features: [FEAT-002]
+
+  - id: REQ-003
+    text: "插桩探测使用 [DEBUG Hx] 标签 + #region DEBUG 标记"
+    status: verified
+    confidence: 0.9
+    acceptance_criteria:
+      - "语言感知的标记格式 (Python/JS/TS/Rust/Go/Java)"
+      - "每个假设最多 5 个插桩点"
+      - "日志包含假设 ID + 变量值 + 位置信息"
+    decomposition:
+      features: [FEAT-003]
+
+  - id: REQ-004
+    text: "每轮插桩后 git restore 清理"
+    status: verified
+    confidence: 0.95
+    acceptance_criteria:
+      - "每个假设的插桩-运行-分析完成后 git restore ."
+      - "验证清理成功: git status 无残留"
+      - "如果 git restore 失败，回退到 git stash pop"
+    decomposition:
+      features: [FEAT-004]
+
+  - id: REQ-005
+    text: "Phase 4 增加可选人工确认环节"
+    status: verified
+    confidence: 0.85
+    acceptance_criteria:
+      - "UI/visual/hard-to-automate bug 自动触发人工确认"
+      - "--human-confirm flag 强制触发"
+      - "使用 AskUserQuestion 获取用户判定"
+    decomposition:
+      features: [FEAT-005]
+
+  - id: REQ-006
+    text: "诊断文档记录插桩调查结果"
+    status: verified
+    confidence: 0.9
+    acceptance_criteria:
+      - "新增 Instrumentation Log section"
+      - "记录: 哪些假设用了插桩, 插桩位置, 日志分析结果"
+    decomposition:
+      features: [FEAT-006]
+
+features:
+  - id: FEAT-001
+    name: "Git Safety Checkpoint (Phase 3 Step 0)"
+    parent: REQ-001
+    complexity: small
+    dependencies: []
+
+  - id: FEAT-002
+    name: "Investigation Triage (Phase 3 Step 1)"
+    parent: REQ-002
+    complexity: small
+    dependencies: []
+
+  - id: FEAT-003
+    name: "Instrumented Probing Protocol (Phase 3 Step 3)"
+    parent: REQ-003
+    complexity: medium
+    dependencies: [FEAT-001, FEAT-002]
+
+  - id: FEAT-004
+    name: "Instrumentation Cleanup (Phase 3 Step 3 sub)"
+    parent: REQ-004
+    complexity: small
+    dependencies: [FEAT-003]
+
+  - id: FEAT-005
+    name: "Human Confirmation Gate (Phase 4 extension)"
+    parent: REQ-005
+    complexity: small
+    dependencies: []
+
+  - id: FEAT-006
+    name: "Diagnostic Instrumentation Log (Phase 6 extension)"
+    parent: REQ-006
+    complexity: small
+    dependencies: [FEAT-003]
+
+dependency_graph:
+  FEAT-001: []
+  FEAT-002: []
+  FEAT-003: [FEAT-001, FEAT-002]
+  FEAT-004: [FEAT-003]
+  FEAT-005: []
+  FEAT-006: [FEAT-003]
+
+deliverables:
+  - path: "skills/cchypothesis/SKILL.md"
+    status: completed
+    changes: "Phase 3 重构为智能双轨 + Phase 4 增加人工确认 + 新增 Instrumentation Protocol + 更新反模式"
+  - path: "skills/cchypothesis/cchypothesis.md"
+    status: completed
+    changes: "更新 What Happens + 新增 --human-confirm flag + 更新假设表格"
+  - path: "skills/cchypothesis/diagnostic-schema.md"
+    status: completed
+    changes: "新增 Instrumentation Log section + 表格增加 Method 列"
+  - path: "skills/CLAUDE.md"
+    status: completed
+    changes: "更新 cchypothesis 描述 + Key concept + slash command"
+  - path: "docs/ecl/cchypothesis-instrumentation.yaml"
+    status: completed

@@ -1,0 +1,250 @@
+ecl_version: "1.0"
+feature: "summarize-refactor"
+status: completed
+created: 2026-03-24
+updated: 2026-03-24
+
+# ─── Context ─────────────────────────────────────────────────────
+context:
+  problem: |
+    daily_summary.py is 2930 lines with 6 functional sections.
+    summarize/ lacks __init__.py, uses sys.path.insert hacks.
+    Zero test coverage on 5000+ lines of LLM pipeline code.
+  approach: "Plan A revised — split along section boundaries + further decompose parsers/usage + packaging + tests"
+  cli_compat: "允许小幅调整 (e.g., python -m summarize daily export)"
+
+# ─── Requirements (post Phase 4 revision) ────────────────────────
+requirements:
+  - id: REQ-001
+    text: "拆分 daily_summary.py 为 7 个模块"
+    status: verified
+    confidence: 0.95
+    acceptance_criteria:
+      - "config.py (~75 行): 配置加载、路径解析、设备名"
+      - "remote.py (~100 行): rclone 上传/下载"
+      - "parsers.py (~460 行): 对话解析 (Claude/Codex/ChatGPT/generic) + collect_conversations"
+      - "usage.py (~460 行): token 用量 (ccusage/codex 采集、合并)"
+      - "summarizer.py (~377 行): LLM 总结、分块、format_conversations"
+      - "formatter.py (~442 行): Markdown 生成、重要性排序、Hugo"
+      - "daily.py (~750 行): 管线编排 (export/merge/deploy)"
+      - "cli.py (~200 行): argparse 设置 + 子命令路由"
+    history:
+      - phase: 3
+        action: "初始拆分为 4 模块 (config/parsers/summarizer/formatter + daily)"
+        date: 2026-03-24
+      - phase: 4
+        action: |
+          Critic 发现: parsers 924行混合两种职责 → 拆为 parsers+usage;
+          rclone 不属于 config → 提取为 remote.py;
+          daily.py 950行超标 → 提取 cli.py;
+          collect_conversations 应归入 parsers
+        date: 2026-03-24
+
+  - id: REQ-002
+    text: "将 summarize/ 包化为 pip 可安装包"
+    status: verified
+    confidence: 0.95
+    acceptance_criteria:
+      - "创建 summarize/__init__.py 导出公共 API"
+      - "创建 summarize/__main__.py 支持 python -m summarize"
+      - "pyproject.toml packages 改为 ['common', 'summarize']"
+      - "pip install -e . 后 from summarize import ... 正常工作"
+
+  - id: REQ-003
+    text: "消除所有 sys.path.insert hack"
+    status: verified
+    confidence: 0.95
+    acceptance_criteria:
+      - "删除 monthly.py 的 sys.path.insert"
+      - "删除 weekly.py 的 sys.path.insert"
+      - "删除 mcp_server.py 的 summarize 路径 sys.path.insert"
+      - "所有导入改为 from summarize.xxx import yyy"
+      - "确保模块身份唯一 (always summarize.config, never bare config)"
+
+  - id: REQ-004
+    text: "添加核心逻辑测试覆盖"
+    status: verified
+    confidence: 0.85
+    acceptance_criteria:
+      - "test_imports.py: 迁移烟雾测试 (拆分前先写)"
+      - "test_parsers.py: 每个解析器至少 1 个测试"
+      - "test_usage.py: token 用量加载/合并测试"
+      - "test_config.py: 配置加载和路径解析测试"
+      - "test_formatter.py: Markdown 生成 + 重要性排序测试"
+      - "test_summarizer.py: 分块逻辑测试 (mock LLM)"
+      - "pytest 框架，tests/ 在 summarize/ 内"
+
+  - id: REQ-005
+    text: "保持 CLI 和 MCP Server 功能兼容"
+    status: verified
+    confidence: 0.9
+    acceptance_criteria:
+      - "python -m summarize daily export --date YYYY-MM-DD 正常工作"
+      - "python -m summarize weekly generate 正常工作"
+      - "python -m summarize monthly generate 正常工作"
+      - "mcp_server.py 导入路径原子性更新"
+      - "daily_summary.py 保留为 re-export shim (向后兼容)"
+      - "llm_backends.py 保留不变"
+
+# ─── Revised Module Map ─────────────────────────────────────────
+modules:
+  - id: MOD-001
+    name: "config.py"
+    source: "daily_summary.py 行 62-126"
+    functions: [_load_config, _resolve_output_dir, _get_device_name, _CONFIG_PATH]
+    lines: ~75
+
+  - id: MOD-002
+    name: "remote.py"
+    source: "daily_summary.py 行 127-235"
+    functions: [_find_rclone, _rclone_upload, _rclone_download_logs]
+    depends_on: [config.py]
+    lines: ~100
+
+  - id: MOD-003
+    name: "parsers.py"
+    source: "daily_summary.py 行 237-700 + 1980-2015"
+    functions: [discover_all_dates, parse_claude_code, parse_chatgpt_export, parse_generic, parse_codex, collect_conversations, _extract_codex_text, _extract_codex_project]
+    depends_on: [config.py]
+    lines: ~460
+
+  - id: MOD-004
+    name: "usage.py"
+    source: "daily_summary.py 行 700-1160"
+    functions: [_refresh_usage_snapshots, fetch_ccusage, fetch_ccusage_full, save_ccusage_file, fetch_codex_usage_full, save_codex_usage_file, load_ccusage_for_date, _merge_token_usages, _extract_text_content]
+    depends_on: [config.py, remote.py]
+    lines: ~460
+
+  - id: MOD-005
+    name: "summarizer.py"
+    source: "daily_summary.py 行 1161-1537"
+    functions: [_build_summary_prompt, _call_summarize, chunk_conversations, format_conversations, _format_conversation, _daily_tool_schema, SUMMARY_PROMPT, MERGE_PROMPT_PREFIX, MERGE_DEVICE_SUMMARY_PREFIX]
+    depends_on: [parsers.py]
+    lines: ~377
+
+  - id: MOD-006
+    name: "formatter.py"
+    source: "daily_summary.py 行 1538-1979"
+    functions: [generate_markdown, _sort_report_by_importance, _split_by_level, save_report, generate_hugo_post]
+    depends_on: [config.py]
+    lines: ~442
+
+  - id: MOD-007
+    name: "daily.py"
+    source: "daily_summary.py 行 2016-2805"
+    functions: [cmd_export, cmd_export_past, _cmd_merge_sync_all, cmd_merge, cmd_legacy, cmd_deploy, cmd_config]
+    depends_on: [config.py, remote.py, parsers.py, usage.py, summarizer.py, formatter.py]
+    lines: ~750
+
+  - id: MOD-008
+    name: "cli.py"
+    source: "daily_summary.py 行 2805-2930"
+    functions: [_parse_date, main, argparse_setup]
+    depends_on: [daily.py]
+    lines: ~200
+
+  - id: MOD-009
+    name: "__init__.py + __main__.py"
+    functions: [public API re-exports, unified CLI entry]
+
+  - id: MOD-010
+    name: "daily_summary.py (shim)"
+    functions: [re-export all public symbols from new modules]
+
+  - id: MOD-011
+    name: "monthly.py + weekly.py (import updates)"
+    changes: ["remove sys.path.insert", "from summarize.config import ...", "from summarize.daily import ... → from summarize.formatter import ..."]
+
+  - id: MOD-012
+    name: "mcp_server.py (import updates)"
+    changes: ["remove summarize sys.path.insert", "from summarize.parsers import ...", "from summarize.summarizer import ...", "from summarize.formatter import ..."]
+
+# ─── Dependency DAG (no cycles) ──────────────────────────────────
+# Module-level:
+#   cli.py → daily.py → {summarizer.py, formatter.py, parsers.py, usage.py, config.py, remote.py}
+#   summarizer.py → parsers.py (for _extract_text_content)
+#   parsers.py → config.py
+#   usage.py → {config.py, remote.py}
+#   formatter.py → config.py
+#   monthly.py → {config.py, llm_backends.py}
+#   weekly.py → {config.py, monthly.py, llm_backends.py}
+
+# Feature-level:
+dependency_graph:
+  FEAT-001-split: []                              # 模块拆分 (先做)
+  FEAT-002-package: [FEAT-001-split]              # 包化
+  FEAT-003-imports: [FEAT-002-package]             # 导入修复
+  FEAT-004-tests: [FEAT-001-split, FEAT-002-package]  # 测试 (可与 FEAT-003 并行)
+  FEAT-005-compat: [FEAT-001-split, FEAT-002-package, FEAT-003-imports]  # 兼容层
+
+# ─── Implementation Order ────────────────────────────────────────
+implementation_steps:
+  - step: 0
+    name: "迁移烟雾测试"
+    description: "拆分前写 test_imports.py，验证所有导入契约"
+    parallel: false
+
+  - step: 1
+    name: "创建新模块文件"
+    description: "从 daily_summary.py 提取 config.py, remote.py, parsers.py, usage.py, summarizer.py, formatter.py, daily.py, cli.py"
+    parallel: false
+
+  - step: 2
+    name: "包化"
+    description: "创建 __init__.py, __main__.py; 更新 pyproject.toml; pip install -e ."
+    parallel: false
+
+  - step: 3a
+    name: "导入修复"
+    description: "更新 monthly.py, weekly.py, mcp_server.py 的导入路径"
+    parallel: true  # 可与 3b 并行
+
+  - step: 3b
+    name: "单元测试"
+    description: "编写 test_config, test_parsers, test_usage, test_formatter, test_summarizer"
+    parallel: true  # 可与 3a 并行
+
+  - step: 4
+    name: "兼容层 + 烟雾测试"
+    description: "创建 daily_summary.py shim; 运行完整烟雾测试"
+    parallel: false
+
+# ─── Confrontation Results ───────────────────────────────────────
+confrontation:
+  critic_findings: 12
+  critical: 2  # mcp_server + monthly/weekly imports break → addressed via shim + atomic update
+  high: 4      # parsers split, collect_conversations placement, circular risk, cached_config → all addressed
+  medium: 4    # pyproject details, daily.py size, rclone naming, backward compat → all addressed
+  low: 2       # llm_backends disposition, migration test → addressed
+  all_resolved: true
+
+# ─── Decisions ───────────────────────────────────────────────────
+decisions:
+  - id: DEC-001
+    text: "选择方案 A: 最小拆分+包化"
+    date: 2026-03-24
+    reason: "按现有代码边界拆分，风险最低"
+  - id: DEC-002
+    text: "CLI 允许小幅调整"
+    date: 2026-03-24
+    reason: "用户确认可接受 python -m summarize daily export 等新形式"
+  - id: DEC-003
+    text: "parsers 进一步拆为 parsers+usage"
+    date: 2026-03-24
+    reason: "Critic 发现 924 行混合对话解析与 token 采集两种职责"
+  - id: DEC-004
+    text: "rclone 从 config 提取为 remote.py"
+    date: 2026-03-24
+    reason: "Critic 发现 config.py 命名与 rclone I/O 职责不匹配"
+  - id: DEC-005
+    text: "daily.py 提取 cli.py"
+    date: 2026-03-24
+    reason: "Critic 发现 950 行超标，argparse 可独立"
+  - id: DEC-006
+    text: "保留 daily_summary.py 为 re-export shim"
+    date: 2026-03-24
+    reason: "Critic 发现 mcp_server/monthly/weekly 的导入会全断，需要向后兼容"
+  - id: DEC-007
+    text: "拆分前先写迁移烟雾测试"
+    date: 2026-03-24
+    reason: "Critic 建议：零测试下重构需最低安全网"

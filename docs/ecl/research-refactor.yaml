@@ -1,0 +1,281 @@
+ecl_version: "1.0"
+feature: "research-module-refactor"
+status: completed
+created: 2026-03-24
+updated: 2026-03-24
+
+context:
+  summary: |
+    Refactor the research/ module to address four main issues:
+    1. research_scout.py is a 2934-line monolith
+    2. Duplicate LLM wrappers and config systems between Scout and Profiler
+    3. Hardcoded scoring thresholds, top venues, student discovery weights
+    4. No SSRF protection on LLM-generated homepage URLs
+  codebase_size: "6100 lines across 17 Python files"
+  constraints:
+    - "No test framework exists — standalone scripts"
+    - "All tools share common/ package (pip-installed)"
+    - "Must preserve CLI interface and all existing functionality"
+    - "Windows + conda environment"
+
+# ===== REQUIREMENTS (Phase 1 validated + Phase 4 additions) =====
+requirements:
+  - id: REQ-001
+    text: "拆分 research_scout.py 为 scout/ 子包"
+    status: verified
+    confidence: 0.95
+
+  - id: REQ-002
+    text: "统一 Scout 和 Profiler 的 LLM 封装与配置系统"
+    status: verified
+    confidence: 0.85
+    notes: "保留两个配置文件路径，但用统一加载器合并读取"
+
+  - id: REQ-003
+    text: "将硬编码值外部化到配置"
+    status: verified
+    confidence: 0.9
+
+  - id: REQ-004
+    text: "为 homepage URL 抓取添加 SSRF 防护"
+    status: verified
+    confidence: 0.95
+
+  - id: REQ-005
+    text: "渐进迁移：保留旧入口 + deprecation 警告"
+    status: verified
+    confidence: 0.95
+
+  # Phase 4 critic additions
+  - id: REQ-006
+    text: "MCP Server 兼容：research_scout.py shim 必须 re-export 所有 15 个被 mcp_server.py 使用的函数"
+    status: verified
+    confidence: 1.0
+    source: critic-finding-1
+
+  - id: REQ-007
+    text: "路径常量必须使用 common.paths 而非 __file__.parent，避免 shim vs 子模块路径不一致"
+    status: verified
+    confidence: 0.95
+    source: critic-finding-9
+
+  - id: REQ-008
+    text: "统一日志：scout/ 包内所有模块共用 'research_scout' logger"
+    status: verified
+    confidence: 0.9
+    source: critic-finding-4
+
+# ===== DECISIONS =====
+decisions:
+  - id: DEC-001
+    text: "全部四个问题都在本次解决"
+    date: 2026-03-24
+  - id: DEC-002
+    text: "采用渐进迁移策略"
+    date: 2026-03-24
+  - id: DEC-003
+    text: "方案 A：按职责拆 scout/ 子包"
+    date: 2026-03-24
+  - id: DEC-004
+    text: "配置不合并文件，而是用统一加载器同时读两个 config 路径（Scout 优先，Profiler 回退）"
+    date: 2026-03-24
+    reason: "Critic finding #3 #13: 合并路径会破坏现有用户配置"
+  - id: DEC-005
+    text: "CLI 保持统一入口（Scout + Profiler 命令都在 scout/cli.py），deprecation 仅针对文件路径"
+    date: 2026-03-24
+    reason: "Critic finding #12: cmd_profile 调用 Profiler 是正常行为，不应拆分"
+
+# ===== FEATURES (Phase 3 decomposition) =====
+features:
+  # --- REQ-001: 拆分巨石 ---
+  - id: FEAT-001
+    name: "scout/ 包骨架"
+    parent: REQ-001
+    modules: [MOD-001]
+    complexity: trivial
+
+  - id: FEAT-002
+    name: "scout/project.py — 项目 CRUD"
+    parent: REQ-001
+    modules: [MOD-002]
+    complexity: small
+    lines: ~190
+
+  - id: FEAT-003
+    name: "scout/search.py — 多源搜索"
+    parent: REQ-001
+    modules: [MOD-003]
+    complexity: medium
+    lines: ~530
+
+  - id: FEAT-004
+    name: "scout/evaluate.py — 三阶段管线 + LLM"
+    parent: REQ-001
+    modules: [MOD-004]
+    complexity: medium
+    lines: ~630
+
+  - id: FEAT-005
+    name: "scout/prompts.py — Scout LLM 提示词"
+    parent: REQ-001
+    modules: [MOD-005]
+    complexity: small
+    notes: "Critic finding #7: 3 个内联 prompt + _language_instruction()"
+
+  - id: FEAT-006
+    name: "scout/report.py — 报告生成 + Hugo 部署"
+    parent: REQ-001
+    modules: [MOD-006]
+    complexity: small
+    lines: ~370
+
+  - id: FEAT-007
+    name: "scout/cli.py — argparse + cmd_*"
+    parent: REQ-001
+    modules: [MOD-007]
+    complexity: medium
+    lines: ~850
+
+  - id: FEAT-008
+    name: "research_scout.py 薄 shim"
+    parent: [REQ-005, REQ-006]
+    modules: [MOD-008]
+    complexity: small
+    notes: "Re-export 15 functions for mcp_server.py + deprecation warning"
+
+  # --- REQ-002: 统一 LLM + 配置 ---
+  - id: FEAT-009
+    name: "scout/config.py — 统一配置加载器"
+    parent: [REQ-002, REQ-007, REQ-008]
+    modules: [MOD-009]
+    complexity: medium
+    notes: "合并 _load_scout_config + _resolve_param + 路径常量 + 日志工厂 + 读两个 config 路径"
+
+  - id: FEAT-010
+    name: "统一 Profiler llm.py → 使用 scout/config 的缓存"
+    parent: REQ-002
+    modules: [MOD-010]
+    complexity: small
+
+  # --- REQ-003: 外部化硬编码值 ---
+  - id: FEAT-011
+    name: "scoring.py 阈值可配置"
+    parent: REQ-003
+    complexity: small
+
+  - id: FEAT-012
+    name: "semantic_scholar.py TOP_VENUES 可配置"
+    parent: REQ-003
+    complexity: small
+
+  - id: FEAT-013
+    name: "student_discovery.py 权重可配置"
+    parent: REQ-003
+    complexity: small
+
+  # --- REQ-004: SSRF 防护 ---
+  - id: FEAT-014
+    name: "homepage_discovery.py URL 验证"
+    parent: REQ-004
+    complexity: small
+
+# ===== DEPENDENCY GRAPH (Phase 5) =====
+dependency_graph:
+  # Wave 1: 无依赖，可并行
+  FEAT-009: []              # scout/config.py（其余模块都依赖它）
+  FEAT-014: []              # SSRF 防护（独立）
+  FEAT-011: []              # scoring 阈值（独立）
+  FEAT-012: []              # TOP_VENUES（独立）
+  FEAT-013: []              # student weights（独立）
+
+  # Wave 2: 依赖 config
+  FEAT-001: [FEAT-009]      # scout/__init__.py
+  FEAT-005: [FEAT-009]      # scout/prompts.py
+  FEAT-002: [FEAT-009]      # scout/project.py
+  FEAT-010: [FEAT-009]      # Profiler llm.py 更新
+
+  # Wave 3: 依赖 project + prompts
+  FEAT-003: [FEAT-002, FEAT-005]   # scout/search.py
+  FEAT-004: [FEAT-002, FEAT-005]   # scout/evaluate.py
+
+  # Wave 4: 依赖 search + evaluate
+  FEAT-006: [FEAT-004]             # scout/report.py
+
+  # Wave 5: 依赖一切
+  FEAT-007: [FEAT-002, FEAT-003, FEAT-004, FEAT-006]  # scout/cli.py
+  FEAT-008: [FEAT-007]             # research_scout.py shim（最后）
+
+# ===== CRITIC CONFRONTATION (Phase 4 + 7) =====
+confrontation:
+  red_team:
+    - id: ATK-001
+      scenario: "MCP Server import breakage after refactor"
+      severity: critical
+    - id: ATK-002
+      scenario: "Config path collision breaks existing users"
+      severity: critical
+    - id: ATK-003
+      scenario: "Profiler CLI integration ambiguity"
+      severity: critical
+    - id: ATK-004
+      scenario: "Logger initialization scattered across modules"
+      severity: high
+    - id: ATK-005
+      scenario: "__file__.parent differs in shim vs submodule"
+      severity: high
+    - id: ATK-006
+      scenario: "Circular import: evaluate.py ↔ project.py"
+      severity: high
+    - id: ATK-007
+      scenario: "3 inline prompts have no designated location"
+      severity: high
+    - id: ATK-008
+      scenario: "S2 key fallback between two config files"
+      severity: high
+
+  blue_team:
+    - attack: ATK-001
+      verdict: mitigated
+      mitigation: "FEAT-008: research_scout.py shim re-exports all 15 functions. mcp_server.py 无需改动。"
+
+    - attack: ATK-002
+      verdict: mitigated
+      mitigation: "DEC-004: 不合并文件。scout/config.py 先读 ~/.config/research_scout/config.json，缺失 key 回退到 ~/.config/research/config.json。两个文件都保留。"
+
+    - attack: ATK-003
+      verdict: mitigated
+      mitigation: "DEC-005: CLI 保持统一。scout/cli.py 包含所有 cmd_*（含 cmd_profile）。deprecation 仅指 'python research/research_scout.py' 路径，建议改用 'python -m research.scout'。"
+
+    - attack: ATK-004
+      verdict: mitigated
+      mitigation: "scout/config.py 提供 get_logger() 工厂函数。所有子模块调用 logging.getLogger('research_scout') 获取同一 logger 实例。初始化只在 cli.py 的 main() 中执行一次。"
+
+    - attack: ATK-005
+      verdict: mitigated
+      mitigation: "REQ-007: 所有路径使用 common.paths（GADGET_ROOT, OUTPUTS_DIR 等），不依赖 __file__。仅 _PROJECTS_DIR 用 GADGET_ROOT / 'research' / 'projects'。"
+
+    - attack: ATK-006
+      verdict: defended
+      mitigation: "依赖方向单向：evaluate.py → project.py（读 overview.md）。project.py 不导入 evaluate.py。cli.py 导入两者但无环。"
+
+    - attack: ATK-007
+      verdict: mitigated
+      mitigation: "FEAT-005: 创建 scout/prompts.py，放置 SCREENING_PROMPT、DEEP_EVAL_PROMPT、DIRECTION_SUGGESTION_PROMPT + _language_instruction()。"
+
+    - attack: ATK-008
+      verdict: mitigated
+      mitigation: "DEC-004 的统一加载器自动合并两个 config 文件。S2 key 只需在任一文件中配置即可。"
+
+# ===== RISK REGISTER =====
+risks:
+  - id: RISK-001
+    description: "拆分后某个 import 遗漏导致运行时 ImportError"
+    severity: medium
+    mitigation: "每个 FEAT 完成后立即运行 python -c 'from scout.xxx import ...' 验证"
+
+  - id: RISK-002
+    description: "Profiler 模块内部 import 路径变化（如 from research.config 需改为 from research.scout.config）"
+    severity: medium
+    mitigation: "Profiler 的 config.py 保留，scout/config.py 是新增。Profiler 代码不需要改 import。"
+
+pending_input: null

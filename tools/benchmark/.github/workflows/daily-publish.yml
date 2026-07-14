@@ -1,0 +1,83 @@
+name: Daily Benchmark Publish
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: "Rebuild benchmark_report.html even if CSV did not change"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-benchmark-publish
+  cancel-in-progress: false
+
+jobs:
+  ingest-build-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ingest pending submissions
+        run: |
+          python scripts/ingest_submissions.py \
+            --pending-file data/pending_submissions.ndjson \
+            --csv-path benchmark_results.csv \
+            --rejected-file data/rejected_submissions.ndjson \
+            --log-file data/ingest_log.json
+
+      - name: Detect CSV changes
+        id: csv_change
+        run: |
+          if git diff --quiet -- benchmark_results.csv; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Regenerate report
+        if: steps.csv_change.outputs.changed == 'true' || github.event.inputs.force_rebuild == 'true'
+        run: |
+          python -m benchmark.cli --report-only --input-csv benchmark_results.csv --report-output benchmark_report.html
+
+      - name: Commit and push updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- benchmark_results.csv benchmark_report.html data/pending_submissions.ndjson data/rejected_submissions.ndjson data/ingest_log.json; then
+            echo "No publish changes to commit."
+            exit 0
+          fi
+
+          git add benchmark_results.csv benchmark_report.html data/pending_submissions.ndjson data/rejected_submissions.ndjson data/ingest_log.json
+          git commit -m "report: daily ingest and publish"
+
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash || true
+            if git push; then
+              echo "Push succeeded."
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+
+          echo "Push failed after retries."
+          exit 1

@@ -1,0 +1,361 @@
+{
+  "audit_metadata": {
+    "version": "1.0",
+    "timestamp": "2026-04-21T00:00:00+08:00",
+    "project": "gadget",
+    "scope": {
+      "total_files": 75,
+      "analyzed_files": 75,
+      "coverage_pct": 100
+    }
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "priority": 1,
+      "category": "structure",
+      "severity": "medium",
+      "location": "test/ vs tests/",
+      "description": "test/ 是 benchmark 工具，tests/ 是单元测试，命名极易混淆",
+      "suggestion": "删除 tests/，重命名 test/ → benchmark/，更新所有引用",
+      "confidence": 0.85,
+      "status": "confirmed",
+      "actionable_by_tidy": true
+    },
+    {
+      "id": "F-002",
+      "priority": 1,
+      "category": "structure",
+      "severity": "medium",
+      "location": "skills/",
+      "description": "nature-benchmark-skill/, repo-audit/, repo-tidy/ 未被 git 跟踪，skills-lock.json 和 .agents/ 也未跟踪",
+      "suggestion": "跟踪 skill 源码，将 .agents/ 和 skills-lock.json 加入 .gitignore",
+      "confidence": 0.90,
+      "status": "confirmed",
+      "actionable_by_tidy": true
+    },
+    {
+      "id": "F-003",
+      "priority": 1,
+      "category": "structure",
+      "severity": "medium",
+      "location": "common/",
+      "description": "共享工具包缺少 CLAUDE.md 或 README，是唯一没有文档的核心模块",
+      "suggestion": "添加 common/CLAUDE.md 文档化公共 API",
+      "confidence": 0.95,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-004",
+      "priority": 1,
+      "category": "structure",
+      "severity": "high",
+      "location": "pyproject.toml:20",
+      "description": "packages 字段缺少 research，导致 pip install -e . 不安装该包，mcp_server.py 用 sys.path.insert 绕过",
+      "suggestion": "添加 research 到 packages 列表",
+      "confidence": 0.95,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-005",
+      "priority": 1,
+      "category": "structure",
+      "severity": "low",
+      "location": "research/research_scout.py",
+      "description": "作为 deprecation shim 存在，实际 CLI 入口是 scout/cli.py",
+      "suggestion": "可考虑添加 deprecation warning 或更新文档",
+      "confidence": 0.40,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-006",
+      "priority": 2,
+      "category": "logic",
+      "severity": "medium",
+      "location": "test/benchmark/core.py:252",
+      "description": "裸 except: 捕获所有异常并返回 0，掩盖错误",
+      "suggestion": "改为 except (OSError, IOError):",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-007",
+      "priority": 2,
+      "category": "logic",
+      "severity": "medium",
+      "location": "test/benchmark/gpu.py:231",
+      "description": "裸 except: pass 静默忽略 dtype 转换失败",
+      "suggestion": "改为 except (RuntimeError, TypeError): 并记录日志",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-008",
+      "priority": 2,
+      "category": "logic",
+      "severity": "low",
+      "location": "summarize/formatter.py:99",
+      "description": "generate_markdown 函数 289 行",
+      "suggestion": "拆分为多个子函数",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-009",
+      "priority": 2,
+      "category": "logic",
+      "severity": "low",
+      "location": "summarize/daily.py:463",
+      "description": "cmd_merge 函数 244 行",
+      "suggestion": "拆分为多个子函数",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-010",
+      "priority": 2,
+      "category": "logic",
+      "severity": "low",
+      "location": "summarize/weekly_summary.py:499",
+      "description": "generate_weekly_markdown 函数 236 行",
+      "suggestion": "拆分为多个子函数",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-011",
+      "priority": 2,
+      "category": "logic",
+      "severity": "low",
+      "location": "summarize/monthly_summary.py:645",
+      "description": "generate_monthly_markdown 函数 204 行",
+      "suggestion": "拆分为多个子函数",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-012",
+      "priority": 2,
+      "category": "logic",
+      "severity": "low",
+      "location": "test/benchmark/gpu.py:248",
+      "description": "_benchmark_device_dtype 函数 197 行",
+      "suggestion": "拆分为多个子函数",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-013",
+      "priority": 2,
+      "category": "logic",
+      "severity": "low",
+      "location": "mcp_server.py:221",
+      "description": "summarize_merge 函数 163 行",
+      "suggestion": "拆分为多个子函数",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-014",
+      "priority": 2,
+      "category": "logic",
+      "severity": "info",
+      "location": "多文件",
+      "description": "1196 行代码嵌套超过 5 层（top: parsers.py 139 行, weekly_summary.py 137 行）",
+      "suggestion": "提取辅助函数降低嵌套",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-015",
+      "priority": 3,
+      "category": "duplication",
+      "severity": "low",
+      "location": "website/static/scripts/compress_image.py",
+      "description": "与 website/compress_image.py 字节级一致，冗余副本",
+      "suggestion": "删除 website/static/scripts/compress_image.py",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": true
+    },
+    {
+      "id": "F-016",
+      "priority": 3,
+      "category": "duplication",
+      "severity": "info",
+      "location": "summarize/llm_backends.py",
+      "description": "Re-export shim，转发 common.llm + common.json_utils",
+      "suggestion": "已知设计，保持向后兼容",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-017",
+      "priority": 3,
+      "category": "duplication",
+      "severity": "info",
+      "location": "research/cache.py",
+      "description": "Re-export shim，转发 common.cache.DiskCache",
+      "suggestion": "已知设计，保持向后兼容",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-018",
+      "priority": 3,
+      "category": "duplication",
+      "severity": "info",
+      "location": "summarize/daily_summary.py",
+      "description": "Backward-compat re-export shim，委托给子模块",
+      "suggestion": "已知设计",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-019",
+      "priority": 4,
+      "category": "config",
+      "severity": "info",
+      "location": "全局",
+      "description": "无 .env 文件，无硬编码 API keys/secrets，tokens/ 已 gitignored",
+      "suggestion": "配置管理良好，无需操作",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-020",
+      "priority": 5,
+      "category": "dead_code",
+      "severity": "low",
+      "location": "tests/",
+      "description": "仅 2 个测试文件（test_ollama.py, test_translation.py），覆盖面很小",
+      "suggestion": "用户决定删除",
+      "confidence": 0.85,
+      "status": "confirmed",
+      "actionable_by_tidy": true
+    },
+    {
+      "id": "F-021",
+      "priority": 5,
+      "category": "dead_code",
+      "severity": "info",
+      "location": "全局",
+      "description": "无注释代码块，无 TODO/FIXME/HACK 标记",
+      "suggestion": "代码整洁度好",
+      "confidence": 0.90,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-022",
+      "priority": 6,
+      "category": "hardcoded",
+      "severity": "info",
+      "location": "common/ollama.py:15",
+      "description": "DEFAULT_OLLAMA_HOST = http://127.0.0.1:11434 — Ollama 标准端口",
+      "suggestion": "合理默认值，无需修改",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-023",
+      "priority": 6,
+      "category": "hardcoded",
+      "severity": "info",
+      "location": "多文件",
+      "description": "arxiv.org, api.semanticscholar.org 等 API URLs",
+      "suggestion": "标准公共 API 端点，无需修改",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    },
+    {
+      "id": "F-024",
+      "priority": 7,
+      "category": "dependency",
+      "severity": "info",
+      "location": "全局",
+      "description": "每个子工具都有 requirements.txt，与 pyproject.toml optional-deps 对齐",
+      "suggestion": "依赖管理良好",
+      "confidence": 1.0,
+      "status": "confirmed",
+      "actionable_by_tidy": false
+    }
+  ],
+  "dependency_map": {
+    "hub_files": [
+      {"file": "common/io.py", "importer_count": 9},
+      {"file": "common/llm.py", "importer_count": 8},
+      {"file": "common/paths.py", "importer_count": 7},
+      {"file": "research/models.py", "importer_count": 7},
+      {"file": "research/cache.py", "importer_count": 6}
+    ],
+    "orphan_files": [],
+    "circular_dependencies": []
+  },
+  "questions": {
+    "resolved": [
+      {"id": "Q1", "question": "skills/ 下未跟踪文件应如何处理", "answer": "应该被 git 跟踪"},
+      {"id": "Q2", "question": "test/ vs tests/ 命名歧义", "answer": "删除 tests/，重命名 test/ → benchmark/"},
+      {"id": "Q3", "question": "pyproject.toml packages 缺少 research", "answer": "加入 research"},
+      {"id": "Q4", "question": "重复的 compress_image.py", "answer": "删除冗余副本"}
+    ],
+    "unresolved": []
+  },
+  "tidy_recommendations": [
+    {
+      "finding_id": "F-001",
+      "action": "rename",
+      "source": "test/",
+      "target": "benchmark/",
+      "note": "需同步更新 CLAUDE.md, pyproject.toml, mcp_server.py, .gitignore 中的引用"
+    },
+    {
+      "finding_id": "F-001",
+      "action": "delete",
+      "target": "tests/",
+      "note": "用户确认删除，覆盖面过小"
+    },
+    {
+      "finding_id": "F-002",
+      "action": "gitignore_add",
+      "target": ["skills/.agents/", "skills/skills-lock.json"],
+      "note": "自动生成的文件"
+    },
+    {
+      "finding_id": "F-002",
+      "action": "git_add",
+      "target": ["skills/nature-benchmark-skill/", "skills/repo-audit/", "skills/repo-tidy/"],
+      "note": "skill 源码应被跟踪"
+    },
+    {
+      "finding_id": "F-015",
+      "action": "delete",
+      "target": "website/static/scripts/compress_image.py",
+      "note": "与 website/compress_image.py 完全一致的冗余副本"
+    },
+    {
+      "finding_id": "F-020",
+      "action": "delete",
+      "target": "tests/",
+      "note": "用户确认删除单元测试目录"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+ecl_version: "1.0"
+feature: "summarize-onboarding"
+status: "completed"
+created: "2026-06-30"
+updated: "2026-06-30"
+
+context:
+  problem: >
+    `python -m summarize auto` can enter the export/merge/weekly/monthly
+    pipeline before local requirements are ready. Missing rclone, LLM backend
+    credentials, or Hugo deploy prerequisites are discovered late.
+  approach: >
+    Add a lightweight readiness checker and an onboarding CLI command. The auto
+    command runs the checker before subprocess work and stops on blocking
+    failures.
+
+requirements:
+  - id: REQ-001
+    text: "`python -m summarize auto` checks required dependencies before work."
+    status: "implemented"
+    acceptance_criteria:
+      - "Missing rclone_remote or rclone stops auto before subprocess commands."
+      - "Missing selected LLM backend stops auto before subprocess commands."
+      - "Missing Hugo deploy prerequisites stop auto when --deploy is used."
+  - id: REQ-002
+    text: "Provide an onboarding command users can run directly."
+    status: "implemented"
+    acceptance_criteria:
+      - "`python -m summarize onboard` prints structured readiness results."
+      - "`python -m summarize onboard --init-config` delegates to existing config init."
+      - "`python -m summarize onboard --json` returns machine-readable results."
+  - id: REQ-003
+    text: "Keep non-blocking extras optional."
+    status: "implemented"
+    acceptance_criteria:
+      - "ccusage availability is a warning, not a blocker."
+      - "No checker contacts rclone remotes or calls an LLM."
+
+functions:
+  - id: FN-001
+    name: "check_auto_requirements"
+    file: "tools/summarize/onboarding.py"
+    depends_on: []
+    output: "list[RequirementResult]"
+    verify: "python -m pytest tools/summarize/tests/test_onboarding.py -q"
+    status: "implemented"
+  - id: FN-002
+    name: "cmd_onboard"
+    file: "tools/summarize/onboarding.py"
+    depends_on: ["FN-001"]
+    output: "onboard CLI handler"
+    verify: "python -m summarize onboard --json"
+    status: "implemented"
+  - id: FN-003
+    name: "cmd_auto preflight"
+    file: "tools/summarize/auto.py"
+    depends_on: ["FN-001"]
+    output: "auto exits before subprocess work on blocking failures"
+    verify: "python -m pytest tools/summarize/tests/test_onboarding.py -q"
+    status: "implemented"
+
+verification:
+  notes:
+    - "Raw tools/summarize/tests currently has two unrelated baseline failures: test_formatter.py::test_generate_markdown_basic and test_parsers.py::test_discover_all_dates_no_dirs."
+  commands:
+    - "python -m pytest tools/summarize/tests/test_onboarding.py -q"
+    - "python -m pytest tools/summarize/tests/ -q --deselect tools/summarize/tests/test_formatter.py::test_generate_markdown_basic --deselect tools/summarize/tests/test_parsers.py::test_discover_all_dates_no_dirs"
+  completed:
+    - command: "python -m pytest tools/summarize/tests/test_onboarding.py -q"
+      result: "7 passed"
+    - command: "python -m pytest tools/summarize/tests/ -q --deselect tools/summarize/tests/test_formatter.py::test_generate_markdown_basic --deselect tools/summarize/tests/test_parsers.py::test_discover_all_dates_no_dirs"
+      result: "95 passed, 2 deselected"

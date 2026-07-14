@@ -1,0 +1,104 @@
+ecl_version: "1.0"
+feature: "cchypothesis-skill"
+status: completed
+created: "2026-03-27"
+updated: "2026-03-27"
+
+prompt_calibration:
+  raw_input: |
+    我现在想要写一个叫做cchypothesis的skill,主要用途是debug. 过程如下，
+    第一步，finetune prompt,拆分意图,看看都遇到了什么bug。然后对每一个bug,
+    提出一个hypothesis看看可能是什么导致了这个bug. 然后尝试验证这个hypothesis.
+    如果验证成功，尝试按照这个hypothesis来修bug.完成之后再test看看是否问题减轻。
+    如果没有减轻，请再提出一个hypothesis看看可能是什么导致了这个bug. 对此，
+    你可以一次性生成3个hypothesis，并行处理。如果问题解决，或者9个hypothesis后
+    还是无法解决问题，则把详细的尝试的过程以及结果写到一个文档里面，
+    文件名就是这个<bug问题总结>_<timestamp>.md.
+  status: completed
+  intent_decomposition:
+    total_intents: 1
+    total_tracks: 1
+    tracks:
+      - track_id: T1
+        name: "cchypothesis debugging skill"
+        priority: 1
+        intents:
+          - raw: "创建 cchypothesis skill，用假设驱动的方式 debug"
+            type: feature
+  tracks:
+    T1:
+      calibrated_scenario: |
+        创建名为 cchypothesis 的 Claude Code skill，用于假设驱动式 debugging。
+        工作流：
+        1. Bug Triage — 理解用户报告的问题，拆分为独立 bug（类似 ccplan Phase 0）
+        2. 对每个 bug 生成 3 个 hypothesis（批次），用 subagent 并行验证
+        3. 验证通过的 hypothesis → 实施修复 → 运行测试验证
+        4. 未通过 → 下一批 3 个 hypothesis（最多 3 轮 = 9 个 hypothesis）
+        5. 成功或 9 次耗尽 → 写入诊断文档 docs/debug/<summary>_<timestamp>.md
+      intent_dimensions:
+        task: { status: present, value: "创建 cchypothesis debugging skill" }
+        input: { status: implicit, value: "用户描述的 bug 症状/错误信息" }
+        output: { status: present, value: "Bug fix + 诊断文档" }
+        constraints: { status: present, value: "每批3个hypothesis并行, 上限9个, subagent执行" }
+        context: { status: enriched, value: "gadget skills目录, 现有ccplan/summarize/optimize/slurm-gpu skill模式" }
+        audience: { status: implicit, value: "Claude Code用户(开发者)" }
+        memory: { status: present, value: "ccplan Phase 0可复用于bug triage" }
+        success_criteria: { status: resolved, value: "bug修复或详细诊断文档生成" }
+        examples: { status: missing, deferred: true }
+  anti_patterns_found:
+    - category: scope
+      raw: "finetune prompt, 拆分意图"
+      fix: "澄清为: 理解bug报告 + 拆分多bug，类似ccplan Phase 0但面向bug"
+  calibration_questions:
+    - question: "Bug triage 的具体含义"
+      answer: "理解 + 拆分多 bug"
+    - question: "并行处理方式"
+      answer: "Subagent 并行"
+    - question: "诊断文档存放路径"
+      answer: "docs/debug/"
+
+pending_input: null
+
+decisions:
+  - id: DEC-001
+    phase: 0
+    decision: "Bug triage 采用 ccplan Phase 0 模式: 理解问题全貌 → 拆分独立 bug"
+    date: "2026-03-27"
+  - id: DEC-002
+    phase: 0
+    decision: "3 个 hypothesis 用 subagent 并行验证"
+    date: "2026-03-27"
+  - id: DEC-003
+    phase: 0
+    decision: "诊断文档存放 docs/debug/<summary>_<timestamp>.md"
+    date: "2026-03-27"
+  - id: DEC-004
+    phase: 5
+    decision: "Phase 3 只读并行 + Phase 4 串行写操作（解决 workspace 冲突）"
+    date: "2026-03-27"
+  - id: DEC-005
+    phase: 5
+    decision: "Bug 因果分类: independent / symptom-of / shared-root"
+    date: "2026-03-27"
+  - id: DEC-006
+    phase: 5
+    decision: "三级测试验证 + 无测试时生成回归测试"
+    date: "2026-03-27"
+  - id: DEC-007
+    phase: 5
+    decision: "文件名 Windows-safe: <kebab>_<YYYYMMDD-HHMMSS>.md, docs/debug/ 默认 gitignore"
+    date: "2026-03-27"
+  - id: DEC-008
+    phase: 9
+    decision: "用户批准设计方案，进入实现"
+    date: "2026-03-27"
+
+deliverables:
+  - path: "skills/cchypothesis/SKILL.md"
+    status: completed
+  - path: "skills/cchypothesis/cchypothesis.md"
+    status: completed
+  - path: "skills/cchypothesis/diagnostic-schema.md"
+    status: completed
+  - path: "skills/CLAUDE.md"
+    status: updated

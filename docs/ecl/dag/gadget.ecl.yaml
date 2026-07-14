@@ -1,0 +1,174 @@
+# Evolving Constraint Language — milestone-level DAG for the gadget project root.
+# Reverse-engineered (2026-06-25) from CLAUDE.md, docs/ecl/*.yaml and git log so
+# the cross-project overview shows a `gadget` cluster alongside `ai-companion`.
+# Milestone-level only (one node per top-level tool/subsystem) — the overview
+# page renders this layer; click into the cluster for the per-milestone detail.
+
+ecl_version: "1.0"
+feature: "gadget-toolkit"
+repo: "."
+status: "documented"   # reverse-engineered into a milestone DAG (overview seed)
+created: "2026-06-25"
+updated: "2026-06-25"
+sources: [ "CLAUDE.md", "docs/ecl/*.yaml", "git log" ]
+
+overview: >-
+  一个 Python 3.10+ 的工具箱仓库：每个顶层目录是一个独立工具，全部共享
+  common/ 这一层基础设施。里程碑按子系统切分——共享核心、各工具、翻译架构、
+  网站发布、数据同步、统一 Agentic 工作流——大多已落地；目前唯一明确的待办
+  是修复缺失的 MCP server 入口。
+
+milestones:
+
+  # ---- 基础设施 ----
+  - id: M-gdg-01
+    name: "common/ 共享工具核心"
+    layer: Foundation
+    status: done
+    depends_on: []
+    what: "所有工具共享的基础设施包：路径解析(paths)、原子写入与哈希(io)、磁盘缓存(cache)、JSON 修复(json_utils)、LLM 两层 API(llm)。"
+    why: "每个工具都要用到这些能力；集中到一个 pip 安装的包里，避免各工具各写一份、彼此漂移。"
+    how: "common/ 目录下的纯工具模块，通过 pyproject.toml 以可编辑方式安装；summarize/research 通过 re-export shim 向后兼容。"
+    why_this_way: "把零业务逻辑的工具层放在依赖图最底层，所有工具引用同一份实现，又不引入循环依赖。"
+    expected: "任意工具 import common.* 都能拿到统一、经测试锁定的工具函数。"
+
+  - id: M-gdg-02
+    name: "翻译架构 (engine + translation + bilingual)"
+    layer: Foundation
+    status: done
+    depends_on: [ M-gdg-01 ]
+    what: "本地批量推理的双语翻译层：TranslationEngine 抽象 + 三个后端(vLLM/transformers/llama.cpp GGUF)，由 create_engine() 工厂自动选择。"
+    why: "所有双语内容(日报/周报/月报/研究报告/网站)都要翻译，且要用本地推理而非云 API，以省成本、可离线。"
+    how: "common/engine.py 定义 ABC + 三后端；translation.py 做保留 frontmatter/shortcode 的整篇 markdown 翻译；bilingual.py 写 .md/.zh.md 配对。默认模型 tencent/HY-MT1.5-1.8B。"
+    why_this_way: "用 ABC + 工厂隔离后端差异，跨平台(Windows transformers / Linux vLLM / 低内存 GGUF)只换实现不改调用方。"
+    expected: "write_bilingual() 能检测源语言并产出原文+译文配对，全程本地推理。"
+
+  # ---- 各工具 ----
+  - id: M-gdg-03
+    name: "summarize/ 对话总结流水线"
+    layer: Tools
+    status: done
+    depends_on: [ M-gdg-01 ]
+    what: "AI 对话总结工具：两阶段日报(导出→合并)+周报/月报聚合+一键 auto 全流程，统一 CLI `python -m summarize`。"
+    why: "把每天的 AI 使用记录自动汇总成可部署的日/周/月报告。"
+    how: "拆成子模块，auto.py 用 subprocess 串起 daily/weekly/monthly；charts.py 出 token 用量图；llm_backends.py 是 common 的 re-export shim。"
+    why_this_way: "统一 CLI + 子命令，向后兼容旧入口；总结逻辑复用 common 的 LLM 层。"
+    expected: "`python -m summarize auto --deploy` 能从日报一路生成到月报并部署。"
+
+  - id: M-gdg-04
+    name: "research/ 研究工具套件"
+    layer: Tools
+    status: done
+    depends_on: [ M-gdg-01 ]
+    what: "统一研究工具：论文发现(scout)、研究者画像(profiler)、引用图分析。"
+    why: "自动追踪相关论文、分析研究者与引用关系，省去手工检索。"
+    how: "模块化 scout/ 包 + profiler 包；research_scout.py 是向后兼容 shim；cache.py re-export common.cache。"
+    why_this_way: "把检索/评估/报告拆成独立阶段，各自可测、可单独跑；复用 common 的 LLM 与缓存。"
+    expected: "`research_scout.py report --project X` 能跑通 搜索→评估→报告 全流程。"
+
+  - id: M-gdg-05
+    name: "benchmark/ 基准测试套件"
+    layer: Tools
+    status: done
+    depends_on: []
+    what: "CPU/GPU 基准测试套件，CSV 追加模式以累积多硬件结果。"
+    why: "在不同硬件上量化性能并出 HTML 报告。"
+    how: "模块化 benchmark/ 包，`python -m benchmark.cli` 运行，--report 出报告，--deploy 部署到 Hugo。"
+    why_this_way: "CSV 追加让多机结果可累积对比；与其它工具解耦，自带 requirements。"
+    expected: "`python -m benchmark.cli --report` 能跑完并生成 HTML 报告。"
+
+  # ---- 发布 / 同步 ----
+  - id: M-gdg-06
+    name: "website/ Hugo 博客与发布"
+    layer: Delivery
+    status: done
+    depends_on: [ M-gdg-02 ]
+    what: "PaperMod 主题的 Hugo 博客：增量图片/视频压缩、双语内容、GitHub Pages 部署。"
+    why: "把各工具产出的报告统一发布成可浏览的站点。"
+    how: "website/update.sh 做增量压缩 + Hugo 构建 + 推送；translate_site_batch.py 带增量状态跟踪做双语同步。"
+    why_this_way: "增量压缩 + 翻译状态文件避免重复处理；public/ 是用户站独立 clone，构建产物直接 push。"
+    expected: "`cd website && bash update.sh` 能增量构建并部署到 tzj2006.github.io。"
+
+  - id: M-gdg-07
+    name: "sync.py 数据同步"
+    layer: Delivery
+    status: done
+    depends_on: [ M-gdg-01 ]
+    what: "基于 rclone 的集中式数据同步(push/pull/status)，覆盖 summarize/website/research/benchmark 四类；并新增 dag 特殊类目(生成+部署 DAG 站)。"
+    why: "在 Google Drive 与本地之间同步各工具的数据，并提供 DAG 站的一键生成部署入口。"
+    how: "sync.py 维护 category→路径 映射；--category dag 走特殊分支(build-dag-site stage + website/update.sh)。"
+    why_this_way: "一个入口管所有同步类目；dag 类目语义虽不同(生成而非同步)但复用同一 CLI，降低记忆成本。"
+    expected: "`python sync.py push --category X` 能同步指定类目；`--category dag` 能生成并部署 DAG 站。"
+
+  # ---- 工作流 / 技能 ----
+  - id: M-gdg-08
+    name: "workflow/ 统一 Agentic 工作流"
+    layer: Workflow
+    status: done
+    depends_on: []
+    what: "SPEC→PLAN→IMPLEMENT→VERIFY→REVIEW 的工作流引擎：spec 门禁、验证门禁、双格式 review-log、debug 报告、基线 onboarding、跨仓安装器。"
+    why: "给所有 AI agent 一套强制的、可跨会话持久化的工作协议；本仓是该系统的源头。"
+    how: "workflow/{verify,review_generator,debug_report,onboard,install,active_spec}.py + hooks/check_spec.py(PreToolUse 门禁) + templates/。"
+    why_this_way: "用 hook 把门禁强制化，active-spec.json 的存在即门禁通过的证明；可用 install.py 部署到其它仓。"
+    expected: "`python workflow/verify.py` 能执行 spec 的 success_criteria;install.py 能装到别的仓。"
+
+  - id: M-gdg-09
+    name: "skills/ 自定义 Claude Code 技能"
+    layer: Workflow
+    status: done
+    depends_on: []
+    what: "一组自包含的 Claude Code 技能：ccplan、optimize、cchypothesis、repo-audit、repo-tidy、slurm-gpu 等。"
+    why: "把常用的工程工作流(需求工程、优化、调试、仓库审计)封装成可复用技能。"
+    how: "每个技能是 skills/ 下一个带 SKILL.md 的目录。"
+    why_this_way: "自包含目录让技能可独立演进、按需调用。"
+    expected: "每个技能可被 /<skill-name> 调用并按其 SKILL.md 执行。"
+
+  - id: M-gdg-10
+    name: "跨项目 live DAG"
+    layer: Workflow
+    status: done
+    depends_on: [ M-gdg-06, M-gdg-07, M-gdg-08 ]
+    what: "把所有项目汇总成一张里程碑级 overview DAG，可点进各项目详情；StatiCrypt 加密后部署到 tzj2006.github.io/dag/，错 3 次跳 /404。"
+    why: "方便在多设备切换时快速预览『现在在做什么、下一步往哪走』，且内容私有不公开。"
+    how: "aggregate-dag.ts 读各项目 dag yaml→buildOverviewModel；render-overview/render-dag 出 HTML;build-dag-site.ts 加密+落 website/static/dag/;sync.py --category dag 一键部署。"
+    why_this_way: "复用现有 website 发布与 sync 入口，不另开仓库;加密+404 兜底解决『部署在公开站但仅自己可见』的矛盾。"
+    expected: "一个加密的 overview 页 + 各项目详情页发布在 /dag/，输对密码可见、错 3 次跳 404。"
+
+  # ---- 待办 ----
+  - id: M-gdg-11
+    name: "修复 MCP server 入口"
+    layer: Tools
+    status: pending
+    depends_on: [ M-gdg-01 ]
+    what: "重建缺失的 mcp_server.py：.mcp.json 注册的 gadget-mcp 控制台脚本指向 mcp_server:main，但该文件在过去重构中被删除，导致 MCP 集成无法 import。"
+    why: "MCP 集成当前是坏的;要恢复 gadget 作为 MCP server 暴露工具的能力,必须重建这个入口。"
+    how: "重写 mcp_server.py 提供 main() 入口,或把 pyproject.toml/.mcp.json 重新指向替代模块。"
+    why_this_way: "入口契约已在 pyproject.toml/.mcp.json 中声明,只需补回实现或重定向,改动面最小。"
+    expected: "`gadget-mcp` 能正常 import 并启动,MCP 集成恢复可用。"
+
+dependency_graph:
+  M-gdg-01: []
+  M-gdg-02: [ M-gdg-01 ]
+  M-gdg-03: [ M-gdg-01 ]
+  M-gdg-04: [ M-gdg-01 ]
+  M-gdg-05: []
+  M-gdg-06: [ M-gdg-02 ]
+  M-gdg-07: [ M-gdg-01 ]
+  M-gdg-08: []
+  M-gdg-09: []
+  M-gdg-10: [ M-gdg-06, M-gdg-07, M-gdg-08 ]
+  M-gdg-11: [ M-gdg-01 ]
+
+# ─── Where I left off ──────────────────────────────────────────
+left_off:
+  summary: >-
+    各工具(summarize/research/benchmark)、共享核心 common/、翻译架构、网站发布、
+    数据同步、统一 Agentic 工作流、自定义技能,以及最新的跨项目 live DAG,都已落地。
+    目前唯一明确的未完成项是修复缺失的 MCP server 入口(mcp_server.py 已被删除,
+    gadget-mcp 当前无法 import)。
+  done: [ M-gdg-01, M-gdg-02, M-gdg-03, M-gdg-04, M-gdg-05, M-gdg-06,
+          M-gdg-07, M-gdg-08, M-gdg-09, M-gdg-10 ]
+  in_progress: []
+  frontier_next:        # 依赖已全部完成、可立即开始的下一步
+    - M-gdg-11          # 重建 mcp_server.py,恢复 MCP 集成
+  blocked_until: {}

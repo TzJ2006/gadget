@@ -1,0 +1,165 @@
+ecl_version: "1.0"
+feature: "research-ask-command"
+status: completed
+created: 2026-03-29
+updated: 2026-03-29
+
+prompt_calibration:
+  raw_input: "自然语言输入教授/会议/期刊/方向/领域，AI自动搜索并评估论文"
+  intent_decomposition:
+    total_intents: 1
+    total_tracks: 1
+    tracks:
+      - track_id: T1
+        name: "Natural Language Research Search"
+        priority: 1
+        intents:
+          - raw: "自然语言→AI解析→搜索→评估pipeline"
+            type: feature
+  tracks:
+    T1:
+      calibrated_scenario: |
+        新增 CLI 命令 `ask`，接受自然语言描述。LLM 解析用户意图，
+        提取 search_keywords、arxiv_categories、sources 等参数，
+        自动创建 project，然后调用现有 search + evaluate pipeline 生成报告。
+        全自动，无需用户确认搜索计划。
+
+requirements:
+  - id: REQ-001
+    text: "NL → LLM 解析搜索参数（含 pubmed_journals, biorxiv_categories）"
+    status: verified
+    confidence: 0.95
+  - id: REQ-002
+    text: "自动创建 project（project.json + overview.md）"
+    status: verified
+    confidence: 0.95
+  - id: REQ-003
+    text: "AI 自动选择数据源"
+    status: verified
+    confidence: 0.90
+  - id: REQ-004
+    text: "全自动执行"
+    status: verified
+    confidence: 0.95
+  - id: REQ-005
+    text: "接入现有三阶段评估 pipeline"
+    status: verified
+    confidence: 0.95
+  - id: REQ-006
+    text: "支持混合意图（多次搜索+合并去重）"
+    status: verified
+    confidence: 0.85
+  - id: REQ-007
+    text: "唯一 project ID + 碰撞安全"
+    status: verified
+    confidence: 0.95
+    source: critic-finding-1
+  - id: REQ-008
+    text: "ask 项目标记隔离，不污染常规项目列表"
+    status: verified
+    confidence: 0.90
+    source: critic-finding-6
+
+features:
+  - id: FEAT-001
+    name: "Intent Parsing Prompt"
+    parent: REQ-001
+    modules: [MOD-001, MOD-002]
+    dependencies: [FEAT-006]
+    complexity: medium
+  - id: FEAT-002
+    name: "Search mode routing + merge/dedup"
+    parent: REQ-006
+    modules: [MOD-002]
+    dependencies: [FEAT-001, FEAT-003]
+    complexity: medium
+  - id: FEAT-003
+    name: "Auto-create project from query"
+    parent: REQ-002
+    modules: [MOD-003]
+    dependencies: [FEAT-001]
+    complexity: small
+  - id: FEAT-004
+    name: "cmd_ask CLI orchestration"
+    parent: REQ-004
+    modules: [MOD-004]
+    dependencies: [FEAT-002, FEAT-003, FEAT-005]
+    complexity: medium
+  - id: FEAT-005
+    name: "Extract run_report_pipeline from cmd_report"
+    parent: REQ-005
+    modules: [MOD-004]
+    dependencies: []
+    complexity: medium
+  - id: FEAT-006
+    name: "Parse result validation schema"
+    parent: REQ-001
+    modules: [MOD-002]
+    dependencies: []
+    complexity: small
+
+modules:
+  - id: MOD-001
+    name: "ASK_INTENT_PROMPT"
+    parent: FEAT-001
+    file_path: "research/scout/prompts.py"
+  - id: MOD-002
+    name: "ask module"
+    parent: FEAT-001
+    file_path: "research/scout/ask.py"
+  - id: MOD-003
+    name: "project extensions"
+    parent: FEAT-003
+    file_path: "research/scout/project.py"
+  - id: MOD-004
+    name: "CLI extensions"
+    parent: FEAT-004
+    file_path: "research/scout/cli.py"
+
+dependency_graph:
+  FEAT-006: []
+  FEAT-005: []
+  FEAT-001: [FEAT-006]
+  FEAT-003: [FEAT-001]
+  FEAT-002: [FEAT-001, FEAT-003]
+  FEAT-004: [FEAT-002, FEAT-003, FEAT-005]
+
+implementation_phases:
+  - phase: 1
+    parallel: true
+    items: [FEAT-006, FEAT-005]
+    description: "Schema validation + report pipeline extraction"
+  - phase: 2
+    items: [FEAT-001]
+    description: "Intent parsing prompt + function"
+  - phase: 3
+    items: [FEAT-003]
+    description: "Auto-create project from query"
+  - phase: 4
+    items: [FEAT-002]
+    description: "Search routing with merge/dedup"
+  - phase: 5
+    items: [FEAT-004]
+    description: "CLI cmd_ask orchestration"
+
+decisions:
+  - id: DEC-001
+    description: "Approach A selected: single LLM parse + reuse existing pipeline"
+    date: 2026-03-29
+  - id: DEC-002
+    description: "Full auto, no confirmation step"
+    date: 2026-03-29
+  - id: DEC-003
+    description: "AI auto-selects data sources"
+    date: 2026-03-29
+  - id: DEC-004
+    description: "Auto-create persistent project with status='ask'"
+    date: 2026-03-29
+
+confrontation:
+  findings_count: 12
+  critical: 1
+  high: 3
+  medium: 6
+  low: 2
+  all_resolved: true

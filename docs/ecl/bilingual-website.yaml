@@ -1,0 +1,310 @@
+ecl_version: "1.0"
+feature: "bilingual-website"
+status: completed
+created: 2026-03-31
+updated: 2026-03-31
+
+prompt_calibration:
+  raw_input: "给website实现双语功能，一键切换中英文，默认英文，按钮在dark mode按钮旁边。还要翻译现有文章。"
+  intent_decomposition:
+    total_intents: 1
+    total_tracks: 1
+    tracks:
+      - track_id: T1
+        name: "Hugo bilingual support"
+        priority: 1
+        intents:
+          - raw: "Add Chinese/English toggle to Hugo website"
+            type: feature
+          - raw: "Translate existing articles bidirectionally"
+            type: feature
+  tracks:
+    T1:
+      calibrated_scenario: |
+        Add Hugo multilingual support (en/zh) to PaperMod website.
+        - Default language: English (current URLs unchanged)
+        - Chinese pages under /zh/ prefix
+        - Language toggle auto-appears next to dark mode button (PaperMod built-in)
+        - Auto-generated content (daily/weekly/monthly/research) uses LLM native bilingual output
+        - Existing articles translated via LLM tool
+        - Mixed display fallback: Chinese UI shows English content when no translation exists
+        - Menu items stay in English for both languages
+      decisions:
+        - DEC-001: "Use filename suffix approach (.md / .zh.md), not directory separation"
+        - DEC-002: "LLM native bilingual - modify prompts to generate both languages simultaneously"
+        - DEC-003: "Menus stay in English for both language versions"
+        - DEC-004: "Mixed display fallback accepted"
+
+requirements:
+  - id: REQ-001
+    text: "Hugo multilingual configuration"
+    status: verified
+    confidence: 0.95
+    acceptance_criteria:
+      - "config.yml has languages section with en (default) and zh"
+      - "English URLs unchanged (no /en/ prefix)"
+      - "Chinese URLs under /zh/ prefix"
+      - "defaultContentLanguageInSubdir: false"
+    decomposition:
+      features: [FEAT-001, FEAT-002]
+
+  - id: REQ-002
+    text: "Language toggle button in header"
+    status: verified
+    confidence: 0.98
+    acceptance_criteria:
+      - "Toggle appears next to dark mode button"
+      - "Clicking toggles between en/zh versions of current page"
+      - "Falls back to homepage if no translation exists"
+    decomposition:
+      features: [FEAT-003]
+    notes: "PaperMod header.html already has lang-switch code (lines 58-80). Should auto-work once config is set."
+
+  - id: REQ-003
+    text: "Auto-generated content produces bilingual output"
+    status: verified
+    confidence: 0.85
+    acceptance_criteria:
+      - "daily_summary.py outputs both .md and .zh.md files"
+      - "weekly_summary.py outputs both .md and .zh.md files"
+      - "monthly_summary.py outputs both .md and .zh.md files"
+      - "research_scout.py outputs both .md and .zh.md files"
+      - "benchmark page has both language versions"
+      - "LLM prompts generate both English and Chinese content"
+    decomposition:
+      features: [FEAT-004, FEAT-005, FEAT-006, FEAT-007, FEAT-008]
+
+  - id: REQ-004
+    text: "Existing content translation tool"
+    status: verified
+    confidence: 0.90
+    acceptance_criteria:
+      - "Script translates .md to .zh.md (English to Chinese)"
+      - "Script translates .md to .en.md (Chinese to English) when needed"
+      - "Preserves frontmatter structure, translates title and summary"
+      - "Handles batch translation of directories"
+    decomposition:
+      features: [FEAT-009]
+
+  - id: REQ-005
+    text: "Static pages bilingual"
+    status: verified
+    confidence: 0.90
+    acceptance_criteria:
+      - "Search.md has Chinese version (Search.zh.md)"
+      - "Resume.md has Chinese version"
+      - "bugJournal _index.md has Chinese version"
+      - "Section index pages have Chinese versions"
+    decomposition:
+      features: [FEAT-010]
+
+features:
+  - id: FEAT-001
+    name: "config.yml multilingual setup"
+    parent: REQ-001
+    dependencies: []
+    complexity: small
+    description: |
+      Add languages section to config.yml:
+        defaultContentLanguage: en
+        defaultContentLanguageInSubdir: false
+        languages:
+          en:
+            languageName: English
+            weight: 1
+          zh:
+            languageName: 中文
+            weight: 2
+            params:
+              profileMode:
+                title: "TzJ's Net"
+                # Same profile, UI strings from i18n
+      Menu stays same for both languages (no per-language menu override needed since menus stay English).
+
+  - id: FEAT-002
+    name: "Custom i18n overrides"
+    parent: REQ-001
+    dependencies: []
+    complexity: trivial
+    description: |
+      PaperMod already has i18n/en.yaml and i18n/zh.yaml in the theme.
+      Create website/i18n/ directory only if we need custom UI strings beyond PaperMod defaults.
+      For now, theme defaults should suffice.
+
+  - id: FEAT-003
+    name: "Language toggle UI verification"
+    parent: REQ-002
+    dependencies: [FEAT-001]
+    complexity: trivial
+    description: |
+      PaperMod header.html (lines 58-80) already has lang-switch code.
+      Once config.yml has multilingual setup, the toggle appears automatically
+      next to the dark mode button inside div.logo-switches.
+      Verify: toggle appears, links to correct /zh/ or / URLs, styling is correct.
+
+  - id: FEAT-004
+    name: "daily_summary.py bilingual output"
+    parent: REQ-003
+    dependencies: [FEAT-001]
+    complexity: medium
+    description: |
+      Modify generate_hugo_post() to write both .md (English) and .zh.md (Chinese).
+      Modify LLM prompt in the merge/summarize step to output bilingual content.
+      Output format: JSON with "en" and "zh" keys, each containing title, summary, body.
+      Fallback: if Chinese generation fails, write English-only (no .zh.md file).
+
+  - id: FEAT-005
+    name: "weekly_summary.py bilingual output"
+    parent: REQ-003
+    dependencies: [FEAT-001]
+    complexity: medium
+    description: |
+      Same pattern as FEAT-004 for weekly summaries.
+      generate_weekly_hugo_post() writes both .md and .zh.md.
+
+  - id: FEAT-006
+    name: "monthly_summary.py bilingual output"
+    parent: REQ-003
+    dependencies: [FEAT-001]
+    complexity: medium
+    description: |
+      Same pattern as FEAT-004 for monthly summaries.
+      generate_monthly_hugo_post() writes both .md and .zh.md.
+
+  - id: FEAT-007
+    name: "research_scout.py bilingual output"
+    parent: REQ-003
+    dependencies: [FEAT-001]
+    complexity: medium
+    description: |
+      Same pattern as FEAT-004 for research reports.
+      generate_hugo_post() in scout/report.py writes both .md and .zh.md.
+
+  - id: FEAT-008
+    name: "benchmark page bilingual"
+    parent: REQ-003
+    dependencies: [FEAT-001]
+    complexity: trivial
+    description: |
+      benchmark.md is a simple wrapper with an iframe to the HTML report.
+      Create benchmark.zh.md with translated title/summary, same iframe URL.
+      The HTML benchmark report itself doesn't need translation (data tables).
+
+  - id: FEAT-009
+    name: "Content translation tool"
+    parent: REQ-004
+    dependencies: []
+    complexity: medium
+    description: |
+      New script: website/translate_content.py (or common/translate.py)
+      - Reads .md file, extracts frontmatter + body
+      - Sends to LLM for translation (en→zh or zh→en)
+      - Writes translated version with language suffix
+      - Supports batch mode (translate entire directory)
+      - Uses common.llm for LLM calls
+      - Preserves markdown formatting, code blocks, links
+
+  - id: FEAT-010
+    name: "Static pages Chinese versions"
+    parent: REQ-005
+    dependencies: [FEAT-001, FEAT-009]
+    complexity: small
+    description: |
+      Use FEAT-009 translation tool to create:
+      - Search.zh.md
+      - Resume.zh.md
+      - bugJournal/_index.zh.md
+      - Other section index pages as needed
+
+dependency_graph:
+  FEAT-001: []           # config.yml - no deps, start here
+  FEAT-002: []           # i18n - parallel with FEAT-001
+  FEAT-003: [FEAT-001]   # verify toggle - needs config first
+  FEAT-004: [FEAT-001]   # daily bilingual - needs config
+  FEAT-005: [FEAT-001]   # weekly bilingual - needs config
+  FEAT-006: [FEAT-001]   # monthly bilingual - needs config
+  FEAT-007: [FEAT-001]   # research bilingual - needs config
+  FEAT-008: [FEAT-001]   # benchmark bilingual - needs config
+  FEAT-009: []           # translation tool - independent
+  FEAT-010: [FEAT-001, FEAT-009]  # static pages - needs config + tool
+
+implementation_phases:
+  - phase: 1
+    name: "Hugo 基础架构"
+    features: [FEAT-001, FEAT-002, FEAT-003]
+    description: "配置多语言，验证语言切换按钮"
+    parallel: true
+
+  - phase: 2
+    name: "翻译工具"
+    features: [FEAT-009]
+    description: "创建通用翻译脚本"
+
+  - phase: 3
+    name: "静态页面 + Benchmark"
+    features: [FEAT-008, FEAT-010]
+    description: "翻译静态页面和 benchmark wrapper"
+    parallel: true
+
+  - phase: 4
+    name: "管道改造"
+    features: [FEAT-004, FEAT-005, FEAT-006, FEAT-007]
+    description: "修改4个自动生成管道支持双语输出"
+    parallel: true  # same pattern, can be done in parallel
+
+probe_assessment:
+  - target: FEAT-001
+    risk_score: 2  # low - Hugo multilingual is well-documented
+    type: assumption
+    question: "Does Hugo filename-based multilingual work with date-based filenames like 2026-03-30.md / 2026-03-30.zh.md?"
+    verdict: feasible
+    evidence: "Hugo parses language suffix before .md extension. 2026-03-30.zh.md = slug '2026-03-30' in language 'zh'. Confirmed in Hugo docs."
+
+  - target: FEAT-003
+    risk_score: 1  # low - code already exists
+    type: assumption
+    question: "Does PaperMod's lang-switch appear automatically with multilingual config?"
+    verdict: feasible
+    evidence: "header.html lines 58-80 check site.Home.Translations and render lang-switch ul. Only requires disableLangToggle != true (not set in config)."
+
+  - target: FEAT-004
+    risk_score: 5  # medium - LLM prompt changes
+    type: spike
+    question: "Can LLM reliably generate structured bilingual output (JSON with en/zh keys)?"
+    verdict: feasible
+    evidence: "common/llm.py already uses structured JSON output via call_llm(). Adding en/zh keys to the schema is straightforward. Fallback to English-only on parse failure."
+
+confrontation:
+  red_team:
+    - id: ATK-001
+      scenario: "LLM generates poor Chinese translation quality for technical content"
+      severity: medium
+    - id: ATK-002
+      scenario: "Doubled LLM API cost for every auto-generation run"
+      severity: medium
+    - id: ATK-003
+      scenario: "Existing auto-generated content has no Chinese version until re-generated"
+      severity: low
+    - id: ATK-004
+      scenario: "Hugo build breaks with malformed .zh.md files"
+      severity: high
+    - id: ATK-005
+      scenario: "sync_staging.py doesn't handle .zh.md files correctly"
+      severity: medium
+
+  blue_team:
+    - attack: ATK-001
+      verdict: mitigated
+      mitigation: "LLM prompt includes 'maintain technical accuracy, translate naturally not literally'. User can manually review and edit."
+    - attack: ATK-002
+      verdict: mitigated
+      mitigation: "Native bilingual in single prompt (DEC-002) reduces cost vs separate translation call. ~30-50% more tokens per call, not 2x."
+    - attack: ATK-003
+      verdict: defended
+      mitigation: "Mixed display fallback (DEC-004) handles this. Chinese UI shows English content. Use FEAT-009 to batch-translate existing content."
+    - attack: ATK-004
+      verdict: mitigated
+      mitigation: "Validate generated .zh.md frontmatter before writing. Fallback: skip Chinese file on error."
+    - attack: ATK-005
+      verdict: defended
+      mitigation: "sync_staging.py syncs entire directories. .zh.md files in same dirs will be synced automatically. No code change needed."

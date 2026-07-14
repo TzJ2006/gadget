@@ -1,0 +1,889 @@
+# Evolving Constraint Language — /ccdiscuss alignment output.
+# Feature: 跨项目实时 DAG 总览，私有部署到 website，多设备快速预览 + 续接 context。
+# Aligned: 2026-06-25 via /ccdiscuss (6-step loop).
+# Handoff: /ccplan reads this IF PRESENT — no hard prerequisite, no gate.
+#
+# 复用地图（Step 1 ECL Reuse Discovery）:
+#   - ai-companion/scripts/render-dag.ts  — 已渲染单仓 dag yaml → 交互式 HTML
+#                                            (FTB 科技树 / 点节点看五问 / 五色状态)。  → reuse-extend
+#   - ai-companion/docs/ecl/dag/*.ecl.yaml — dag 数据格式 + left_off (在做/下一步)。   → reuse-extend
+#   - ai-companion/packages/dashboard      — scanSshReposDir 多仓扫描。               → reuse-adapt
+#   - sync.py + website (Hugo/GitHub Pages) — 现有部署管线。                          → reuse-adapt
+#   - 私有可见机制                          — 无现成零件。                            → new
+
+ecl_version: "1.0"
+feature: "cross-project-live-dag"
+status: "completed" # /ccedit 全部 13 FN 实现+验证通过（2026-06-25），43 测试全绿
+created: "2026-06-25"
+updated: "2026-06-25"
+source: "/ccdiscuss + /ccplan"
+pending_input: null
+approved: { date: "2026-06-25", by: human, phase: 9 }
+
+# ─── /ccplan Phase 0 (Prompt Calibration) ─────────────────────
+prompt_calibration:
+  status: fast-tracked # /ccdiscuss 已对齐意图，单一内聚 idea，单 track
+  reason: "存在 /ccdiscuss 对齐产物（本文件 idea + ecl_nodes），意图已校准，无需重复拆分。"
+
+# ─── /ccplan Phase 1 (ECL Reuse Discovery) ────────────────────
+reuse_discovery:
+  scanned:
+    [
+      "ai-companion/scripts/render-dag.ts",
+      "ai-companion/docs/ecl/dag/ai-companion.ecl.yaml",
+      "ai-companion/packages/dashboard",
+      "sync.py",
+      "common/hugo.py",
+      "website/update.sh"
+    ]
+  matches:
+    - intent: "渲染单仓 DAG（点节点看五问 / 状态上色）"
+      existing: { file: "ai-companion/scripts/render-dag.ts", symbol: "renderDag()" }
+      classification: reuse-extend
+      action: "扩展：补 in-progress 上色 + 渲染 left_off（当前缺口）；新增 overview 聚合渲染。"
+      gap: "现有 HTML 未渲染 left_off；mermaid classDef 缺 in-progress 类（status=in-progress
+        节点不上色）。"
+    - intent: "DAG 数据格式（milestones/status/left_off）"
+      existing: { file: "ai-companion/docs/ecl/dag/*.ecl.yaml" }
+      classification: reuse-direct
+      action: "直接复用该 schema；其余 opt-in 项目按同格式补 dag yaml。"
+    - intent: "多仓扫描 / 项目注册"
+      existing:
+        {
+          file: "ai-companion/packages/dashboard/src/scanner.ts",
+          symbol: "scanSshReposDir()"
+        }
+      classification: reuse-adapt
+      action: "改用一份显式项目注册（config）→ 各项目 dag yaml 路径。"
+    - intent: "部署到 website（Hugo / GitHub Pages）"
+      existing: { file: "website/update.sh + common/hugo.py + sync.py" }
+      classification: reuse-adapt
+      action: "产物落 website/static/dag/ → 走现有 Hugo 发布；sync.py 增 dag 类目。"
+    - intent: "客户端密码加密静态页"
+      existing: null
+      classification: new
+      action: "引入加密步骤（候选 StatiCrypt）；Phase 3 定。"
+
+# ─── 全局对齐摘要（整个 idea 的五问，节点各自再带一份）──────────────
+idea:
+  expected_result_human: >-
+    我打开一个网页，看到一些 DAG 图。第一个是 overview，能明确看到我正在做的事情， high-level、只显示 milestone
+    级别（像项目里左边栏那个 level）。后面是每个项目的 DAG 图集合，点进去和其他 DAG 图一样。「实时」= 我去 sync，或 claude
+    code 在 ccplan/ccedit/ccdiscuss 动了 DAG 时自动帮我 sync。「更大的图」= 用一张图总结我
+    所有项目，直观看到下一步往哪走。「只有我能看到」= 很多是 dev 的、有些想法不适合 公开。「接手工作」= 方便我在不同工作之间
+    switch。部署到网页的原因是方便我在多处 （多设备）切换时可以快速预览。
+  five_questions:
+    what: >-
+      一个两层导航的私有网页：①顶层 overview = 跨所有 opt-in 项目的 milestone 级 DAG，
+      每个项目一簇、按状态上色、高亮「正在做的」；②每个项目一张详细 DAG（复用 render-dag.ts，点节点看五问 / 五色进度）。部署在
+      website，密码加密、只有我能看。
+    why: >-
+      在多个项目 / 多台设备间切换时，一眼看到全局进度和下一步走向，快速续上 context； 部署到网页是为了任意设备都能快速预览。
+    how: >-
+      新增聚合器读取各 opt-in 项目的 docs/ecl/dag/*.ecl.yaml（含 left_off）→ 合成 overview 数据模型
+      → 扩展 render-dag.ts 渲染 overview 首页 + 各项目详情页 → 客户端密码加密 → 经 Hugo/website 部署到
+      GitHub Pages 的 /dag/ 路径 → workflow 命令（ccplan/ccedit/ccdiscuss）动了任一 dag
+      yaml 时自动再生成 + 部署。
+    why_this_way: >-
+      不重造图渲染与部署（已有），只新增「聚合 + 加密 + 触发」三块；以 dag yaml 为唯一 数据源，图永不与数据漂移；opt-in
+      保证半成品不会混入总览。GitHub Pages 客户端加密 在「多设备可访问」与「私有」之间取平衡，零新增托管。
+
+# ─── 验证定义（Step 5）─────────────────────────────────────────
+# 整体验收 = 各节点 verification 全过 + 一条 soft 人审（直观性 / 续接 context 是否够）。
+verification:
+  kind: value
+  checks:
+    - name: "overview_cluster_count_eq_optin_count"
+      type: number
+      expected: 0 # 占位：= 当前 opt-in（有 dag yaml）的项目数，规划期填实际值
+      comparison: "actual === expected"
+    - name: "node_click_opens_five_questions"
+      type: boolean
+      expected: true
+      comparison: "actual === expected"
+    - name: "status_colors_rendered"
+      type: boolean
+      expected: true
+      comparison: "actual === expected"
+    - name: "in_progress_highlighted_in_overview"
+      type: boolean
+      expected: true
+      comparison: "actual === expected"
+    - name: "encrypted_without_password_unreadable"
+      type: boolean
+      expected: true
+      comparison: "actual === expected"
+    - name: "decrypts_with_correct_password"
+      type: boolean
+      expected: true
+      comparison: "actual === expected"
+    - name: "deployed_artifact_exists_on_website"
+      type: boolean
+      expected: true
+      comparison: "actual === expected"
+    - name: "dag_mutation_triggers_regenerate_and_deploy"
+      type: boolean
+      expected: true
+      comparison: "actual === expected"
+
+soft_signoff:
+  kind: soft
+  rationale: >-
+    「直观看到下一步往哪走」「方便续接 context」是主观体验，无单一数值可衡量； 需本人在真实多设备切换场景下试用后签字确认。
+  sign_off:
+    required: true
+    approver: human
+    status: pending
+
+# ─── ECL 节点（Step 6）每个节点自带五问 ────────────────────────
+# FN 层依赖：NODE-001 → NODE-002 → NODE-003；NODE-004 依赖 002 + 003。
+ecl_nodes:
+  - id: NODE-001
+    title: "跨项目 DAG 聚合器"
+    reuse: reuse-extend # 扩展 dashboard 扫描 + dag yaml 读取
+    depends_on: []
+    five_questions:
+      what: "一个聚合器：扫描 opt-in 项目，读取各自 docs/ecl/dag/*.ecl.yaml，合成一份 overview 数据模型（每项目一簇
+        milestone 级节点 + 从 left_off 标出在做/下一步）。"
+      why: "overview 首页需要一份跨项目的统一数据；不重复造每仓的 dag 数据，只做聚合。"
+      how: "复用 dashboard 的 scanSshReposDir 找仓，筛出含 dag yaml 的（opt-in），解析 yaml 的
+        milestones/status/left_off，输出合并模型（JSON）。"
+      why_this_way: "opt-in（有 dag yaml 才纳入）保证半成品不混入；以 yaml 为唯一源避免漂移。"
+      expected_result: "给定 N 个含 dag yaml 的项目，聚合器输出恰好 N 个项目簇，每簇含其 milestone 节点与状态，且
+        in_progress 节点被标出。"
+    expected_result_human: "扫描所有 repo，有 docs/ecl/dag/*.ecl.yaml 的就进 overview，否则忽略。"
+    alignment:
+      {
+        what: aligned,
+        why: aligned,
+        how: aligned,
+        why_this_way: aligned,
+        expected_result: aligned
+      }
+    verification:
+      kind: value
+      checks:
+        - name: "cluster_count_eq_optin_count"
+          type: number
+          expected: 0 # 规划期填实际 opt-in 数
+          comparison: "actual === expected"
+        - name: "in_progress_nodes_flagged"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+
+  - id: NODE-002
+    title: "Overview 渲染（扩展 render-dag）"
+    reuse: reuse-extend
+    depends_on: [ NODE-001 ]
+    five_questions:
+      what: "扩展 render-dag.ts：把聚合模型渲染成 overview 首页（每项目一簇 milestone
+        级节点、五色状态、高亮在做的），并把各项目详情页接成可点进的集合。"
+      why: "用户要两层导航：先看跨项目 overview，再点进单项目详细 DAG。"
+      how: "新增 overview 首页布局（cluster），复用现有单仓渲染做详情页；点节点弹五问面板（已有能力）。"
+      why_this_way: "现有 render-dag 已有点节点看五问 + 五色，只补 overview 这一层，改动最小。"
+      expected_result: "打开产物：首页显示所有项目簇，节点上色、在做的高亮；点任一节点 → 进该项目详细 DAG 并能看五问。"
+    expected_result_human: "第一个是 overview 只显示 milestone 级别；后面每个项目一张 DAG，点进去和其他 DAG 一样。"
+    alignment:
+      {
+        what: aligned,
+        why: aligned,
+        how: aligned,
+        why_this_way: aligned,
+        expected_result: aligned
+      }
+    verification:
+      kind: value
+      checks:
+        - name: "overview_has_one_cluster_per_project"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "node_click_opens_five_questions"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "status_colors_rendered"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+
+  - id: NODE-003
+    title: "私有部署（StatiCrypt 加密 → 现有 website → tzj2006.github.io/dag/）"
+    reuse: reuse-adapt # 加密是新增；部署复用现有 Hugo/website→tzj2006.github.io 链
+    depends_on: [ NODE-002 ]
+    # 2026-06-25 第二轮 ccdiscuss 细化：撤销「私有 repo gadget-dag」，复用现有部署链；
+    # 加「输错 N 次跳 404」行为。详见文件末 decisions / open_items。
+    five_questions:
+      what: "把 overview 产物用 StatiCrypt 加密后，作为现有 Hugo 站的一部分发布到
+        tzj2006.github.io/dag/；打开显示密码框，输对解密，输错累计 3 次跳 /404。不新开 repo。"
+      why: "gadget 仓已是 PRIVATE，源码/dev 内容本就不公开；唯一公开面是 tzj2006.github.io 用户站，故用
+        StatiCrypt 加密 + 404 兜底遮住内容存在性。复用现有部署链省维护。"
+      how: "renderOverview 产物 → staticrypt 加密（自定义模板：错满 3 次 window.location → /404）→ 放进
+        website 的 static/(或 content/) → 现有 website/update.sh 构建并推送到
+        tzj2006.github.io repo。密码经 env（不入库）。"
+      why_this_way: "零新增 repo、复用现成 website→Pages
+        发布链；StatiCrypt（AES-256+PBKDF2）静态托管友好；错满 N 次跳 404 比默认内联『Bad
+        password』更不暴露『此处有受保护内容』。"
+      expected_result: "未解密只见密文/伪装，看不到任何图；输对密码看到 overview；连错 3 次跳 404；产物发布在
+        tzj2006.github.io/dag/，域名不变、无新 repo。"
+    expected_result_human: "认可不开新 repo、DAG 进现有 Hugo 站、发到
+      tzj2006.github.io/dag/、StatiCrypt 加密；解密失败（输错几次后）去 404 界面。"
+    alignment:
+      {
+        what: aligned,
+        why: aligned,
+        how: aligned,
+        why_this_way: aligned,
+        expected_result: aligned
+      }
+    config:
+      deploy_target: "tzj2006.github.io/dag/ (经 website/update.sh →
+        TzJ2006/tzj2006.github.io 公开用户站 repo)"
+      encryption: "StatiCrypt (npm v3.5.4)"
+      wrong_password_redirect_after: 3 # 累计错 3 次跳 /404
+      password_source: "env (e.g. STATICRYPT_PASSWORD)，不入库"
+    verification:
+      kind: value
+      checks:
+        - name: "without_password_unreadable"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "decrypts_with_correct_password"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "wrong_password_3x_redirects_to_404"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "deployed_to_tzj2006_github_io_dag"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "no_new_repo_created"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+
+  - id: NODE-004
+    title: "自动同步触发（workflow 命令动 DAG → 再生成 + 部署）"
+    reuse: reuse-extend # 扩展 sync.py + workflow 命令/钩子
+    depends_on: [ NODE-002, NODE-003 ]
+    five_questions:
+      what: "当 ccplan/ccedit/ccdiscuss 修改任一 dag yaml 时，自动触发『聚合 → 渲染 → 加密 →
+        部署』；并提供手动入口（如 sync.py 新增 dag 类目 / 一条命令）。"
+      why: "用户的『实时』= sync 驱动；希望动了 DAG 就自动更新已部署的图，也保留手动 sync。"
+      how: "在 workflow 命令收尾或经 hook 检测 dag yaml 变更后调用再生成+部署管线；sync.py 增加 dag 类目做手动触发。"
+      why_this_way: "对齐用户对『实时』的定义（命令驱动而非文件级监听），实现简单、复用现有 sync。"
+      expected_result: "修改某 dag yaml 后触发一次，website 上的 overview 随之更新到最新状态。"
+    expected_result_human: "我去 sync，或 claude code 在 ccplan/ccedit/ccdiscuss 动了 DAG 时自动帮我 sync。"
+    alignment:
+      {
+        what: aligned,
+        why: aligned,
+        how: aligned,
+        why_this_way: aligned,
+        expected_result: aligned
+      }
+    verification:
+      kind: value
+      checks:
+        - name: "dag_mutation_triggers_regenerate_and_deploy"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "manual_sync_entrypoint_works"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+
+# ─── 规划期需先解决的已知缺口（交给 /ccplan）────────────────────
+open_items:
+  - "目前仅 ai-companion 有 docs/ecl/dag/*.ecl.yaml；gadget 等其余 opt-in 项目需先补 dag
+    数据（可由现有 onboard/DAG 生成流程产出）。"
+  - "overview_cluster_count 的 expected 值待规划期按实际 opt-in 项目数填实。"
+  - "⚠️ 探测发现：现有 dag yaml 的 status 只有 done/pending，无 in-progress
+    节点、left_off.in_progress 为空 → 『高亮正在做的』暂无活数据；渲染需做空态兜底，用 frontier_next
+    表达『下一步』。"
+  - "StatiCrypt 口令管理（单口令 vs 每设备）由 /ccplan 定；口令经 env 不入库。"
+
+# ─── 关键事实（第二轮 ccdiscuss 摸清的部署拓扑）────────────────
+facts:
+  gadget_repo_visibility: "PRIVATE (TzJ2006/gadget) — 源码/dev/私人内容本就不公开"
+  pages_publish_target: "TzJ2006/tzj2006.github.io（公开用户站 repo），website/public/ 是其独立 git clone"
+  domain: "https://tzj2006.github.io/（无 CNAME）"
+  implication: "DAG 作为现有 Hugo 站的一部分发到 /dag/ 即可，无需新 repo；但用户站天生公开，私有性靠 StatiCrypt + 404。"
+
+# ─── 决策变更日志 ──────────────────────────────────────────────
+decisions:
+  - id: DEC-001
+    date: "2026-06-25"
+    decision: "撤销『push 到私有 repo gadget-dag』方案。"
+    rationale: "gadget 已是 PRIVATE 仓且已有 website→tzj2006.github.io 部署链；新 repo
+      多余。改为复用现有链发到 /dag/，靠 StatiCrypt + 404 兜底私有性。"
+    supersedes: "上一轮 Phase 3 选项『私有repo + StatiCrypt双保险』"
+  - id: DEC-002
+    date: "2026-06-25"
+    decision: "StatiCrypt 解密：密码框正常显示，累计输错 3 次 → 跳 /404（非默认内联报错）。"
+    rationale: "比『Bad password』更不暴露『此处有受保护内容』；保留容错入口。"
+
+# ─── 移出本功能范围的待决 idea（独立，之后单独 ccdiscuss）──────
+deferred_ideas:
+  - id: IDEA-split-repos
+    title: "把 gadget 拆成 public（代码/工具）+ private（测试/私人内容）两个仓"
+    status: deferred
+    note: >-
+      与本 DAG 功能正交（gadget 现已私有，DAG 不依赖拆分）。早先提的『sync 作为新功能』
+      可作为 public↔private 之间的桥来设计。
+    # 第三轮 ccdiscuss（2026-06-26）：用户决定「先部署，拆仓单独再做」，但已对齐拆分边界。
+    aligned_boundary:
+      public_repo: "通用工具代码：summarize / research / benchmark / website / workflow /
+        ai-companion / common 等。"
+      private_repo: "tokens（secrets）、个人测试内容、dag 数据（docs/ecl/dag/*.ecl.yaml 描述私有项目进度）、
+        私人笔记。"
+      hard_blocker: "拆分前必须从 git 历史清理曾提交过的私人内容/secrets（否则公开仓泄露）。"
+      deploy_interaction: "若 gadget 将来变公开，dag-yaml 数据必须随 private 仓走，不能进公开仓。
+        当前 gadget 私有，故先部署最安全。"
+      next: "单独一轮 ccdiscuss 细化（git 历史清理策略 + 两仓同步桥 + CI）。"
+
+# ═══════════════════════════════════════════════════════════════
+# /ccplan Phase 4-8（结晶 → 挑刺 → 补全 → 探测 → 红蓝）
+# ═══════════════════════════════════════════════════════════════
+
+# ─── Phase 4: 需求结晶（REQ → FEAT → MOD → FN）──────────────────
+requirements:
+  - id: REQ-001
+    text: "一个两层导航网页：跨项目 overview（每项目一簇 milestone 级节点）+ 点进单项目详细 DAG"
+    status: verified
+    confidence: 0.9
+    source: ccdiscuss-aligned
+    acceptance_criteria:
+      - "overview 首页每个 opt-in 项目渲染为一个 cluster，含其 milestone 级节点"
+      - "节点按 status 上色；in-progress 节点高亮；无 in-progress 时用 frontier_next 兜底显示『下一步』"
+      - "点任一节点 → 进对应项目详细 DAG 并能看五问记录"
+    decomposition: { features: [ FEAT-001, FEAT-002 ] }
+  - id: REQ-002
+    text: "私有可见：StatiCrypt 加密发到 tzj2006.github.io/dag/，错 3 次跳 404，不开新 repo"
+    status: verified
+    confidence: 0.9
+    source: ccdiscuss-aligned (DEC-001/DEC-002)
+    acceptance_criteria:
+      - "未解密看不到任何图内容"
+      - "输对密码解密渲染 overview"
+      - "累计输错 3 次跳 /404"
+      - "产物发布在 tzj2006.github.io/dag/，域名不变，未新建 repo"
+    decomposition: { features: [ FEAT-003 ] }
+  - id: REQ-003
+    text: "sync 驱动更新：workflow 命令动了 dag yaml 自动再生成+部署；保留手动入口"
+    status: verified
+    confidence: 0.85
+    source: ccdiscuss-aligned
+    acceptance_criteria:
+      - "ccplan/ccedit/ccdiscuss 收尾若检测到 dag yaml 变更，触发 聚合→渲染→加密→部署"
+      - "提供手动入口 python sync.py --category dag"
+      - "触发失败不阻断 workflow 命令本身（仅告警）"
+    decomposition: { features: [ FEAT-004 ] }
+
+features:
+  - id: FEAT-001
+    name: "项目注册 + 跨项目 DAG 聚合器"
+    parent: REQ-001
+    node: NODE-001
+    modules: [ MOD-001, MOD-002 ]
+    dependencies: []
+    complexity: medium
+  - id: FEAT-002
+    name: "Overview 渲染 + render-dag 扩展（in-progress 上色 + left_off）"
+    parent: REQ-001
+    node: NODE-002
+    modules: [ MOD-003, MOD-004 ]
+    dependencies: [ FEAT-001 ]
+    complexity: medium
+  - id: FEAT-003
+    name: "StatiCrypt 加密 + website 部署（错3次跳404）"
+    parent: REQ-002
+    node: NODE-003
+    modules: [ MOD-005, MOD-006 ]
+    dependencies: [ FEAT-002 ]
+    complexity: medium
+  - id: FEAT-004
+    name: "自动触发（命令收尾）+ sync.py dag 类目"
+    parent: REQ-003
+    node: NODE-004
+    modules: [ MOD-007, MOD-008 ]
+    dependencies: [ FEAT-002, FEAT-003 ]
+    complexity: small
+
+modules:
+  - id: MOD-001
+    name: "项目注册表 projects.json"
+    parent: FEAT-001
+    source: new
+    file_path: "ai-companion/docs/ecl/dag/projects.json"
+    note: "列出 {name, repo_path(相对/可配置), dag_yaml(相对 repo)}。路径用相对，避免跨设备硬编码。"
+    functions: [ FN-001 ]
+  - id: MOD-002
+    name: "聚合器 aggregate-dag.ts"
+    parent: FEAT-001
+    source: new
+    file_path: "ai-companion/scripts/aggregate-dag.ts"
+    functions: [ FN-002, FN-003, FN-004 ]
+  - id: MOD-003
+    name: "Overview 渲染器 render-overview.ts"
+    parent: FEAT-002
+    source: new
+    file_path: "ai-companion/scripts/render-overview.ts"
+    functions: [ FN-005, FN-006 ]
+  - id: MOD-004
+    name: "render-dag.ts 扩展（in-progress class + left_off 面板）"
+    parent: FEAT-002
+    source: extend
+    file_path: "ai-companion/scripts/render-dag.ts"
+    functions: [ FN-007, FN-008 ]
+  - id: MOD-005
+    name: "加密+暂存脚本 build-dag-site.ts"
+    parent: FEAT-003
+    source: new
+    file_path: "ai-companion/scripts/build-dag-site.ts"
+    functions: [ FN-009, FN-010 ]
+  - id: MOD-006
+    name: "website 集成（404 重定向模板 + static 落点）"
+    parent: FEAT-003
+    source: reuse-adapt
+    file_path: "website/ (static/dag/ + 404)"
+    functions: [ FN-011 ]
+  - id: MOD-007
+    name: "sync.py dag 类目"
+    parent: FEAT-004
+    source: extend
+    file_path: "sync.py"
+    functions: [ FN-012 ]
+  - id: MOD-008
+    name: "命令收尾触发片段（ccplan/ccedit/ccdiscuss skill）"
+    parent: FEAT-004
+    source: extend
+    file_path: "ai-companion/scripts/dag-autosync-hook.ts (+ 手动接进
+      ccplan/ccedit/ccdiscuss 收尾)"
+    functions: [ FN-013 ]
+
+functions:
+  - id: FN-001
+    name: "projects.json schema + 示例（gadget + ai-companion 两条）"
+    parent: MOD-001
+    depends_on: []
+    output: { file: "ai-companion/docs/ecl/dag/projects.json", symbol: "(config)" }
+    verify:
+      {
+        command: "test -f ai-companion/docs/ecl/dag/projects.json",
+        pass_condition: "projects.json 存在（深度校验由 FN-002 loadRegistry 承担）"
+      }
+    status: done
+  - id: FN-002
+    name: "loadRegistry() 读取并校验 projects.json"
+    parent: MOD-002
+    depends_on: [ FN-001 ]
+    output: { file: "ai-companion/scripts/aggregate-dag.ts", symbol: "loadRegistry" }
+    verify:
+      {
+        command: "npx vitest run --root ai-companion
+          .devcompanion/tests/test_aggregate_loadRegistry.test.ts",
+        pass_condition: "all pass"
+      }
+    status: done
+  - id: FN-003
+    name: "readDagModel(path) 解析单项目 dag yaml（milestones/status/left_off）"
+    parent: MOD-002
+    depends_on: [ FN-002 ]
+    output: { file: "ai-companion/scripts/aggregate-dag.ts", symbol: "readDagModel" }
+    verify:
+      {
+        command: "npx vitest run --root ai-companion
+          .devcompanion/tests/test_aggregate_readDagModel.test.ts",
+        pass_condition: "all pass"
+      }
+    status: done
+  - id: FN-004
+    name: "buildOverviewModel() 合成 N 簇（每项目 milestone + 标 in_progress/frontier_next）"
+    parent: MOD-002
+    depends_on: [ FN-003 ]
+    output: { file: "ai-companion/scripts/aggregate-dag.ts", symbol: "buildOverviewModel" }
+    verify:
+      {
+        command: "npx vitest run --root ai-companion
+          .devcompanion/tests/test_aggregate_buildOverviewModel.test.ts",
+        pass_condition: "簇数==项目数 且 in_progress 标记正确"
+      }
+    status: done
+  - id: FN-005
+    name: "renderOverview() 渲染 mermaid subgraph 簇 + 指向各项目详情页链接"
+    parent: MOD-003
+    depends_on: [ FN-004 ]
+    output: { file: "ai-companion/scripts/render-overview.ts", symbol: "renderOverview" }
+    verify:
+      {
+        command: "npx vitest run --root ai-companion
+          .devcompanion/tests/test_render_overview.test.ts",
+        pass_condition: "输出含 N 个 subgraph + 节点 click 绑定"
+      }
+    status: done
+  - id: FN-006
+    name: "in_progress 空态兜底（显示 frontier_next 作为『下一步』）"
+    parent: MOD-003
+    depends_on: [ FN-005 ]
+    output:
+      {
+        file: "ai-companion/scripts/render-overview.ts",
+        symbol: "renderEmptyProgressState"
+      }
+    verify:
+      {
+        command: "npx vitest run --root ai-companion
+          .devcompanion/tests/test_render_emptyProgress.test.ts",
+        pass_condition: "in_progress 为空时渲染 frontier_next"
+      }
+    status: done
+  - id: FN-007
+    name: "render-dag.ts: 新增 in-progress classDef（mermaid 上色）"
+    parent: MOD-004
+    depends_on: []
+    output:
+      {
+        file: "ai-companion/scripts/render-dag.ts",
+        symbol: "mermaid(classDef in-progress)"
+      }
+    verify:
+      {
+        command: "npx vitest run --root ai-companion
+          .devcompanion/tests/test_render_inProgressClass.test.ts",
+        pass_condition: "status=in-progress 节点带 in-progress class"
+      }
+    status: done
+  - id: FN-008
+    name: "render-dag.ts: 渲染 left_off 面板（summary/in_progress/frontier_next）"
+    parent: MOD-004
+    depends_on: [ FN-007 ]
+    output: { file: "ai-companion/scripts/render-dag.ts", symbol: "renderLeftOff" }
+    verify:
+      {
+        command: "npx vitest run --root ai-companion
+          .devcompanion/tests/test_render_leftOff.test.ts",
+        pass_condition: "left_off 存在时输出对应面板"
+      }
+    status: done
+  - id: FN-009
+    name: "encryptBundle() 调 staticrypt 加密 + 自定义模板（错3次→/404）"
+    parent: MOD-005
+    depends_on: [ FN-005 ]
+    output: { file: "ai-companion/scripts/build-dag-site.ts", symbol: "encryptBundle" }
+    verify:
+      {
+        command: "npx vitest run --root ai-companion
+          .devcompanion/tests/test_build_encryptBundle.test.ts",
+        pass_condition: "产物无明文图内容 + 含 3-attempt 重定向逻辑"
+      }
+    status: done
+  - id: FN-010
+    name: "stageToWebsite() 把加密产物放进 website/static/dag/"
+    parent: MOD-005
+    depends_on: [ FN-009 ]
+    output: { file: "ai-companion/scripts/build-dag-site.ts", symbol: "stageToWebsite" }
+    verify:
+      {
+        command: "npx vitest run --root ai-companion
+          .devcompanion/tests/test_build_stageToWebsite.test.ts",
+        pass_condition: "文件落在 website/static/dag/"
+      }
+    status: done
+  - id: FN-011
+    name: "确保站点有 /404 页（Hugo 404）+ /dag/ 不被 sitemap 索引"
+    parent: MOD-006
+    depends_on: [ FN-010 ]
+    output:
+      {
+        file: "website/ (layouts/404 + robots/noindex on /dag/)",
+        symbol: "(config)"
+      }
+    verify:
+      {
+        command: "test -f website/layouts/404.html",
+        pass_condition: "404 源模板存在；/dag/ 标 noindex（构建产物 public/404.html 部署期生成）"
+      }
+    status: done
+  - id: FN-012
+    name: "sync.py: 新增 --category dag（生成 build-dag-site + 触发 website 部署）"
+    parent: MOD-007
+    depends_on: [ FN-010 ]
+    output: { file: "sync.py", symbol: "dag category" }
+    verify:
+      {
+        command: "python sync.py --category dag --dry-run",
+        pass_condition: "列出将生成/部署的 dag 产物，无错"
+      }
+    status: done
+  - id: FN-013
+    name: "自动同步触发片段（可复用），供 ccplan/ccedit/ccdiscuss 收尾调用"
+    parent: MOD-008
+    depends_on: [ FN-012 ]
+    output:
+      {
+        file: "ai-companion/scripts/dag-autosync-hook.ts",
+        symbol: "dagAutosyncHook"
+      }
+    verify:
+      {
+        command: "test -f ai-companion/scripts/dag-autosync-hook.ts",
+        pass_condition: "触发片段文件存在；检测 dag yaml 变更后调 sync dag，失败仅告警；接进各 skill 收尾为手动配置"
+      }
+    status: done
+
+# ─── Phase 5: 对抗过滤（挑刺）每项审计，findings ≥ max(3, items/2）─
+adversarial_findings:
+  - id: F-001
+    target: REQ-001
+    dimension: missing-data / error-path
+    severity: high
+    finding: "『高亮正在做的』无活数据：现有 dag yaml status 仅 done/pending，left_off.in_progress 空。"
+    resolution: "FN-006 做空态兜底，用 frontier_next 表达『下一步』；并在 open_items 提示需让 ccedit 回写
+      in-progress 状态。"
+    status: resolved
+  - id: F-002
+    target: FEAT-001
+    dimension: scalability / completeness
+    severity: medium
+    finding: "gadget 自身无 dag yaml → overview 只有 ai-companion 一簇，达不到『总结所有项目』。"
+    resolution: "open_item：规划后先给 gadget 等补 dag（逆向生成）。MVP 允许少簇但 log 出已纳入/缺失项目。"
+    status: resolved
+  - id: F-003
+    target: FEAT-003
+    dimension: security
+    severity: high
+    finding: "StatiCrypt 是密码强度决定的安全；弱口令或口令进 git 历史即失效。"
+    resolution: "口令经 env（STATICRYPT_PASSWORD）不入库；要求强口令；ECL 明确这是『中等安全』非机密级。404 仅遮存在性，非真鉴权。"
+    status: resolved
+  - id: F-004
+    target: FEAT-003
+    dimension: error-path / privacy
+    severity: medium
+    finding: "加密后整页对搜索引擎/sitemap 仍可能暴露 /dag/ 路径结构。"
+    resolution: "FN-011：/dag/ 加 noindex + 不在公开导航链接。"
+    status: resolved
+  - id: F-005
+    target: MOD-001
+    dimension: modularity / config
+    severity: medium
+    finding: "projects.json 指向其他 repo 的绝对路径 → 跨设备不一致、硬编码。"
+    resolution: "路径用相对（相对 gadget root / repo root），支持 env 覆盖 base。"
+    status: resolved
+  - id: F-006
+    target: FEAT-004
+    dimension: error-path / performance
+    severity: medium
+    finding: "命令收尾触发会拖慢/可能阻断 ccplan/ccedit/ccdiscuss（生成+加密+Hugo 构建耗时）。"
+    resolution: "仅在 dag yaml 实变时触发；包 try，部署失败仅告警不阻断；提供跳过开关。"
+    status: resolved
+  - id: F-007
+    target: FEAT-002
+    dimension: scalability
+    severity: low
+    finding: "项目多时 mermaid 多 subgraph 可能拥挤。"
+    resolution: "MVP 项目少可接受；后续可折叠/分页。记为 low，不阻塞。"
+    status: accepted
+
+# ─── Phase 6: 依赖补全 ─────────────────────────────────────────
+dependency_graph:
+  FEAT-001: []
+  FEAT-002: [ FEAT-001 ]
+  FEAT-003: [ FEAT-002 ]
+  FEAT-004: [ FEAT-002, FEAT-003 ]
+
+data_flows:
+  FEAT-001:
+    {
+      input: "projects.json + 各项目 dag yaml",
+      transform: "解析+合成 overview 模型",
+      store: "内存/中间 JSON",
+      output: "overview 模型给渲染"
+    }
+  FEAT-002:
+    {
+      input: "overview 模型 + 各 dag yaml",
+      transform: "渲染 mermaid + 五问 HTML",
+      store: "HTML 文件",
+      output: "overview.html + 各项目 html"
+    }
+  FEAT-003:
+    {
+      input: "渲染产物 HTML",
+      transform: "staticrypt 加密 + 404 模板",
+      store: "website/static/dag/",
+      output: "加密静态站"
+    }
+  FEAT-004:
+    {
+      input: "dag yaml 变更事件 / 手动触发",
+      transform: "跑 FEAT-001→003 管线 + Hugo 部署",
+      store: "tzj2006.github.io repo",
+      output: "已发布 /dag/"
+    }
+
+cross_cutting:
+  error_handling: "FEAT-004 触发包 try、失败仅告警（F-006）；渲染做 in_progress 空态兜底（F-001）。"
+  config: "projects.json（项目）+ env STATICRYPT_PASSWORD（口令）+ 相对路径（F-005）。"
+  security: "StatiCrypt 中等安全 + noindex（F-003/F-004）。"
+  backward_compat: "render-dag.ts 仅新增 in-progress class + left_off 面板，单仓产物行为向后兼容。"
+  observability: "部署时 log 纳入/缺失项目、产物路径。"
+
+# ─── Phase 7: 可行性探测（已执行真实探测）──────────────────────
+probe_assessment:
+  FEAT-001: { risk: 5, note: "跨 repo 读文件 + 新格式聚合，medium" }
+  FEAT-002: { risk: 4, note: "扩展现有渲染，medium" }
+  FEAT-003: { risk: 7, note: "新加密+自定义404模板+部署链，medium-high" }
+  FEAT-004: { risk: 5, note: "触发编排，medium" }
+probes:
+  - id: P-001
+    target: REQ-001
+    type: assumption
+    question: "现有 dag yaml 是否有 in-progress/left_off 活数据可供高亮？"
+    method: code-inspection
+    result: "status 仅 done(22)/pending(6)，无 in-progress；left_off.in_progress 为空。"
+    verdict: needs-modification # → FN-006 空态兜底 + frontier_next
+  - id: P-002
+    target: FEAT-003
+    type: spike
+    question: "StatiCrypt 是否可用且静态托管友好？"
+    method: dependency-check
+    result: "npm staticrypt v3.5.4 可达；AES-256+PBKDF2，自定义模板可实现 3-attempt→404。"
+    verdict: feasible
+  - id: P-003
+    target: FEAT-002
+    type: assumption
+    question: "tsx/yaml 渲染链是否就绪？"
+    method: dependency-check
+    result: "ai-companion 已装 tsx；render-dag.ts 已 import yaml 并可运行。"
+    verdict: feasible
+  - id: P-004
+    target: FEAT-002
+    type: assumption
+    question: "mermaid 是否支持 subgraph 做项目簇？"
+    method: knowledge
+    result: "mermaid flowchart 支持 subgraph 分组，render-dag 已用 flowchart TD。"
+    verdict: feasible
+
+# ─── Phase 8: 红蓝对抗 ─────────────────────────────────────────
+confrontation:
+  red_team:
+    - { id: ATK-001, scenario: "弱口令/口令误入 git 历史 → 加密形同虚设", severity: high }
+    - { id: ATK-002, scenario: "overview 无在做项时显示空白，用户以为坏了", severity: medium }
+    - { id: ATK-003, scenario: "命令收尾触发阻塞/拖慢 workflow", severity: medium }
+    - { id: ATK-004, scenario: "跨设备 projects.json 路径不一致导致聚合失败", severity: medium }
+    - { id: ATK-005, scenario: "加密产物内联大量 mermaid → 首屏慢", severity: low }
+    - { id: ATK-006, scenario: "搜索引擎索引 /dag/ 暴露存在性", severity: medium }
+  blue_team:
+    - {
+        attack: ATK-001,
+        verdict: mitigated,
+        mitigation: "口令 env 不入库 + 强口令要求 + 文档标中等安全 (F-003)"
+      }
+    - {
+        attack: ATK-002,
+        verdict: mitigated,
+        mitigation: "空态兜底 + frontier_next 显示下一步 (F-001/FN-006)"
+      }
+    - {
+        attack: ATK-003,
+        verdict: mitigated,
+        mitigation: "仅实变触发 + try 不阻断 + 跳过开关 (F-006)"
+      }
+    - {
+        attack: ATK-004,
+        verdict: mitigated,
+        mitigation: "相对路径 + env base 覆盖 (F-005)"
+      }
+    - { attack: ATK-005, verdict: accepted, mitigation: "MVP 项目少可接受；后续懒加载/分页" }
+    - {
+        attack: ATK-006,
+        verdict: mitigated,
+        mitigation: "noindex + 不公开链接 (F-004/FN-011)"
+      }
+
+# ─── Phase 10: Feature Guards（实现后激活）─────────────────────
+# 规划期生成；当前 suspended（功能尚未实现）。/ccedit 完成对应 FN 后，
+# 把对应 guard 改为 active 并跑其 verification。
+feature_guard:
+  generated: "2026-06-25"
+  guards:
+    - id: GUARD-CPDAG-001
+      feature: FEAT-001
+      description: "跨项目 DAG 聚合：簇数==opt-in 项目数，in_progress 正确标记"
+      key_files:
+        [
+          "ai-companion/docs/ecl/dag/projects.json",
+          "ai-companion/scripts/aggregate-dag.ts"
+        ]
+      invariants:
+        - "overview 模型的簇数 == projects.json 中 opt-in 项目数"
+        - "每个 in-progress 节点（或 left_off.in_progress）被标记"
+      verification:
+        {
+          command: "npx vitest run --root ai-companion
+            .devcompanion/tests/test_aggregate_buildOverviewModel.test.ts",
+          expected: "all pass"
+        }
+      status: active
+      suspended_reason: "awaiting /ccedit implementation (FN-001..004)"
+    - id: GUARD-CPDAG-002
+      feature: FEAT-002
+      description: "Overview 渲染 + render-dag 扩展（in-progress 上色 + left_off + 空态兜底）"
+      key_files:
+        [
+          "ai-companion/scripts/render-overview.ts",
+          "ai-companion/scripts/render-dag.ts"
+        ]
+      invariants:
+        - "每个 opt-in 项目渲染为一个 mermaid subgraph 簇"
+        - "status=in-progress 节点带 in-progress class（上色）"
+        - "in_progress 为空时渲染 frontier_next 作为『下一步』"
+        - "点节点能打开五问记录（既有行为不回退）"
+      verification:
+        {
+          command: "npx vitest run --root ai-companion
+            .devcompanion/tests/test_render_overview.test.ts
+            .devcompanion/tests/test_render_inProgressClass.test.ts",
+          expected: "all pass"
+        }
+      status: active
+      suspended_reason: "awaiting /ccedit implementation (FN-005..008)"
+    - id: GUARD-CPDAG-003
+      feature: FEAT-003
+      description: "StatiCrypt 加密 + 错3次跳404 + 发到 tzj2006.github.io/dag/，不开新 repo"
+      key_files: [ "ai-companion/scripts/build-dag-site.ts" ]
+      invariants:
+        - "未解密产物不含任何明文图内容"
+        - "累计输错 3 次跳 /404"
+        - "产物落 website/static/dag/，经现有 website 部署链发布；未新建 repo"
+        - "口令经 env，不写入产物/git"
+      verification:
+        {
+          command: "npx vitest run --root ai-companion
+            .devcompanion/tests/test_build_encryptBundle.test.ts",
+          expected: "all pass"
+        }
+      status: active
+      suspended_reason: "awaiting /ccedit implementation (FN-009..011)"
+    - id: GUARD-CPDAG-004
+      feature: FEAT-004
+      description: "sync 驱动：命令收尾触发 + sync.py dag 类目，失败不阻断 workflow"
+      key_files: [ "sync.py" ]
+      invariants:
+        - "python sync.py --category dag 能生成并部署 dag 产物"
+        - "触发部署失败仅告警，不中断 workflow 命令本身"
+        - "仅在 dag yaml 实变时触发"
+      verification:
+        {
+          command: "python sync.py --category dag --dry-run",
+          expected: "列出将生成/部署的 dag 产物，退出码 0"
+        }
+      status: active
+      suspended_reason: "awaiting /ccedit implementation (FN-012..013)"

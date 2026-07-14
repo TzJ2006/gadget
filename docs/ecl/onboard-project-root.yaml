@@ -1,0 +1,74 @@
+# Evolving Constraint Language — cconboard handoff for the gadget project root.
+# Generated 2026-06-03 by /cconboard (entire-project-root onboarding).
+# This file declares feature_guard guards that the ccplan guard-check.py PreToolUse
+# hook enforces: editing a guarded key_file warns the agent of invariants to preserve
+# and `python skills/ccplan/guard-check.py --verify` runs each guard's verification.
+#
+# Companion artifacts (all under .devcompanion/, gitignored):
+#   - Onboarding Log:        .devcompanion/onboard-logs/project-root.yaml
+#   - Full inventory:        .devcompanion/onboard/inventory.json (670 fns / 93 files)
+#   - Refined diagnosis:     .devcompanion/onboard/phase2_diagnosis_refined.json
+#   - Restructure plan:      .devcompanion/onboard/restructure_plan.json (risk-tiered)
+#   - Characterization tests:.devcompanion/tests/char/test_char_common_pure.py
+#   - Source snapshot:       .devcompanion/onboard-archive/2026-06-03T20-41-08/
+
+onboarding:
+  scope: "project-root"
+  git_sha: "c6afd016a6fe311f1d6eeea66290b936415492a9"
+  date: "2026-06-03"
+  structure_verdict: "keep / tidy — repo is modular; no module reorganization warranted (0 files assessed 'reorganize')"
+  execution_decision: "STAGED — user chose plan+guards only; no source modified (working tree was dirty)"
+
+feature_guard:
+  generated: "2026-06-03"
+  guards:
+    - id: GUARD-OB-001
+      feature: "common/ pure utility core (hashing, config IO, JSON repair)"
+      description: >-
+        The deterministic, side-effect-free utility functions in common/io.py and
+        common/json_utils.py that every gadget tool depends on. Their behavior is
+        locked by characterization tests authored during onboarding (Phase 3).
+      key_files:
+        - "common/io.py"
+        - "common/json_utils.py"
+      invariants:
+        - "content_hash(text) returns the first 16 hex chars of SHA-256 by default; content_hash('hello') == '2cf24dba5fb0a30e'; length is configurable and output length == length"
+        - "content_hash is deterministic for identical input"
+        - "load_json_config returns {} for a missing file or malformed JSON (never raises); a provided cache dict memoizes by str(path)"
+        - "try_parse_json parses direct JSON, the largest valid ```json``` code block, and the outermost depth-balanced {...} embedded in prose; returns None on unparseable input"
+        - "parse_json_response returns the parsed dict on success, recovers unescaped inner quotes, and on total failure returns {'raw_response': text, 'parse_error': 'Cannot extract JSON'} (never raises)"
+        - "_fix_unescaped_quotes escapes quotes inside string values while leaving structural quotes untouched"
+      verification:
+        command: "conda run -n AI python -m pytest .devcompanion/tests/char/test_char_common_pure.py -q"
+        expected: "21 passed"
+      status: active
+      suspended_reason: null
+      retired_date: null
+      history:
+        - date: "2026-06-03"
+          action: "Generated from Phase 3 characterization tests (21 assertions, all passing) during /cconboard onboarding"
+
+    - id: GUARD-OB-002
+      feature: "Existing repository test baseline"
+      description: >-
+        The repo's pre-existing real test suites form the regression net for any future
+        restructuring executed from the staged plan. Onboarding recorded a green baseline
+        of 140 passing (1 pre-existing failure in test_generate_markdown_basic caused by
+        uncommitted working-tree drift in summarize/formatter.py — out of onboarding scope).
+      key_files:
+        - "summarize/"
+        - "research/"
+        - "workflow/"
+        - "common/"
+      invariants:
+        - "Restructuring from .devcompanion/onboard/restructure_plan.json must not reduce the passing count of the existing suites below the 140 baseline (excluding the documented pre-existing failure)"
+        - "Each Phase 5 modification must have a passing characterization test for the target function BEFORE the edit and the same test passing AFTER (revert on failure)"
+      verification:
+        command: "conda run -n AI python -m pytest workflow/tests summarize/tests research/tests -q --deselect summarize/tests/test_formatter.py::test_generate_markdown_basic"
+        expected: "140 passed (the 1 known pre-existing failure is deselected)"
+      status: active
+      suspended_reason: null
+      retired_date: null
+      history:
+        - date: "2026-06-03"
+          action: "Baseline captured during /cconboard Phase 3"

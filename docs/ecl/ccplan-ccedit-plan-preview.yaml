@@ -1,0 +1,457 @@
+# Evolving Constraint Language — /ccdiscuss alignment output.
+# Feature: ccplan 结束 / ccedit 开始前，平铺展示完整可执行计划（逐条 FN：文件/symbol/verify/依赖/执行层），
+#          供 review 与调整，体验贴近原生 plan mode 的 ExitPlanMode。
+# Aligned: 2026-06-25 via /ccdiscuss (6-step loop).
+# Handoff: /ccplan reads this IF PRESENT — no hard prerequisite, no gate.
+#
+# 复用地图（Step 1 ECL Reuse Discovery）:
+#   - ai-companion/skills/ccplan/SKILL.md  Phase 9 Review Gate  — 已是「停下→展示→Approve/Modify/Reject」
+#                                            停顿点，但只展示摘要（需求/架构/风险/DAG概览/规模）。 → reuse-extend
+#   - ai-companion/skills/ccedit/SKILL.md  启动段                — 读已批准 ECL → 拓扑排序 → 直接执行，
+#                                            执行前无「整份计划平铺 + 等确认」步骤。              → reuse-extend
+#   - ai-companion/packages/exec (@aidev/exec)  parseEclDag / topologicalSort / getReadyNodes
+#                                            — 已能解析 FN DAG 并拓扑排序，平铺渲染可直接复用。   → reuse-direct
+#   - AskUserQuestion（Approve/Modify/Reject）                  — 现有审阅交互，继续沿用。         → reuse-direct
+#   - 原生 ExitPlanMode 工具                                     — 明确不采用（B1：体验像即可）。    → out-of-scope
+
+ecl_version: "1.0"
+feature: "ccplan-ccedit-plan-preview"
+status: "implemented" # /ccedit 已执行完 7/7 FN，全部 verify 通过（exec 套件 58 测试全过）
+created: "2026-06-25"
+updated: "2026-06-25"
+source: "/ccdiscuss → /ccplan"
+pending_input: null
+
+# ─── Phase 10 特性守卫（批准后生成）────────────────────────────
+feature_guard:
+  generated: "2026-06-25"
+  guards:
+    - id: GUARD-001
+      feature: FEAT-001
+      description: "ccplan/ccedit 两端平铺完整可执行计划"
+      key_files:
+        - "ai-companion/packages/exec/src/format-execution-plan.ts"
+        - "ai-companion/packages/exec/src/parse-ecl-dag.ts"
+        - "ai-companion/packages/exec/src/cli.ts"
+        - "ai-companion/packages/exec/src/index.ts"
+        - "ai-companion/skills/ccplan/SKILL.md"
+        - "ai-companion/skills/ccedit/SKILL.md"
+      invariants:
+        - "ccplan Phase 9 在批准前平铺逐条
+          FN（id/name/file/symbol/depends_on/verify/status），缺字段标 TBD。"
+        - "ccedit 首跑在执行任何节点前平铺同款计划并等确认；续跑或 --yes 可跳过。"
+        - "ccedit 执行期仍走严格 parseEclDag —— 含 TBD 的计划真要跑前会被拦下。"
+        - "平铺层内按 FN id 字典序，输出稳定可 diff。"
+        - "两端审批/确认均用 AskUserQuestion，不调用原生 ExitPlanMode。"
+      verification:
+        command: "npx vitest run
+          .devcompanion/tests/test_exec_formatExecutionPlan.test.ts"
+        expected: "all pass"
+      status: active
+
+# ─── 约束（执行期前提）──────────────────────────────────────────
+constraints:
+  - "ccedit 执行本 ECL 时 cwd 必须为 ai-companion/（vitest 配置与 packages/exec/src/cli.ts
+    路径均以此为根）。"
+  - "技能源在 ai-companion/skills/，运行时副本在 ~/.claude/skills/；改源后需 reinstall 才生效（见
+    FN-007）。"
+  - "verify.command 按空白切分为单个 argv（无管道/&&/重定向）——grep 模式用单 token 锚点，勿含空格。"
+
+# ─── /ccplan Phase 0 (Prompt Calibration) ─────────────────────
+prompt_calibration:
+  status: fast-tracked
+  reason: "存在 /ccdiscuss 对齐产物（本文件），意图已校准：单一内聚 idea（计划平铺展示），两处落点已定。"
+
+# ─── /ccplan Phase 2 决策（Hypothesis Interrogation，已对齐故聚焦三问）──
+phase2_decisions:
+  - id: DEC-001
+    question: "Phase 9 批准前，FN 的 verify/output 常未填全，平铺如何处理？"
+    decision: "尽力渲染、缺的字段标 (TBD)；不阻塞规划。"
+    rationale: "Phase 9 本就是批准前的迭代点；强制前移 Phase 10 工作量大且违背分阶段精神。"
+    impact: "催生 REQ-002 / FN-002（parseEclDagLenient 宽松解析）。"
+  - id: DEC-002
+    question: "ccedit 启动的『平铺+等确认』是否可跳过（避免续跑每次都停）？"
+    decision: "首跑（全 pending）才平铺+等确认；续跑（已有 done/in-progress）直接执行；另提供 --yes 跳过。"
+    rationale: "把『确认』当作开跑前的一次性闸门，续跑无需重复打断。"
+    impact: "FN-006 需用 getExecutionState 判定首跑 vs 续跑。"
+  - id: DEC-003
+    question: "平铺渲染逻辑放哪？"
+    decision: "抽 @aidev/exec 共享 helper formatExecutionPlan + cli.ts 新增 plan 子命令；两个
+      SKILL 都调用它。"
+    rationale: "DRY + 可 vitest + 两处输出一致；与现有 parse/state/verify 子命令同构。"
+    impact: "FN-001 / FN-003 / FN-004。"
+
+# ─── /ccplan Phase 1 (ECL Reuse Discovery) ────────────────────
+reuse_discovery:
+  scanned:
+    [
+      "ai-companion/skills/ccplan/SKILL.md",
+      "ai-companion/skills/ccedit/SKILL.md",
+      "ai-companion/packages/exec/src/index.ts"
+    ]
+  matches:
+    - intent: "ccplan 批准前的停顿点 + 计划展示"
+      existing: { file: "ai-companion/skills/ccplan/SKILL.md", symbol: "Phase 9: Review Gate" }
+      classification: reuse-extend
+      action: "在现有摘要之外新增『Full Executable Plan』段：遍历 functions: 列表，拓扑排序后逐条平铺 FN。"
+      gap: "当前 Phase 9 只展示摘要（需求/架构/风险/DAG概览/规模），看不到逐条 FN 的 file/symbol/verify。"
+    - intent: "ccedit 执行前的最后一道确认"
+      existing: { file: "ai-companion/skills/ccedit/SKILL.md", symbol: "启动 / 读取已批准 ECL 段" }
+      classification: reuse-extend
+      action: "在 topo 排序后、执行首个节点前，平铺完整执行计划并用 AskUserQuestion 等确认。"
+      gap: "当前 ccedit 读 ECL → 拓扑排序 → 直接 fan-out 执行，执行前无『整份平铺 + 等确认』。"
+    - intent: "解析 FN DAG + 拓扑排序（平铺所需）"
+      existing:
+        {
+          file: "ai-companion/packages/exec/src/index.ts",
+          symbol: "parseEclDag / topologicalSort / getReadyNodes"
+        }
+      classification: reuse-direct
+      action: "直接复用，不重写排序/解析；平铺只是把已有结构渲染成可读文本。"
+    - intent: "审阅交互（批准/调整/拒绝）"
+      existing:
+        {
+          file: "ai-companion/skills/ccplan/SKILL.md",
+          symbol: "AskUserQuestion (Approve/Modify/Reject)"
+        }
+      classification: reuse-direct
+      action: "两处都沿用 AskUserQuestion；不调用原生 ExitPlanMode（B1）。"
+
+# ─── 全局对齐摘要（整个 idea 的五问，节点各自再带一份）──────────────
+idea:
+  expected_result_human: >-
+    我可以看到完整可执行计划（逐条 FN 任务 / 文件 / verify），更接近原生 plan mode 的 ExitPlanMode
+    那种「整份计划平铺出来」。这样方便 review 和调整 —— 现在的计划太过简短了。
+  five_questions:
+    what: >-
+      在 ccplan 收尾（Phase 9 批准前）与 ccedit 启动（执行首个节点前）两处，平铺展示同一份 「完整 FN 可执行计划」：逐条 FN
+      含 id、name、目标 file+symbol、depends_on、verify 命令、status， 并按拓扑顺序 / 执行层排列。
+    why: >-
+      当前 ccplan Phase 9 只给摘要、太简短，用户看不到逐条可执行任务，难以在批准前真正 review 与调整，
+      容易『批了之后才发现计划不对』而返工。想要 ExitPlanMode 那种整份平铺、可审阅可调整的体验。
+    how: >-
+      复用 @aidev/exec 的 parseEclDag / topologicalSort 解析并排序 FN DAG，渲染成可读的逐条平铺文本；
+      ccplan Phase 9 在摘要后追加此段、再走 Approve/Modify/Reject；ccedit 启动拓扑排序后、执行前
+      展示同款平铺并用 AskUserQuestion 等确认。两处共用同一渲染逻辑（规划期定是否抽 helper）。
+    why_this_way: >-
+      复用已有停顿点（Phase 9）与已有 DAG 解析/排序，不重造闸门、不重写排序；双展示 = 规划期 review + 执行期最后一道确认，贴近
+      plan mode 又不破坏 ccplan 的 read-only 约束。体验像即可，故不引入 原生 ExitPlanMode 工具，沿用
+      AskUserQuestion，改动最小。
+  alignment:
+    what: aligned
+    why: aligned
+    how: aligned # 分歧 A 已解（A3 两处都要）
+    why_this_way: aligned # 分歧 B 已解（B1 体验像即可，不调 ExitPlanMode）
+    expected_result: aligned
+
+# ─── 验证定义（Step 5）─────────────────────────────────────────
+# 整体验收 = 两节点 value 检查全过 + 一条 soft 人审（平铺后是否真的便于 review/不再太简短）。
+verification:
+  kind: value
+  checks:
+    - name: "phase9_lists_every_fn_with_file_symbol_verify"
+      type: boolean
+      expected: true
+      comparison: "actual === expected" # 在样例 ECL 上跑 ccplan 到 Phase 9：所展示 FN 数 == functions: 总数，且每条含 file/symbol/verify
+    - name: "phase9_plan_in_topological_order"
+      type: boolean
+      expected: true
+      comparison: "actual === expected"
+    - name: "ccedit_shows_full_plan_before_first_exec"
+      type: boolean
+      expected: true
+      comparison: "actual === expected" # ccedit 在首个节点执行前必先平铺完整计划并停下等确认
+    - name: "approval_via_askuserquestion_not_exitplanmode"
+      type: boolean
+      expected: true
+      comparison: "actual === expected" # 两处均用 AskUserQuestion；不调用原生 ExitPlanMode
+
+soft_signoff:
+  kind: soft
+  rationale: >-
+    『便于 review 与调整 / 计划不再太简短』是主观体验，无单一数值可衡量； 需本人在真实 ccplan→ccedit 流程中看过平铺计划后签字确认。
+  sign_off:
+    required: true
+    approver: human
+    status: pending
+
+# ─── Phase 4 需求晶化（REQ → FEAT → MOD）─────────────────────────
+requirements:
+  - id: REQ-001
+    text: "在 ccplan Phase 9 与 ccedit 启动两处，平铺展示同一份完整 FN 可执行计划。"
+    status: verified
+    confidence: 0.9
+    acceptance_criteria:
+      - "Phase 9 输出逐条 FN（id/name/file/symbol/depends_on/verify/status），按执行层 + 层内
+        FN id 字典序排列。"
+      - "ccedit 首跑在执行任何节点前平铺同款计划并等确认。"
+      - "两处审批/确认均用 AskUserQuestion，不调用原生 ExitPlanMode。"
+    decomposition: { features: [ FEAT-001 ] }
+  - id: REQ-002
+    text: "平铺渲染须容忍规划期未填全的 FN（缺字段标 TBD），且不破坏执行期的严格校验。"
+    status: verified
+    confidence: 0.95
+    source: phase-2 (DEC-001) + phase-7 probe
+    acceptance_criteria:
+      - "对缺 output/verify 的 FN，宽松解析填 TBD 而非抛错。"
+      - "ccedit 执行期仍走严格 parseEclDag —— 含 TBD 的计划真要跑前会被拦下。"
+    decomposition: { features: [ FEAT-001 ] }
+
+features:
+  - id: FEAT-001
+    name: "Plan-preview（共享 helper + 两端接入）"
+    parent: REQ-001
+    modules: [ MOD-EXEC, MOD-SKILLS ]
+    dependencies: []
+    complexity: medium
+
+modules:
+  - id: MOD-EXEC
+    name: "@aidev/exec 渲染与宽松解析"
+    parent: FEAT-001
+    functions: [ FN-001, FN-002, FN-003, FN-004 ]
+    file_path: "ai-companion/packages/exec/src/"
+  - id: MOD-SKILLS
+    name: "ccplan / ccedit 技能接入 + 部署"
+    parent: FEAT-001
+    functions: [ FN-005, FN-006, FN-007 ]
+    file_path: "ai-companion/skills/"
+
+# ─── Phase 7 探针结果 ──────────────────────────────────────────
+probes:
+  - target: REQ-002
+    type: assumption
+    question: "parseEclDag/validateFnFields 在 FN 缺 output/verify 时抛错还是容忍？"
+    method: code-inspection
+    evidence: "parse-ecl-dag.ts:15-42 — REQUIRED_FN_FIELDS 含 output/verify，缺则 throw
+      EclParseError。严格。"
+    verdict: needs-modification
+    consequence: "必须新增 parseEclDagLenient（FN-002）；不能让 Phase 9 渲染走严格路径。"
+  - target: FEAT-001
+    type: assumption
+    question: "topologicalSort 已能输出可用于平铺的 ExecutionLayer[]？"
+    method: code-inspection
+    evidence: "topological-sort.ts 经 Kahn 输出 ExecutionLayer[]；types.ts 定义齐全。"
+    verdict: feasible
+
+# ─── Phase 8 红蓝对抗 ──────────────────────────────────────────
+confrontation:
+  red_team:
+    - id: ATK-001
+      scenario: "宽松解析吞掉真实错误（如 verify 真写错），用户批准了一个坏计划。"
+      severity: high
+    - id: ATK-002
+      scenario: "超大 DAG（100+ FN）平铺刷屏终端。"
+      severity: low
+    - id: ATK-003
+      scenario: "--yes 在自动化场景跳过确认，使 plan-preview 形同虚设。"
+      severity: low
+    - id: ATK-004
+      scenario: "层内顺序不确定，两次渲染输出不一致，diff 噪声大。"
+      severity: medium
+  blue_team:
+    - attack: ATK-001
+      verdict: defended
+      mitigation: "宽松解析仅用于 Phase 9/ccedit 预览；ccedit 执行期仍走严格 parseEclDag（FN-006 保留），坏
+        verify 在跑首个节点前即被拦下。"
+    - attack: ATK-002
+      verdict: accepted
+      note: "当前可接受；后续可加 --summary。记录为已知限制。"
+    - attack: ATK-003
+      verdict: defended
+      mitigation: "--yes 为显式 opt-in，默认仍停；记录在 SKILL.md。"
+    - attack: ATK-004
+      verdict: mitigated
+      mitigation: "formatExecutionPlan 层内按 FN id 字典序排序（对齐 ccedit 安全不变量 #5）；FN-001 测试覆盖。"
+
+# ─── Phase 6 依赖 DAG（FN 层，驱动 ccedit 执行顺序）──────────────
+# Layer 0: FN-001, FN-002（独立并行）
+# Layer 1: FN-003, FN-004（依赖 001/002）
+# Layer 2: FN-005, FN-006（依赖 003）
+# Layer 3: FN-007（依赖 005, 006）
+dependency_graph:
+  FN-001: []
+  FN-002: []
+  FN-003: [ FN-001, FN-002 ]
+  FN-004: [ FN-001, FN-002 ]
+  FN-005: [ FN-003 ]
+  FN-006: [ FN-003 ]
+  FN-007: [ FN-005, FN-006 ]
+
+# ─── 可执行 FN DAG（/ccedit 消费；output+verify 已填，本计划自身可被执行）──
+functions:
+  - id: FN-001
+    name: "formatExecutionPlan — 渲染平铺计划文本"
+    parent: MOD-EXEC
+    description: "纯函数：输入 ExecutionLayer[]，输出可读的逐层平铺文本（每 FN:
+      id/name/file/symbol/depends_on/verify/status，缺字段显示 TBD，层内按 id 字典序）。无 I/O。"
+    depends_on: []
+    output:
+      {
+        file: "ai-companion/packages/exec/src/format-execution-plan.ts",
+        symbol: "formatExecutionPlan"
+      }
+    verify:
+      command: "npx vitest run
+        .devcompanion/tests/test_exec_formatExecutionPlan.test.ts"
+      pass_condition: "exit 0"
+    status: done
+  - id: FN-002
+    name: "parseEclDagLenient — 宽松解析（缺字段填 TBD）"
+    parent: MOD-EXEC
+    description: "parseEclDag 的宽松变体：FN 缺 output/verify 不抛错，填哨兵 TBD；仍对坏 YAML / 缺
+      functions 段报错。供规划期 plan 预览用。"
+    depends_on: []
+    output:
+      {
+        file: "ai-companion/packages/exec/src/parse-ecl-dag.ts",
+        symbol: "parseEclDagLenient"
+      }
+    verify:
+      command: "npx vitest run .devcompanion/tests/test_exec_parseEclDagLenient.test.ts"
+      pass_condition: "exit 0"
+    status: done
+  - id: FN-003
+    name: "cli.ts plan 子命令"
+    parent: MOD-EXEC
+    description: "新增 `plan <ecl> [--strict]`：默认宽松解析 → topologicalSort →
+      formatExecutionPlan → 打印。两个 SKILL 调用它。"
+    depends_on: [ FN-001, FN-002 ]
+    output: { file: "ai-companion/packages/exec/src/cli.ts", symbol: "main" }
+    verify:
+      command: "npx vitest run .devcompanion/tests/test_exec_planCommand.test.ts"
+      pass_condition: "exit 0"
+    status: done
+  - id: FN-004
+    name: "index.ts 导出 formatExecutionPlan / parseEclDagLenient"
+    parent: MOD-EXEC
+    description: "在 packages/exec/src/index.ts re-export 两个新符号，保证公共 API 可被外部 import。"
+    depends_on: [ FN-001, FN-002 ]
+    output: { file: "ai-companion/packages/exec/src/index.ts", symbol: "exports" }
+    verify:
+      command: "npx vitest run .devcompanion/tests/test_exec_publicExports.test.ts"
+      pass_condition: "exit 0"
+    status: done
+  - id: FN-005
+    name: "ccplan SKILL.md Phase 9 接入平铺计划"
+    parent: MOD-SKILLS
+    description: "Phase 9 现有摘要后新增『Full Executable Plan』段：指示调用 cli.ts plan 渲染逐条 FN，再走
+      Approve/Modify/Reject。含单 token 锚点 ccplan-phase9-full-plan 供 verify。"
+    depends_on: [ FN-003 ]
+    output: { file: "ai-companion/skills/ccplan/SKILL.md", symbol: "Phase 9 Review Gate" }
+    verify:
+      command: "grep -q ccplan-phase9-full-plan ai-companion/skills/ccplan/SKILL.md"
+      pass_condition: "exit 0"
+    status: done
+  - id: FN-006
+    name: "ccedit SKILL.md 执行前平铺+确认步骤"
+    parent: MOD-SKILLS
+    description: "在 Step 2(state) 后、Step 3(execute) 前插入新步骤：首跑（getExecutionState 全
+      pending）平铺 cli.ts plan + AskUserQuestion 确认；续跑或 --yes 跳过。执行期仍用严格 parse。含锚点
+      ccedit-preexec-plan。"
+    depends_on: [ FN-003 ]
+    output: { file: "ai-companion/skills/ccedit/SKILL.md", symbol: "Execution Protocol" }
+    verify:
+      command: "grep -q ccedit-preexec-plan ai-companion/skills/ccedit/SKILL.md"
+      pass_condition: "exit 0"
+    status: done
+  - id: FN-007
+    name: "重装技能到 ~/.claude（让改动生效）"
+    parent: MOD-SKILLS
+    description: "改的是 ai-companion/skills/ 源；运行时副本在 ~/.claude/skills/。运行安装脚本同步，确认
+      ~/.claude 副本含两个锚点。"
+    depends_on: [ FN-005, FN-006 ]
+    output: { file: "~/.claude/skills/ccplan/SKILL.md", symbol: "reinstalled" }
+    verify:
+      command: "grep -q ccplan-phase9-full-plan
+        ~/.claude/skills/ccplan/SKILL.md"
+      pass_condition: "exit 0"
+    status: done
+
+# ─── ECL 节点（Step 6）每个节点自带五问 ────────────────────────
+# 依赖：NODE-001（ccplan 端平铺）与 NODE-002（ccedit 端平铺）相互独立，
+#       但建议先做 001 沉淀渲染格式，002 复用之 → depends_on: [NODE-001]（软依赖，仅为复用渲染）。
+ecl_nodes:
+  - id: NODE-001
+    title: "ccplan Phase 9 — 批准前平铺完整 FN 可执行计划"
+    reuse: reuse-extend # 扩展现有 Review Gate
+    depends_on: []
+    five_questions:
+      what: "在 ccplan Phase 9 现有摘要之后，新增『Full Executable Plan』段：遍历 ECL functions:
+        列表，拓扑排序后逐条平铺每个 FN（id、name、file、symbol、depends_on、verify 命令、status），再走
+        Approve/Modify/Reject。"
+      why: "当前 Phase 9 只展示摘要、太简短，用户无法在批准前看到逐条可执行任务并 review/调整。"
+      how: "复用 @aidev/exec 的 parseEclDag/topologicalSort 排序 FN，渲染成可读平铺文本，插入 Phase 9
+        展示；批准交互沿用现有 AskUserQuestion。"
+      why_this_way: "Phase 9 已是『停下→展示→批准』的天然停顿点，复用它避免双重 gate；排序/解析复用 exec，不重写。"
+      expected_result: "跑 ccplan 到 Phase 9：除摘要外可见逐条 FN 的
+        file/symbol/verify，按拓扑顺序排列；用户据此 Approve / Modify / Reject。"
+    expected_result_human: "我可以看到完整可执行计划（逐条 FN 任务/文件/verify），整份平铺出来，方便 review 和调整。"
+    alignment:
+      {
+        what: aligned,
+        why: aligned,
+        how: aligned,
+        why_this_way: aligned,
+        expected_result: aligned
+      }
+    verification:
+      kind: value
+      checks:
+        - name: "shown_fn_count_eq_functions_total"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "each_fn_shows_file_symbol_verify"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "ordered_topologically"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+
+  - id: NODE-002
+    title: "ccedit 启动 — 执行前平铺完整执行计划并等确认"
+    reuse: reuse-extend # 扩展 ccedit 启动段
+    depends_on: [ NODE-001 ] # 软依赖：复用 001 的平铺渲染格式
+    five_questions:
+      what: "ccedit 读取已批准 ECL、拓扑排序后、执行首个节点前，平铺完整执行计划（执行层 + 每层 FN 的
+        file/symbol/verify/依赖），并用 AskUserQuestion 等用户确认再开跑。"
+      why: "用户要『ccedit 开始前』也能看到整份计划做最后确认 / 微调，作为规划期之外的最后一道闸。"
+      how: "复用 NODE-001 的平铺渲染（理想抽成共享 helper），在 ccedit fan-out 执行前调用；确认通过才进入
+        getReadyNodes/执行循环。"
+      why_this_way: "执行前再确认一次贴近 plan mode『跑前过目』；复用同一渲染保证两处展示一致；用 AskUserQuestion 不引入
+        ExitPlanMode。"
+      expected_result: "运行 ccedit：在任何节点执行前先看到整份执行计划（含执行层与每个 FN 的 file/symbol/verify），确认后才开始执行。"
+    expected_result_human: "ccedit 开始前我也能看到整份计划平铺出来，确认/调整后再跑。"
+    alignment:
+      {
+        what: aligned,
+        why: aligned,
+        how: aligned,
+        why_this_way: aligned,
+        expected_result: aligned
+      }
+    verification:
+      kind: value
+      checks:
+        - name: "full_plan_printed_before_any_node_runs"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "waits_for_confirmation_before_exec"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+        - name: "plan_format_consistent_with_node001"
+          type: boolean
+          expected: true
+          comparison: "actual === expected"
+
+# ─── 规划期需进一步定的开放项（交给 /ccplan）────────────────────
+open_questions:
+  - "平铺渲染是否抽成 @aidev/exec 的共享 helper（如 formatExecutionPlan），供 ccplan 与 ccedit
+    共用？建议是。"
+  - "Phase 9 的 Modify 路径如何与平铺计划联动（直接在平铺项上指明改哪条 FN）？由 /ccplan 定交互细节。"
+  - "ccedit 执行前确认是否提供 --yes / 跳过开关（避免续跑时每次都停）？由 /ccplan 权衡。"

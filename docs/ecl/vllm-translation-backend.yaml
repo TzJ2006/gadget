@@ -1,0 +1,162 @@
+ecl_version: "1.0"
+feature: "vllm-translation-backend"
+status: completed
+created: 2026-04-17
+updated: 2026-04-17
+
+implementation_result:
+  code_complete: true
+  tests_passing: "24/24"
+  files_created: ["common/engine.py", "tests/test_engine.py", "website/requirements.txt"]
+  files_deleted: ["common/ollama.py", "tests/test_ollama.py"]
+  files_modified:
+    - "common/translation.py"
+    - "common/bilingual.py"
+    - "common/__init__.py"
+    - "website/translate_site_batch.py"
+    - "website/translate_content.py"
+    - "scripts/fix_report_languages.py"
+    - "scripts/audit_content_languages.py"
+    - "pyproject.toml"
+  docs_pending:
+    - "CLAUDE.md"
+    - "website/CLAUDE.md"
+    - "README.md"
+    - "docs/external_dependencies_inventory.md"
+
+prompt_calibration:
+  raw_input: "现在我发现ollama的优化力度不够大，不如换回huggingface实现简单实在"
+  intent_decomposition:
+    total_intents: 1
+    total_tracks: 1
+    tracks:
+      - track_id: T1
+        name: "Replace Ollama with vLLM/transformers"
+        priority: 1
+        intents:
+          - raw: "换回huggingface实现"
+            type: refactor
+
+decisions:
+  - id: DEC-001
+    decision: "vLLM on Linux, transformers on Windows"
+    rationale: "vLLM has no native Windows support; transformers works everywhere"
+  - id: DEC-002
+    decision: "Offline batch mode (not server mode)"
+    rationale: "True batch inference maximizes GPU compute utilization"
+  - id: DEC-003
+    decision: "Keep tencent/HY-MT1.5-1.8B model"
+    rationale: "Already validated translation quality, minimize risk"
+  - id: DEC-004
+    decision: "Complete Ollama replacement, no dual backend"
+    rationale: "User wants simplicity, no dead code"
+
+requirements:
+  - id: REQ-001
+    text: "Replace Ollama chat API with local batch inference engine"
+    status: verified
+    confidence: 0.95
+    acceptance_criteria:
+      - "common/ollama.py deleted"
+      - "No remaining imports of common.ollama anywhere"
+      - "Translation produces same quality output"
+
+  - id: REQ-002
+    text: "Support both vLLM (Linux) and transformers (Windows) backends"
+    status: verified
+    confidence: 0.90
+    acceptance_criteria:
+      - "Auto-detect platform, use appropriate backend"
+      - "Identical API surface from translation.py"
+      - "Fallback to transformers if vLLM unavailable"
+
+  - id: REQ-003
+    text: "Batch inference for all chunks simultaneously"
+    status: verified
+    confidence: 0.90
+    acceptance_criteria:
+      - "All chunks submitted as single batch"
+      - "GPU utilization significantly higher than Ollama"
+      - "tqdm pbar integration preserved"
+
+features:
+  - id: FEAT-001
+    name: "TranslationEngine ABC + factory"
+    complexity: medium
+    description: "Protocol with load(), generate_batch(prompts)->list[str], unload()"
+
+  - id: FEAT-002
+    name: "TransformersEngine backend"
+    dependencies: [FEAT-001]
+    complexity: medium
+    critical_notes:
+      - "Must use tokenizer.apply_chat_template()"
+      - "Left-padding for causal LM batch generation"
+      - "pad_token = eos_token if not set"
+
+  - id: FEAT-003
+    name: "VLLMEngine backend"
+    dependencies: [FEAT-001]
+    complexity: medium
+
+  - id: FEAT-004
+    name: "Platform auto-detection"
+    dependencies: [FEAT-002, FEAT-003]
+    complexity: small
+    description: "try import vllm -> vLLM; except -> transformers. Env override."
+
+  - id: FEAT-005
+    name: "Migrate all consumers"
+    dependencies: [FEAT-004]
+    complexity: medium
+
+  - id: FEAT-006
+    name: "Collect-then-batch pipeline"
+    dependencies: [FEAT-001]
+    complexity: medium
+    description: "Collect all chunk prompts, submit as single batch"
+
+  - id: FEAT-007
+    name: "Dynamic batch sizing (OOM protection)"
+    dependencies: [FEAT-006]
+    complexity: small
+
+  - id: FEAT-008
+    name: "Preserve tqdm pbar"
+    dependencies: [FEAT-006]
+    complexity: trivial
+
+confrontation_summary:
+  attacks: 5
+  defended: 1
+  mitigated: 4
+  vulnerable: 0
+
+implementation_order:
+  wave_1: [FEAT-001]
+  wave_2: [FEAT-002, FEAT-003, FEAT-006]
+  wave_3: [FEAT-004, FEAT-007, FEAT-008]
+  wave_4: [FEAT-005]
+
+files_to_create:
+  - "common/engine.py"
+files_to_delete:
+  - "common/ollama.py"
+files_to_modify:
+  - "common/translation.py"
+  - "common/bilingual.py"
+  - "common/__init__.py"
+  - "website/translate_site_batch.py"
+  - "website/translate_content.py"
+  - "scripts/fix_report_languages.py"
+  - "scripts/audit_content_languages.py"
+  - "tests/test_ollama.py -> tests/test_engine.py"
+  - "CLAUDE.md"
+  - "website/CLAUDE.md"
+  - "README.md"
+  - "docs/external_dependencies_inventory.md"
+  - "pyproject.toml"
+
+new_dependencies:
+  required: ["torch>=2.0", "transformers>=4.40"]
+  optional: ["vllm>=0.8"]

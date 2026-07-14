@@ -1,0 +1,105 @@
+ecl_version: "1.0"
+feature: "repo-onboarding"
+status: "in-progress"
+created: "2026-06-30"
+updated: "2026-06-30"
+
+context:
+  problem: >
+    Onboarding a new machine to gadget means many manual, scattered steps: SSH
+    setup, installing Claude Code/Codex and choosing a Claude auth mode, installing
+    the ai-companion skills/hooks/harness, and per-tool config + pip extras.
+  approach: >
+    One YAML "sheet" (tokens/onboard.yaml) + one orchestrator (scripts/onboard.py).
+    Steps live in an ordered registry and are toggled per-machine via an `enabled:`
+    flag in each sheet section. Safe actions apply automatically; risky ones prompt.
+    The orchestrator is glue: it reuses existing config schemas, scripts/sync.py
+    bootstrap, ../ai-companion/scripts/install.ts, and the summarize readiness checker.
+
+requirements:
+  - id: REQ-001
+    text: "One sheet + one script completes onboarding; idempotent and re-runnable."
+    status: "implemented"
+    acceptance_criteria:
+      - "Re-running skips finished steps (ssh config block, claude env, configs)."
+      - "Each step is independent; a failing step does not stop the others."
+  - id: REQ-002
+    text: "Hybrid behavior: safe steps auto-apply, risky steps prompt unless --yes."
+    status: "implemented"
+    acceptance_criteria:
+      - "SSH private-key install and key-push prompt before acting."
+      - "Config writes and pip/npm of claude/codex apply automatically."
+  - id: REQ-003
+    text: "Steps run separately and are controlled from the config file."
+    status: "implemented"
+    acceptance_criteria:
+      - "Each sheet section has `enabled:`; only enabled steps run by default."
+      - "--only/--skip override; --list shows steps and their enabled state."
+  - id: REQ-004
+    text: "Cross-platform (Windows / WSL / Linux) and three Claude auth modes."
+    status: "implemented"
+    acceptance_criteria:
+      - "SSH key perms use chmod (POSIX) or icacls (Windows); key-push needs no ssh-copy-id."
+      - "api / bedrock / platform_aws env written to ~/.claude/settings.json with mode mutual-exclusion."
+  - id: REQ-005
+    text: "Extensible: adding a new onboarding needs no core changes."
+    status: "implemented"
+    acceptance_criteria:
+      - "New step = a step_*(cfg, ctx) fn + one STEPS entry + one sheet section."
+
+functions:
+  - id: FN-001
+    name: "run_steps"
+    file: "scripts/onboard.py"
+    depends_on: []
+    output: "registry-driven step runner; catches per-step failures"
+    verify: "python -m pytest scripts/tests/test_onboard.py -q"
+    status: "implemented"
+  - id: FN-002
+    name: "step_ssh"
+    file: "scripts/onboard.py"
+    depends_on: ["FN-001"]
+    output: "~/.ssh/config blocks + key install + key push (both directions)"
+    verify: "python -m pytest scripts/tests/test_onboard.py -q"
+    status: "implemented"
+  - id: FN-003
+    name: "step_claude"
+    file: "scripts/onboard.py"
+    depends_on: ["FN-001"]
+    output: "install claude/codex + write auth env block (api/bedrock/platform_aws)"
+    verify: "python -m pytest scripts/tests/test_onboard.py -q"
+    status: "implemented"
+  - id: FN-004
+    name: "step_install"
+    file: "scripts/onboard.py"
+    depends_on: ["FN-001"]
+    output: "pip extras + ai-companion installer + claude plugins"
+    verify: "python scripts/onboard.py --list --sheet scripts/onboard.example.yaml"
+    status: "implemented"
+  - id: FN-005
+    name: "step_gadgets"
+    file: "scripts/onboard.py"
+    depends_on: ["FN-001"]
+    output: "write per-tool ~/.config/*/config.json (reuse research.config.save_config)"
+    verify: "python -m pytest scripts/tests/test_onboard.py -q"
+    status: "implemented"
+  - id: FN-006
+    name: "step_sync"
+    file: "scripts/onboard.py"
+    depends_on: ["FN-001"]
+    output: "optional shell-out to scripts/sync.py bootstrap"
+    verify: "python scripts/onboard.py --only sync --dry-run --sheet scripts/onboard.example.yaml"
+    status: "implemented"
+  - id: FN-007
+    name: "step_verify"
+    file: "scripts/onboard.py"
+    depends_on: ["FN-002", "FN-003", "FN-005"]
+    output: "reuse summarize.onboarding checker + claude/codex/ssh/import checks"
+    verify: "python scripts/onboard.py --verify-only --sheet scripts/onboard.example.yaml"
+    status: "implemented"
+
+verification:
+  commands:
+    - "python -m pytest scripts/tests/test_onboard.py -q"
+    - "python scripts/onboard.py --list --sheet scripts/onboard.example.yaml"
+    - "python scripts/onboard.py --dry-run --no-verify --sheet scripts/onboard.example.yaml"

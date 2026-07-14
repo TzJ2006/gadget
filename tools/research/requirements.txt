@@ -1,0 +1,12 @@
+# arXiv API client
+arxiv>=2.0.0
+
+# LLM backends (same as summarize/)
+# Required for --api anthropic
+anthropic>=0.18.0
+
+# Required for --api openai
+openai>=1.0.0
+
+# OpenReview API client (for --insight reviewer analysis)
+openreview-py>=1.40.0

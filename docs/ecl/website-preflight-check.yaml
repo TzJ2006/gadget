@@ -1,0 +1,196 @@
+ecl_version: "1.0"
+feature: "website-preflight-check"
+status: phase-9-review
+created: 2026-04-19
+updated: 2026-04-19
+
+prompt_calibration:
+  raw_input: |
+    在网站发布流程中增加 preflight check step，检查：
+    1. 图片是否压缩过了
+    2. 链接是否已经修改过了
+    3. 文件是否有格式错误导致报错
+    4. 是否每个语言(en + zh)都有对应的文件了
+    5. 格式是否正确（en全英文、zh全中文，否则调翻译pipeline修复）
+  intent_decomposition:
+    total_intents: 1
+    total_tracks: 1
+    tracks:
+      - track_id: T1
+        name: "Preflight readiness check"
+        priority: 1
+        intents:
+          - raw: "Add pre-build validation step to website publish pipeline"
+            type: feature
+  tracks:
+    T1:
+      calibrated_scenario: |
+        Add a Python preflight_check.py script invoked between Step 6 (video
+        compression) and Step 7 (Hugo build) in both update.sh and update.ps1.
+        Only checks files modified since .last_build timestamp. Uses tiered
+        severity: auto-fix (wrong language → translate), block (frontmatter
+        parse error), warn (missing pair, uncompressed images, stale links).
+
+decisions:
+  - id: DEC-001
+    text: "Tiered severity: auto-fix > block > warn"
+    source: user
+    date: 2026-04-19
+  - id: DEC-002
+    text: "Only check files newer than .last_build"
+    source: user
+    date: 2026-04-19
+  - id: DEC-003
+    text: "Can invoke claude CLI for complex fixes"
+    source: user
+    date: 2026-04-19
+
+requirements:
+  - id: REQ-001
+    text: "Check that no .jpg/.jpeg images remain in static/images/ newer than .last_build"
+    status: verified
+    confidence: 0.95
+    severity: warn
+    acceptance_criteria:
+      - "Finds .jpg/.jpeg files newer than timestamp → prints WARNING"
+      - "Does NOT block build (images are cosmetic, .png conversion is best-effort)"
+    decomposition:
+      features: [FEAT-001]
+
+  - id: REQ-002
+    text: "Check that no ../../static references remain in modified .md files"
+    status: verified
+    confidence: 0.95
+    severity: warn
+    acceptance_criteria:
+      - "Greps modified .md files for ../../static pattern"
+      - "Reports each file:line with stale link → WARNING"
+    decomposition:
+      features: [FEAT-002]
+
+  - id: REQ-003
+    text: "Validate YAML frontmatter of modified .md files parses without error"
+    status: verified
+    confidence: 0.95
+    severity: block
+    acceptance_criteria:
+      - "Parses frontmatter between --- delimiters"
+      - "YAML syntax errors → BLOCK (exit 1)"
+      - "Missing required fields (title) → BLOCK"
+    decomposition:
+      features: [FEAT-003]
+
+  - id: REQ-004
+    text: "Check every modified .md has its bilingual counterpart (.md ↔ .zh.md)"
+    status: verified
+    confidence: 0.9
+    severity: warn
+    acceptance_criteria:
+      - "For each modified foo.md, check foo.zh.md exists (and vice versa)"
+      - "Missing counterpart → WARNING with file path"
+    decomposition:
+      features: [FEAT-004]
+
+  - id: REQ-005
+    text: "Detect language mismatch and auto-fix via translation pipeline"
+    status: verified
+    confidence: 0.85
+    severity: auto-fix
+    acceptance_criteria:
+      - "For .md files: body should be primarily English"
+      - "For .zh.md files: body should be primarily Chinese"
+      - "Only check files with body > 100 chars (skip tiny index files)"
+      - "Mismatch detected → invoke translate_site_batch infrastructure to fix"
+      - "Also check frontmatter title language matches file type"
+    decomposition:
+      features: [FEAT-005]
+
+features:
+  - id: FEAT-001
+    name: "Image compression check"
+    parent: REQ-001
+    complexity: trivial
+    dependencies: []
+
+  - id: FEAT-002
+    name: "Link rewrite check"
+    parent: REQ-002
+    complexity: trivial
+    dependencies: []
+
+  - id: FEAT-003
+    name: "Frontmatter validation"
+    parent: REQ-003
+    complexity: small
+    dependencies: []
+
+  - id: FEAT-004
+    name: "Bilingual pair completeness check"
+    parent: REQ-004
+    complexity: small
+    dependencies: []
+
+  - id: FEAT-005
+    name: "Language correctness detection + auto-fix"
+    parent: REQ-005
+    complexity: medium
+    dependencies: [FEAT-003]
+
+modules:
+  - id: MOD-001
+    name: "preflight_check.py — main script"
+    features: [FEAT-001, FEAT-002, FEAT-003, FEAT-004, FEAT-005]
+    file_path: "website/preflight_check.py"
+    functions:
+      - "main() — CLI entry, orchestrates all checks"
+      - "find_modified_files(content_dir, timestamp_file) — files newer than .last_build"
+      - "find_modified_images(image_dir, timestamp_file) — images newer than .last_build"
+      - "check_images(image_dir, timestamp_file) → list[Warning]"
+      - "check_stale_links(files) → list[Warning]"
+      - "check_frontmatter(files) → list[BlockingError]"
+      - "check_bilingual_pairs(files, content_dir) → list[Warning]"
+      - "check_language(files) → list[AutoFix]"
+      - "fix_language(fixes, engine) — invoke translation to repair"
+
+  - id: MOD-002
+    name: "update.sh integration"
+    features: [FEAT-001, FEAT-002, FEAT-003, FEAT-004, FEAT-005]
+    file_path: "website/update.sh"
+    functions:
+      - "Step 7/10 invocation of preflight_check.py"
+
+  - id: MOD-003
+    name: "update.ps1 integration"
+    features: [FEAT-001, FEAT-002, FEAT-003, FEAT-004, FEAT-005]
+    file_path: "website/update.ps1"
+    functions:
+      - "Step 7/10 invocation of preflight_check.py"
+
+dependency_graph:
+  FEAT-001: []
+  FEAT-002: []
+  FEAT-003: []
+  FEAT-004: []
+  FEAT-005: [FEAT-003]
+
+implementation_plan:
+  step_1:
+    description: "Create preflight_check.py with all 5 checks"
+    files: ["website/preflight_check.py"]
+  step_2:
+    description: "Integrate into update.sh as Step 7/10, renumber Steps 7-9 to 8-10"
+    files: ["website/update.sh"]
+  step_3:
+    description: "Integrate into update.ps1 as Step 7/10, renumber Steps 7-9 to 8-10"
+    files: ["website/update.ps1"]
+
+exit_codes:
+  0: "All checks passed (may have auto-fixed language issues)"
+  1: "Blocking errors found (frontmatter invalid)"
+  2: "Warnings only (missing pairs, stale links, uncompressed images)"
+
+pipeline_position:
+  before: "Step 7 (Hugo build) — now renumbered to Step 8"
+  after: "Step 6 (video compression)"
+  new_step_number: "7/10"
+  total_steps_change: "9 → 10"

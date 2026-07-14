@@ -1,0 +1,427 @@
+ecl_version: "1.0"
+feature: "research-scout-pipeline"
+status: documented
+created: 2026-05-20
+updated: 2026-05-20
+
+context:
+  summary: |
+    Research Scout 的五阶段论文评估流水线。将 arXiv/bioRxiv/PubMed 搜索结果
+    通过多轮 LLM 评估筛选出高价值论文，生成结构化研究报告。
+    本文档定义每阶段的输入输出契约和数据流约束。
+  entry_point: "research/scout/cli.py::run_evaluation_pipeline()"
+  key_files:
+    - "research/scout/search.py"
+    - "research/scout/evaluate.py"
+    - "research/scout/insight.py"
+    - "research/scout/report.py"
+    - "research/scout/prompts.py"
+    - "common/llm.py"
+    - "common/json_utils.py"
+
+# ===== PIPELINE STAGES =====
+
+stages:
+
+  # ─── Stage 0: Search ───────────────────────────────────────────────
+  - id: STAGE-0
+    name: "Paper Search"
+    function: "scout.search.search_arxiv_conference / search_arxiv / search_biorxiv / search_pubmed"
+    description: "从学术数据库搜索论文，返回标准化 paper dict 列表"
+
+    input:
+      parameters:
+        - name: project
+          type: "dict"
+          source: "project.json 加载"
+          required_keys: ["id", "title", "search_keywords", "categories"]
+        - name: conference
+          type: "str | None"
+          example: "CVPR 2026 Oral"
+        - name: lookback_days
+          type: int
+          default: 7
+        - name: max_results
+          type: int
+          default: 50
+      external_api: "arXiv API (arxiv python package) / bioRxiv REST / PubMed E-utilities"
+
+    output:
+      type: "list[dict]"
+      schema:
+        paper_id: { type: str, example: "2605.13465v1", description: "统一 ID" }
+        arxiv_id: { type: str, description: "与 paper_id 相同（arXiv 源）" }
+        source: { type: str, enum: ["arxiv", "biorxiv", "pubmed"] }
+        title: { type: str }
+        authors: { type: "list[str]", max_length: 10 }
+        abstract: { type: str, description: "全文 abstract，不截断" }
+        categories: { type: "list[str]", example: ["cs.CV"] }
+        published: { type: str, format: "ISO date (YYYY-MM-DD)" }
+        url: { type: str }
+        pdf_url: { type: str }
+        comment: { type: str, description: "arXiv comment 字段" }
+        journal_ref: { type: str }
+        venue: { type: str, description: "从 comment 提取的会议/期刊名" }
+      guarantees:
+        - "每篇论文必须有非空 abstract"
+        - "paper_id 在列表内唯一"
+        - "authors 至少有 1 个元素"
+
+    cache:
+      location: "outputs/cache/research-scout/papers/"
+      key: "project_id + date + source"
+      invalidation: "--no-cache 或 key 不匹配"
+
+  # ─── Stage 1: Quick Screening ──────────────────────────────────────
+  - id: STAGE-1
+    name: "Quick Screening"
+    function: "scout.evaluate._screen_papers()"
+    description: "LLM 快速分类每篇论文的相关性，分为 high/low 两组"
+
+    input:
+      papers:
+        type: "list[dict]"
+        source: "STAGE-0 output"
+        required_keys: ["paper_id", "title", "authors", "abstract", "categories"]
+      project:
+        type: "dict"
+        required_keys: ["title", "search_keywords", "open_questions"]
+      formatting:
+        function: "_format_papers_for_screening()"
+        per_paper: |
+          ### Paper {i}: [{paper_id}] {title}
+          First Author: {authors[0]}
+          Categories: {categories joined}
+          Venue: {venue}
+          Abstract: {abstract[:1000]}   # ← 截断到 1000 字符
+      prompt_template: "SCREENING_PROMPT"
+      llm_call: "claude --print --model sonnet"
+
+    output:
+      llm_expected_response:
+        type: "dict"
+        required_key: "screenings"
+        schema:
+          screenings:
+            type: "list[dict]"
+            per_item:
+              paper_id: { type: str, description: "必须与输入 paper_id 精确匹配" }
+              screening_relevance: { type: str, enum: ["high", "low"] }
+              paper_type: { type: str, enum: ["method", "system", "benchmark", "survey", "theory", "application", "dataset", "other"] }
+              motivation: { type: str, description: "一句话问题描述" }
+              innovation_point: { type: str, description: "一句话创新描述" }
+              first_author: { type: str }
+              institution: { type: str }
+      merge_logic:
+        function: "evaluate.py:172-178"
+        description: |
+          遍历原始 papers list，按 paper_id 匹配 screenings 结果。
+          匹配成功: 将 screening 字段合并到 paper dict。
+          匹配失败: 默认 screening_relevance="low", motivation=""。
+      final_output:
+        type: "list[dict]"
+        added_keys: ["screening_relevance", "paper_type", "motivation", "innovation_point", "first_author", "institution"]
+        split:
+          high_papers: "screening_relevance == 'high' 的子集（上限 MAX_HIGH_RELEVANCE=20）"
+          low_papers: "其余论文"
+
+    cache:
+      location: "outputs/cache/research-scout/eval/screening_{hash}.json"
+      key_inputs: ["project_id", "search_keywords", "paper_ids", "abstracts[:500]"]
+      stores: "{'papers': merged_papers_list}"
+
+    failure_modes:
+      - id: FM-1-01
+        description: "LLM 返回的 JSON 中 key 不是 'screenings'"
+        evidence: "第一次运行 21/21 motivation 为空"
+        impact: "所有论文降级为 low，报告无高相关论文"
+        current_handling: "静默降级（result.get('screenings', []) 返回 []）"
+        desired_handling: "检测空结果 + 重试或报错"
+
+  # ─── Stage 2: Deep Analysis ────────────────────────────────────────
+  - id: STAGE-2
+    name: "Deep Analysis"
+    function: "scout.evaluate._deep_evaluate_papers()"
+    description: "对 high 论文进行深度 LLM 分析，输出评分和 highlights"
+
+    input:
+      papers:
+        type: "list[dict]"
+        source: "STAGE-1 high_papers"
+        required_keys: ["paper_id", "title", "authors", "abstract", "categories", "published", "venue"]
+        max_count: 20
+      project:
+        type: "dict"
+        required_keys: ["id", "title", "search_keywords", "open_questions"]
+      additional_context:
+        current_methods: { source: "extract_current_methods(project_id) → 从 overview.md 提取" }
+      formatting:
+        function: "_format_papers_for_deep_eval()"
+        per_paper: |
+          ### Paper {i}: [{paper_id}] {title}
+          Authors: {authors[:5] joined}
+          Published: {published}
+          Categories: {categories joined}
+          Venue: {venue}
+          Abstract: {abstract}            # ← 全文，不截断
+      prompt_template: "DEEP_EVAL_PROMPT"
+      llm_call: "claude --print --model sonnet"
+
+    output:
+      llm_expected_response:
+        type: "dict"
+        required_key: "evaluations"
+        schema:
+          evaluations:
+            type: "list[dict]"
+            per_item:
+              paper_id: { type: str, description: "必须与输入 paper_id 精确匹配" }
+              highlights:
+                type: "list[dict]"
+                length: 3
+                per_item:
+                  point: { type: str }
+                  why: { type: str }
+                  value_to_us: { type: str }
+                  our_direction: { type: str }
+              relevance: { type: int, range: "1-5" }
+              novelty: { type: int, range: "1-5" }
+              inspiration: { type: int, range: "1-5" }
+              two_sentence_summary: { type: str }
+              suggestion: { type: str }
+              relevant_open_questions: { type: "list[str]" }
+      merge_logic:
+        function: "evaluate.py:268-283"
+        description: |
+          按 paper_id 或 arxiv_id 匹配 evaluations 到原始 papers。
+          计算 composite_score = 0.4*relevance + 0.3*inspiration + 0.3*novelty。
+          匹配失败: ev={}, scores 全为 0。
+      final_output:
+        type: "list[dict]"
+        added_keys: ["highlights", "relevance", "novelty", "inspiration", "composite_score", "two_sentence_summary", "suggestion", "relevant_open_questions"]
+        sort: "composite_score desc, citation_count as tiebreaker"
+
+    cache:
+      location: "outputs/cache/research-scout/eval/deep_{hash}.json"
+      key_inputs: ["project_id", "search_keywords", "open_questions", "paper_ids", "abstracts[:500]"]
+      stores: "{'evaluations': merged_papers_list}"
+
+    failure_modes:
+      - id: FM-2-01
+        description: "LLM 返回的 JSON 中 key 不是 'evaluations'"
+        evidence: "第二次运行 9/9 composite_score=0，缓存中无 deep eval 字段"
+        impact: "报告中高相关论文评分全为 0，highlights/summary 为空"
+        current_handling: "静默降级 + 写入缓存（后续 cache hit 继续返回废数据）"
+        desired_handling: "检测匹配率 < 50% 时重试或 abort"
+
+  # ─── Stage 3: Citation Impact ──────────────────────────────────────
+  - id: STAGE-3
+    name: "Citation Impact Analysis"
+    function: "scout.evaluate.analyze_citations()"
+    description: "通过 Semantic Scholar API 获取引用图谱，对高引论文做 LLM 影响力分析"
+    applies_to: "top 5 papers (by composite_score)"
+
+    input:
+      paper:
+        type: "dict"
+        source: "STAGE-2 output, top 5"
+        required_keys: ["paper_id"]
+      external_apis:
+        - name: "Semantic Scholar"
+          endpoints:
+            - "GET paper/ARXIV:{paper_id}?fields=paperId,title,year,citationCount,..."
+            - "GET paper/{s2_id}/citations?limit=20"
+            - "GET paper/{s2_id}/references?limit=20"
+          rate_limit: "无 key 时极低（频繁 429）"
+      llm_call:
+        condition: "citationCount >= 5"
+        prompt_template: "CITATION_IMPACT_PROMPT"
+        input_to_prompt: "title, abstract[:1000], citation_count, top 10 citing papers 列表"
+
+    output:
+      type: "dict"
+      schema:
+        total_forward_citations: { type: int }
+        total_references: { type: int }
+        top_citing_papers: { type: "list[dict]", per_item: { title: str, year: int, citation_count: int, venue: str } }
+        top_references: { type: "list[dict]", per_item: { title: str, year: int, citation_count: int, venue: str } }
+        influence_analysis: { type: "dict | {}", description: "仅 citations>=5 时有 LLM 分析" }
+      attachment: "写入 paper['citation_analysis']"
+
+    failure_modes:
+      - id: FM-3-01
+        description: "S2 API rate limit 耗尽（429 x 6 次重试）"
+        evidence: "日志: 'S2 API rate limit: 6 attempts exhausted'"
+        impact: "该论文无引用数据"
+        current_handling: "返回空 dict，跳过该论文"
+      - id: FM-3-02
+        description: "论文在 S2 中不存在"
+        evidence: "日志: '引用分析: 无法在 S2 找到论文 2602.20630v4'"
+        impact: "该论文无引用数据"
+        current_handling: "返回空 dict"
+
+  # ─── Stage 4: Insight Analysis (optional) ──────────────────────────
+  - id: STAGE-4
+    name: "Insight Analysis"
+    function: "scout.insight.run_insight_analysis()"
+    description: "下载全文进行深度洞察分析（仅 --insight 模式）"
+    gate: "--insight flag"
+    applies_to: "top N papers (default 3)"
+
+    input:
+      papers:
+        type: "list[dict]"
+        source: "STAGE-2 output, top N"
+        required_keys: ["paper_id", "arxiv_id", "title", "abstract", "source"]
+      full_text_download:
+        method: "HTML first (arxiv_client), PDF fallback (PyMuPDF)"
+        truncation: "MAX_FULLTEXT_CHARS = 40000"
+        degraded: "非 arXiv 源或下载失败时降级为 abstract-only"
+      prompt_templates:
+        full_text: "INSIGHT_ANALYSIS_PROMPT"
+        abstract_only: "INSIGHT_ABSTRACT_PROMPT"
+
+    output:
+      per_paper:
+        type: "dict"
+        schema:
+          writing_structure: { type: str }
+          publishability: { type: str }
+          knowledge_extraction: { type: str }
+      attachment: "写入 paper['insight_analysis']"
+
+    cache:
+      location: "outputs/cache/research-scout/insight/"
+      key: "paper_id + content_hash"
+
+  # ─── Stage 5: OpenReview Reviews (optional) ────────────────────────
+  - id: STAGE-5
+    name: "OpenReview Review Consensus"
+    function: "scout.insight.run_insight_analysis() (second pass)"
+    description: "获取 OpenReview 评审意见并做 LLM 共识分析（仅 --insight 模式）"
+    gate: "--insight flag"
+    applies_to: "same top N papers as Stage 4"
+
+    input:
+      papers:
+        type: "list[dict]"
+        source: "STAGE-4 output papers"
+        required_keys: ["title", "authors"]
+      external_api:
+        name: "OpenReview API"
+        method: "fuzzy title matching (threshold 0.85)"
+        venues: ["ICLR", "NeurIPS", "ICML"]
+        excluded: ["AAAI", "CVPR", "ICCV", "ECCV"]
+        rate_limit: "2 req/s"
+
+    output:
+      per_paper:
+        type: "dict"
+        schema:
+          reviews: { type: "list[dict]", per_item: { rating: float, confidence: float, strengths: str, weaknesses: str } }
+          consensus: { type: str, description: "LLM 共识分析" }
+      attachment: "写入 paper['review_analysis']"
+      cross_paper:
+        writing_guide: { type: "dict", description: "synthesize_writing_guide() 跨论文写作指南" }
+
+  # ─── Report Generation ─────────────────────────────────────────────
+  - id: STAGE-REPORT
+    name: "Report Generation"
+    function: "scout.report.generate_daily_report() + generate_report_markdown()"
+    description: "汇总所有阶段结果，生成 JSON + Markdown 报告"
+
+    input:
+      projects_data:
+        type: "dict[str, dict]"
+        per_project:
+          project: { type: "dict", source: "project.json" }
+          high_relevance: { type: "list[dict]", source: "STAGE-2 output (with STAGE-3/4/5 attachments)" }
+          low_relevance: { type: "list[dict]", source: "STAGE-1 low_papers" }
+          screening_stats: { type: "dict", keys: ["total", "high_count", "low_count"] }
+          directions: { type: "list[dict]", source: "suggest_directions()" }
+          writing_guide: { type: "dict | {}", source: "STAGE-5" }
+
+    output:
+      json_report:
+        path: "outputs/reports/research-scout/{date}-research.json"
+        schema:
+          date: { type: str }
+          generated_at: { type: str }
+          projects:
+            per_project:
+              title: { type: str }
+              screening_stats: { type: dict }
+              top_papers: { type: "list[dict]", max: "TOP_PAPERS_IN_REPORT (5)" }
+              low_relevance_papers: { type: "list[dict]" }
+              directions: { type: "list[dict]" }
+              writing_guide: { type: "dict" }
+      markdown_report:
+        path: "outputs/reports/research-scout/{date}-research.md"
+        sections:
+          - "High-Relevance Papers 表格"
+          - "Detailed Analysis 每篇展开"
+          - "Literature Reading Log 折叠表格"
+      side_effect:
+        - "overview.md 追加 literature note (append_literature_note)"
+
+# ===== CROSS-STAGE CONSTRAINTS =====
+
+constraints:
+  - id: CON-001
+    text: "paper_id 是所有阶段的唯一关联键"
+    scope: "STAGE-0 → STAGE-1 → STAGE-2 → STAGE-3"
+    invariant: "LLM 返回的 paper_id 必须与输入的 _paper_id(p) 完全匹配才能正确 merge"
+
+  - id: CON-002
+    text: "LLM JSON 顶层 key 是唯一的耦合点"
+    scope: "STAGE-1, STAGE-2"
+    invariant: |
+      Stage 1 期望 key = "screenings"
+      Stage 2 期望 key = "evaluations"
+      如果 LLM 使用其他 key name，整个阶段结果静默丢失
+
+  - id: CON-003
+    text: "缓存写入的是 merge 后的结果，不保留 LLM 原始响应"
+    scope: "STAGE-1, STAGE-2"
+    impact: "间歇性失败后无法事后诊断根因"
+
+  - id: CON-004
+    text: "Stage 1 abstract 截断到 1000 字符，Stage 2 使用全文"
+    scope: "STAGE-1, STAGE-2"
+    rationale: "Stage 1 是粗筛（省 token），Stage 2 需要深度理解"
+
+  - id: CON-005
+    text: "Stage 3 的 S2 API 调用是串行的，每篇论文独立"
+    scope: "STAGE-3"
+    impact: "无 API key 时限速严重（单篇可能等待 2min+）"
+
+# ===== KNOWN ISSUES =====
+
+known_issues:
+  - id: ISSUE-001
+    title: "LLM 输出 key name 不稳定导致阶段结果静默丢失"
+    stages: [STAGE-1, STAGE-2]
+    severity: high
+    evidence:
+      - "第一次运行: 21/21 screening motivation 为空 → 0 high papers"
+      - "第二次运行: 9/9 deep eval composite_score=0"
+      - "缓存文件确认 deep eval 字段完全缺失"
+      - "日志无 parse error（JSON 解析成功，但顶层 key 不匹配）"
+      - "3次复现均成功（间歇性问题）"
+    root_cause: "result.get('evaluations', []) 在 key 不匹配时静默返回空列表"
+    fix_proposal: "检测匹配率，低于阈值时重试或 fallback 到 key 探测"
+
+  - id: ISSUE-002
+    title: "废数据被缓存固化"
+    stages: [STAGE-1, STAGE-2]
+    severity: high
+    evidence: "deep cache 写入全 0 分结果，后续 cache hit 继续返回废数据"
+    root_cause: "_save_eval_cache 不检查结果质量"
+    fix_proposal: "写入前校验（如 composite_score 全 0 则不缓存）"
+
+  - id: ISSUE-003
+    title: "S2 API 无 key 时严重限速"
+    stages: [STAGE-3]
+    severity: medium
+    evidence: "连续 429，单篇等待 5→10→20→40→60s，一篇彻底失败"
+    fix_proposal: "支持 S2 API key 配置 / 并行调用 / graceful degradation"
