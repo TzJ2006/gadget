@@ -9,11 +9,10 @@ Run it:
     eval "$(bash scripts/serve_local_llm.sh env)"   # sets OLLAMA_* for the ollama backend
     cd tools && python -m pytest summarize/tests/test_daily_e2e.py -v -s
 
-The aggregate step runs with SUMMARIZE_CONFIG pointed at a nonexistent file (and
-HOME/USERPROFILE redirected to a temp dir), so it reads NEITHER the repo-local
-tools/summarize/config.json NOR ~/.config/summarize/config.json — and therefore
-never uploads to the rclone remote; the report is written under a temp dir,
-leaving the canonical one untouched.
+The aggregate step runs with GADGET_CONFIG pointed at a nonexistent file (and
+HOME/USERPROFILE redirected to a temp dir), so it does not read the repo-root
+config.json — and therefore never uploads to the rclone remote; the report is
+written under a temp dir, leaving the canonical one untouched.
 """
 
 import json
@@ -63,10 +62,9 @@ def test_daily_aggregate_then_translate(tmp_path):
     fake_home = tmp_path / "home"          # no config here -> no rclone upload
     fake_home.mkdir()
 
-    # SUMMARIZE_CONFIG beats the repo-local tools/summarize/config.json, which a
-    # HOME redirect alone cannot shield against (it resolves from __file__).
+    # GADGET_CONFIG beats the repo-root config.json.
     env = {**os.environ, "HOME": str(fake_home), "USERPROFILE": str(fake_home),
-           "SUMMARIZE_CONFIG": str(fake_home / "config.json")}
+           "GADGET_CONFIG": str(fake_home / "config.json")}
     cmd = [sys.executable, "-m", "summarize", "daily", "merge",
            "--date", DATE, "--api", "ollama", "--no-cache",
            "--output", str(reports_dir), *map(str, LOGS)]

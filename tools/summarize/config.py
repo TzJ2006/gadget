@@ -1,53 +1,39 @@
-"""Configuration loading and resolution utilities for the summarize pipeline."""
+"""Configuration loading and resolution utilities for the summarize pipeline.
 
-import json
+Reads the ``summarize`` section of the repo-root ``config.json``
+(via ``common.config``). Override path with ``GADGET_CONFIG``.
+"""
+
 import os
 import platform
 from pathlib import Path
 from typing import Optional
 
-
-# ─── 0. 配置文件与工具函数 ─────────────────────────────────────────
-
-# 配置文件：SUMMARIZE_CONFIG 环境变量显式指定路径（测试隔离 / 多配置切换）>
-# 仓库内 tools/summarize/config.json（就在代码旁边，方便直接编辑）>
-# per-user 的 ~/.config/summarize/config.json（onboard.py 写的位置）。
-_REPO_CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
-_HOME_CONFIG_PATH = Path.home() / ".config" / "summarize" / "config.json"
+from common import config as gadget_config
 
 
 def _resolve_config_path() -> Path:
-    env_path = os.environ.get("SUMMARIZE_CONFIG")
-    if env_path:
-        return Path(env_path).expanduser()
-    return _REPO_CONFIG_PATH if _REPO_CONFIG_PATH.exists() else _HOME_CONFIG_PATH
+    """Active gadget config path (``GADGET_CONFIG`` or repo-root ``config.json``)."""
+    return gadget_config.resolve_config_path()
 
 
+# Display / existence checks point at the unified root file.
 _CONFIG_PATH = _resolve_config_path()
-_cached_config: Optional[dict] = None
+# Alias kept for call sites that historically wrote the "repo" config path.
+_REPO_CONFIG_PATH = _CONFIG_PATH
 
 
 def _load_config() -> dict:
-    """读取 ~/.config/summarize/config.json，缓存结果。"""
-    global _cached_config
-    if _cached_config is not None:
-        return _cached_config
-
-    if not _CONFIG_PATH.exists():
-        _cached_config = {}
-        return _cached_config
-
-    try:
-        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-            _cached_config = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"[warn] 配置文件读取失败 ({_CONFIG_PATH}): {e}")
-        _cached_config = {}
-
-    return _cached_config
+    """Return the ``summarize`` section (empty dict if missing)."""
+    return gadget_config.load_section("summarize")
 
 
-# _atomic_write imported from common.io (above)
+def _save_summarize_config(cfg: dict, *, replace: bool = True) -> Path:
+    """Write the ``summarize`` section into the root config.json."""
+    global _CONFIG_PATH, _REPO_CONFIG_PATH
+    path = gadget_config.update_section("summarize", cfg, replace=replace)
+    _CONFIG_PATH = _REPO_CONFIG_PATH = path
+    return path
 
 
 def _resolve_output_dir(cli_value: Optional[str], env_key: str,

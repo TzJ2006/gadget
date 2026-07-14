@@ -50,7 +50,10 @@ tools/research/output/
 # Personal data — synced via rclone, not tracked in git
 tools/summarize/logs/
 tools/summarize/reports/
-# Machine-specific config (device_name, paths, model). Copy config.example.json.
+# Machine-specific config (device_name, paths, model, API defaults).
+# Copy config.example.json → config.json at the repo root.
+/config.json
+# Legacy path (pre-unified config); keep ignored if a leftover file remains.
 tools/summarize/config.json
 tools/website/content/bugJournal/*.md
 tools/website/content/bugJournal/*.pdf
