@@ -78,7 +78,7 @@ python scripts/ingest_submissions.py \
 
 ## Default Parameters
 
-- **Output paths**: CSV → `outputs/data/benchmark/results.csv`, HTML → `outputs/reports/benchmark/report.html` (relative to gadget project root)
+- **Output paths**: CSV → `tools/benchmark/benchmark_results.csv`, HTML → `outputs/reports/benchmark/report.html` (relative to gadget project root)
 - **Duration**: 10 seconds per benchmark
 - CPU single-core: 10,000,000 scalar iterations (sqrt + add)
 - CPU BLAS: matrix_size 2048 (single-core), 4096 (all-cores)
@@ -142,6 +142,10 @@ Two independent paths feed the CSV:
 
 MPS (Apple Silicon) does not support FP64 or BF16. FP8 matmul is not fully supported in PyTorch yet.
 
+**OpenCL:** `detect.py` can list `backend=opencl` via optional `pyopencl` for `--info`. `gpu.py` run path is cuda/mps/xpu only — no OpenCL FLOPS measurement. Ingest still accepts `opencl`/`ocl` in submitted CSV rows for legacy/leaderboard data.
+
+**CSV SoT:** `tools/benchmark/benchmark_results.csv` — CLI, submit/ingest, and CI share one file.
+
 ## Adding a New Benchmark
 
 1. Subclass `BaseBenchmark` from `core.py`
@@ -165,4 +169,4 @@ Short imperative messages scoped by area: `gpu: improve FP16 timeout handling`, 
 
 ## Dependencies
 
-**Required**: torch, numpy, pandas, plotly, tqdm. **Optional**: threadpoolctl (BLAS thread control), pyopencl (Intel/AMD GPU fallback). Install via `pip install -r requirements.txt`.
+**Required**: torch, numpy, pandas, plotly, tqdm. **Optional**: threadpoolctl (BLAS thread control), pyopencl (OpenCL *detection* for `--info` only). Install via `pip install -r requirements.txt`.

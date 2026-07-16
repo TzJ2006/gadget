@@ -167,8 +167,8 @@ class BenchmarkResults:
 
     def __init__(self, output_path: str = ''):
         if not output_path:
-            from common.paths import DATA_DIR
-            output_path = str(DATA_DIR / "benchmark" / "results.csv")
+            from common.paths import TOOLS_DIR
+            output_path = str(TOOLS_DIR / "benchmark" / "benchmark_results.csv")
         self.output_path = Path(output_path)
         self.results: List[Dict[str, Any]] = []
 
