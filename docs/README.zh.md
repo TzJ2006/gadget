@@ -113,7 +113,7 @@ python tools/research/research_scout.py deploy                              # �
 
 ### Benchmark — 性能测试套件
 
-跨平台 CPU/GPU FLOPS 基准测试工具：在不同硬件厂商与精度档位上统一测量浮点性能。支持 NVIDIA (CUDA)、Apple Silicon (MPS)、Intel (XPU)、AMD (OpenCL 后备)，覆盖 FP64 / FP32 / FP16 / BF16 / FP8(实验性) 等精度。测量采用预热 + 正式测量 + 统计分析（中位数、IQR 剔除异常值），GPU 显式同步保证计时准确。结果以追加模式累积到 CSV（永不覆盖，天然支持多硬件累积排行），并可生成带 Plotly 图表的交互式 HTML 报告与排行榜，还支持部署到 Hugo 网站、提交到公共排行榜。
+跨平台 CPU/GPU FLOPS 基准测试工具：在不同硬件厂商与精度档位上统一测量浮点性能。实际跑分支持 NVIDIA (CUDA)、Apple Silicon (MPS)、Intel (XPU)（`--info` 可能检测到 OpenCL，但 `gpu.py` 不跑 OpenCL），覆盖 FP64 / FP32 / FP16 / BF16 / FP8(实验性) 等精度。测量采用预热 + 正式测量 + 统计分析（中位数、IQR 剔除异常值），GPU 显式同步保证计时准确。结果以追加模式累积到 CSV（永不覆盖，天然支持多硬件累积排行），并可生成带 Plotly 图表的交互式 HTML 报告与排行榜，还支持部署到 Hugo 网站、提交到公共排行榜。
 
 ```bash
 # 注意：所有命令需先 cd 进 tools/benchmark/

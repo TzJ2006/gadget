@@ -2366,11 +2366,11 @@ pip install torch numpy pandas plotly tqdm
 Optional dependencies:
 
 - `threadpoolctl` — precise control over BLAS thread count (affects the accuracy of CPU all-cores tests)
-- `pyopencl` — Intel/AMD GPU support (a fallback beyond CUDA and MPS)
+- `pyopencl` — optional Intel/AMD GPU detection for `--info` (not a benchmark backend)
 
 ```bash
 pip install threadpoolctl  # Precise BLAS thread control
-pip install pyopencl       # Intel/AMD GPU fallback support
+pip install pyopencl       # Optional OpenCL device detection only
 ```
 
 #### Verifying the Installation
