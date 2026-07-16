@@ -190,7 +190,7 @@ Optional-dependency extras in `pyproject.toml`: `summarize`, `research`, `benchm
 
 summarize: anthropic or openai (`requirements.txt` provided). Optional: Node.js (for ccusage / `@ccusage/codex` token stats), matplotlib (for token usage charts).
 research: arxiv, anthropic or openai, openreview-py (`requirements.txt` provided). Optional: PyMuPDF (PDF text extraction in detailed profiler / `--insight` mode). bioRxiv/PubMed use stdlib only.
-benchmark: torch, numpy, pandas, plotly, tqdm (`requirements.txt` provided). Optional: threadpoolctl, pyopencl.
+benchmark: torch, numpy, pandas, plotly, tqdm (`requirements.txt` provided). Optional: threadpoolctl; pyopencl (OpenCL detection for `--info` only — gpu run path is cuda/mps/xpu).
 website: Pillow (image processing), torch + transformers (translation). Optional: vLLM (Linux, faster batch inference), llama-cpp-python (GGUF backend).
 
 ## Notes
@@ -219,22 +219,40 @@ This repo follows the AI Dev Companion pipeline. All AI agents must read `AGENTS
 - **Enforcement:** `.codex/hooks.json` (Codex) and `.claude/settings.json` (Claude Code, local) wire the change-tracking hooks to the sibling engine. (Re)install with `npx tsx ../ai-companion/scripts/install.ts . --enforce` after building ai-companion.
 
 <!-- AI-DEV-COMPANION:START -->
-## AI Dev Companion
+## AI Dev Companion — Constraints
 
-_Managed by `aidev install` — content inside this block is overwritten on reinstall._
+This project is tracked by AI Dev Companion. The following rules are enforced:
 
-This repository is wired to **AI Dev Companion** (a separate repo, checked out at
-the sibling `../ai-companion/`): function-level change tracking plus a
-planning/execution skill pipeline.
+### Mandatory Workflows
 
-**Workflow — prefer these over ad-hoc edits for non-trivial changes:**
-`/idea` → `/ccdiscuss` (align) → `/ccplan` (plan; STOPS for approval) → `/ccedit`
-(DAG execution) → `/ccdebug` (on failure). Use `/cconboard` to onboard existing code.
+1. **All code changes are automatically recorded** via PostToolUse hook — every Edit/Write to tracked files is captured
+2. **Before starting a feature**, use `/ccplan` to create an ECL plan in `docs/ecl/`
+3. **Before editing guarded files**, check `docs/ecl/*.yaml` for active feature guards and preserve invariants
+4. **After editing**, the hook records: timestamp, file, tool, ECL context automatically
+5. **When tests fail**, use `/ccdebug` — fix code, not tests (max 3 retries)
+6. **For codebase analysis**, use `/cconboard` to generate structured documentation
 
-**Change tracking:** a PostToolUse hook records every `.py`/`.ts` edit at function
-level (and `.yaml`/`.md` at file level) into `.devcompanion/`. Plans live in
-`docs/ecl/*.yaml`.
+### Tracked File Extensions
 
-**Feature guards:** if `docs/ecl/*.yaml` declares `feature_guard` key_files, preserve
-their invariants when editing those files and run their verification afterward.
+Changes to `.py`, `.pyi`, `.ts`, `.tsx`, `.mts`, `.cts` files are tracked at function level.
+
+### Storage Layout
+
+- `.devcompanion/queue/` — event queue (hook writes here, daemon processes)
+- `.devcompanion/reviews/` — processed review sessions (JSON)
+- `.devcompanion/history/` — per-file change history (JSON)
+- `docs/ecl/` — active feature constraints (YAML, committed to git)
+
+### Feature Guard Protocol
+
+When `docs/ecl/*.yaml` files contain `feature_guard` sections:
+- Before editing a guarded file, announce which invariants must be preserved
+- After editing, run the guard's verification command
+- If verification fails, revert and investigate — do not proceed with broken guards
+
+### AI Dev Companion Location
+
+- Install root: `D:\GitHub\ai-companion`
+- Hook: `D:\GitHub\ai-companion/packages/hook/dist/index.js`
+- Skills: `D:\GitHub\ai-companion/skills/`
 <!-- AI-DEV-COMPANION:END -->
