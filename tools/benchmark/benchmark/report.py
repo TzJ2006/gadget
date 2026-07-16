@@ -606,18 +606,17 @@ class BenchmarkReport:
 
 
 def generate_report(csv_path: str = '', output_path: str = ''):
-    if not csv_path:
-        from common.paths import DATA_DIR
-        csv_path = str(DATA_DIR / "benchmark" / "results.csv")
-    if not output_path:
-        from common.paths import REPORTS_DIR
-        output_path = str(REPORTS_DIR / "benchmark" / "report.html")
-    """
-    Generate HTML report from CSV data.
+    """Generate HTML report from CSV data.
 
     Args:
         csv_path: Path to benchmark CSV file
         output_path: Path to output HTML file
     """
+    if not csv_path:
+        from common.paths import TOOLS_DIR
+        csv_path = str(TOOLS_DIR / "benchmark" / "benchmark_results.csv")
+    if not output_path:
+        from common.paths import REPORTS_DIR
+        output_path = str(REPORTS_DIR / "benchmark" / "report.html")
     report = BenchmarkReport(csv_path)
     report.generate_html(output_path)
