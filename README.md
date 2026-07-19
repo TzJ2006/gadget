@@ -76,7 +76,7 @@ gadget/
 
 ### Summarize — AI Conversation Daily/Weekly/Monthly Reports
 
-Automatically reads your daily AI conversation records (Claude Code / Codex / ChatGPT / generic JSON) and calls an LLM API to generate structured daily, weekly, and monthly summaries. Multi-device workflow: export conversation logs on each device, aggregate them via cloud-drive sync or manual copy, and generate the final daily report; once enough daily reports have accumulated, you can go on to generate weekly reports and monthly trend summaries. Via [ccusage](https://github.com/ryoppippi/ccusage) 20.x's per-source namespaced commands (`ccusage claude`, `ccusage codex`, `ccusage gemini`…), it automatically discovers and tallies token usage and cost across all agent CLIs. There are four AI summarization backends, switched uniformly via `--api`: `ollama` (default — local Ollama, keyless, Qwen3.6-35B), `claude_cli` (reuses the Claude Code CLI login state, no API key needed), `anthropic`, `openai`.
+Automatically reads your daily AI conversation records (Claude Code / Codex / Cursor Agent / ChatGPT / generic JSON) and calls an LLM API to generate structured daily, weekly, and monthly summaries. Multi-device workflow: export conversation logs on each device, aggregate them via cloud-drive sync or manual copy, and generate the final daily report; once enough daily reports have accumulated, you can go on to generate weekly reports and monthly trend summaries. Via [ccusage](https://github.com/ryoppippi/ccusage) 20.x's per-source namespaced commands (`ccusage claude`, `ccusage codex`, `ccusage gemini`…), it automatically discovers and tallies token usage and cost across all agent CLIs. There are four AI summarization backends, switched uniformly via `--api`: `ollama` (default — local Ollama, keyless, Qwen3.6-35B), `claude_cli` (reuses the Claude Code CLI login state, no API key needed), `anthropic`, `openai`.
 
 ```bash
 python -m summarize daily export                                   # Phase 1: export all unexported dates
@@ -129,12 +129,12 @@ For detailed step-by-step instructions see [TUTORIAL.md — Benchmark](TUTORIAL.
 
 ### Website — Hugo Blog
 
-A Hugo static blog site ("TzJ's Net", PaperMod theme), deployed to GitHub Pages (`https://tzj2006.github.io/`). It has a built-in incremental image/video compression pipeline (compressing only media changed since `.last_build`: images go through pngquant, videos through HandBrakeCLI) and local-model bilingual translation (Ollama by default, with vLLM on Linux / transformers on Windows as fallbacks; the model `tencent/Hy-MT2-1.8B` is auto-downloaded on first run, not going through a cloud LLM API). Auto-generated content (daily/weekly/monthly reports, research reports, benchmark pages, images) is written by the deploy pipelines directly into `website/content|static` (the single Hugo content root, files stamped with a `gadget_generated` marker; hand-written files without the marker are never overwritten), then translated, compressed, built, and pushed. `website/public/` is a **separate** deployment repository (`tzj2006/tzj2006.github.io`), automatically committed + pushed by the build script — do not commit to it directly.
+A Hugo static blog site ("TzJ's Net", PaperMod theme), deployed to GitHub Pages (`https://tzj2006.github.io/`). It has a built-in incremental image/video compression pipeline (compressing only media changed since `.last_build`: images go through pngquant, videos through HandBrakeCLI) and local-model bilingual translation (Ollama by default, with vLLM on Linux / transformers on Windows as fallbacks; the model `tencent/Hy-MT2-1.8B` is auto-downloaded on first run, not going through a cloud LLM API). Auto-generated content (daily/weekly/monthly reports, research reports, benchmark pages, images) is written by the deploy pipelines directly into `tools/website/content|static` (the single Hugo content root, files stamped with a `gadget_generated` marker; hand-written files without the marker are never overwritten), then translated, compressed, built, and pushed. `tools/website/public/` is a **separate** deployment repository (`tzj2006/tzj2006.github.io`), automatically committed + pushed by the build script — do not commit to it directly.
 
 ```bash
 pip install -e ".[website]"                          # Install dependencies (incl. torch + transformers for translation)
 cd tools/website && bash update.sh                   # macOS/Linux: incremental compress + Hugo build + push Pages
-powershell -ExecutionPolicy Bypass -File update.ps1  # Windows
+powershell -ExecutionPolicy Bypass -File tools/website/update.ps1  # Windows (script cds to its own dir)
 cd tools/website && hugo server -D                   # Local preview (dev server, includes drafts)
 ```
 
@@ -168,7 +168,7 @@ Change shared capabilities (LLM, cache, translation, Hugo deploy) here.
 
 ### scripts/ — Ops and Maintenance Scripts
 
-- `sync.py` — centralized rclone data sync (push / pull / status / bootstrap / config, covering the summarize / website / research / test categories; also includes a special `dag` category for generating + deploying the DAG site). Run `python scripts/sync.py`; config lives at `~/.config/gadget/sync.json`.
+- `sync.py` — centralized rclone data sync (push / pull / status / bootstrap / config, covering the summarize / website / research / test / backups categories; also includes a special `dag` category for generating + deploying the DAG site). Run `python scripts/sync.py`; config is the `sync` section of the repo-root `config.json` (override path with `GADGET_CONFIG`).
 - `onboard.py` — repository-level one-time machine onboarding: fill in one YAML sheet (`tokens/onboard.yaml`), run the script once, and it automatically completes SSH configuration, Claude/Codex CLI installation and authentication, pip extras and ai-companion installation, per-tool config, and rclone bootstrap.
 - Others: `audit_content_languages.py` (audit/fix bilingual Hugo content), `fix_report_languages.py`, `profile_translation.py` (translation-engine GPU profiler).
 
@@ -195,8 +195,11 @@ outputs/
 ├── reports/      # Final reports (Markdown, JSON, HTML)
 ├── cache/        # LLM cache, search cache
 ├── data/         # Structured data (CSV, JSON profiles)
-└── site/         # Hugo staging: source of truth for auto-generated content/static
+├── images/       # Charts and generated images
+└── backups/      # Force-overwrite backups (website-force, etc.)
 ```
+
+Hugo site content is written directly into `tools/website/content|static` (there is no separate `outputs/site` staging tree).
 
 ## Environment Requirements
 
@@ -214,4 +217,5 @@ outputs/
 - The LLM backends are switched uniformly via the `--api` parameter: `ollama` (default), `claude_cli`, `anthropic`, `openai` (or `GADGET_LLM_BACKEND` globally)
 - The translation path uses a local inference engine selected by `GADGET_TRANSLATION_BACKEND`: `ollama` (default when the model is pulled, via the local Ollama server) → `llamacpp`/`vllm`/`transformers` (in-process), model `tencent/Hy-MT2-1.8B`
 - Cross-device data sync uses `python scripts/sync.py push/pull` (requires rclone configuration)
-- Never `git add` auto-generated content, rclone-synced data, build artifacts (`build/`, `gadget.egg-info/`), or the deployment/theme repos under `website/`
+- Never `git add` auto-generated content, rclone-synced data, build artifacts (`build/`, `gadget.egg-info/`), or the deployment/theme repos under `tools/website/`
+- Tool settings live in the repo-root `config.json` (gitignored; copy from `config.example.json`). Override the path with `GADGET_CONFIG`.

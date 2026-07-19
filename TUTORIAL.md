@@ -62,7 +62,7 @@ This is the **detailed usage guide** for the gadget toolkit, covering setup, ste
 - [Website](#website)
   - [Installing Dependencies](#installing-dependencies)
   - [One-Command Build + Deploy](#one-command-build--deploy)
-  - [Build Pipeline (the ten steps of `update.sh`)](#build-pipeline-the-ten-steps-of-updatesh)
+  - [Build Pipeline (the eight steps of `update.sh`)](#build-pipeline-the-eight-steps-of-updatesh)
   - [Local Preview (dev server)](#local-preview-dev-server)
   - [Incremental Translation State (`translate_site_batch.py`)](#incremental-translation-state-translatesitebatchpy)
   - [Preflight (`preflight_check.py`)](#preflight-preflightcheckpy)
@@ -166,7 +166,7 @@ Related environment variables:
 - `GADGET_LLM_BACKEND` — globally override the default `--api` backend
 - `SUMMARIZE_LOGS_DIR`, `SUMMARIZE_REPORTS_DIR` — override summarize default output paths
 
-Config resolution order (consistent across all tools): CLI flag > environment variable > `config.json` > hardcoded default. Per-tool config files: summarize resolves `SUMMARIZE_CONFIG` env var > repo-local `tools/summarize/config.json` > `~/.config/summarize/config.json`; research uses `~/.config/research_scout/config.json` and `~/.config/research/config.json`. Each is creatable via the tool's `config --init`.
+Config resolution order (consistent across all tools): CLI flag > environment variable > `config.json` section > hardcoded default. All tools share the repo-root **`config.json`** (gitignored; template `config.example.json`), namespaced by section (`summarize`, `research_scout`, `research`, `sync`, `translator`). Override the file path with `GADGET_CONFIG`. Each tool's `config --init` writes its section.
 
 #### Tests
 
@@ -184,7 +184,7 @@ Tests use `unittest.mock` to stub out model loading, inference, and LLM backends
 
 ### Data Sync: `scripts/sync.py`
 
-Centralized rclone-based personal data sync (to and from Google Drive). Configuration lives in `~/.config/gadget/sync.json`.
+Centralized rclone-based personal data sync (to and from Google Drive). Configuration is the `sync` section of the repo-root `config.json` (override path with `GADGET_CONFIG`).
 
 #### Subcommands
 
@@ -200,7 +200,7 @@ python scripts/sync.py bootstrap --remote gdrive:gadget  # One-click init for a 
 #### Options
 
 - `--dry-run` — preview only, no actual transfer; can be placed either before or after the subcommand (e.g. both `python scripts/sync.py --dry-run push` and `push --dry-run` work).
-- `--category <name>` — sync only one category. Available categories: `summarize`, `website`, `research`, `test` (there is also a special top-level category `dag`, see below). Supported by `push`/`pull`/`status`.
+- `--category <name>` — sync only one category. Available categories: `summarize`, `website`, `research`, `test`, `backups` (there is also a special top-level category `dag`, see below). Supported by `push`/`pull`/`status`.
 - `--include-config` — on `push`, also back up the config files to the remote (for other devices to bootstrap).
 - `--include-tokens` — on `push` / `bootstrap`, include the `tokens/` directory (which contains API keys).
 
@@ -231,7 +231,7 @@ Asks interactively:
 - The rclone remote base path (default `gdrive:gadget`)
 - If `rclone` is not found on PATH, additionally asks for the rclone binary path (e.g. `~/.local/bin/rclone`)
 
-Writes to `~/.config/gadget/sync.json`. If not configured separately, the script will also try to derive the remote base path from the summarize config.
+Writes to the `sync` section of repo-root `config.json`. If not configured separately, the script will also try to derive the remote base path from the summarize config.
 
 #### One-click init for a new device (`bootstrap`)
 
@@ -241,7 +241,7 @@ python scripts/sync.py bootstrap --remote gdrive:gadget --include-tokens   # Als
 python scripts/sync.py bootstrap --dry-run
 ```
 
-`bootstrap` proceeds in order: write a minimal `sync.json` → verify remote connectivity (`rclone lsd`) → pull the config files → (optionally `--include-tokens`) pull tokens → pull all data directories. `--remote` defaults to `gdrive:gadget`.
+`bootstrap` proceeds in order: write a minimal `sync` section into repo-root `config.json` → verify remote connectivity (`rclone lsd`) → pull the config files → (optionally `--include-tokens`) pull tokens → pull all data directories. `--remote` defaults to `gdrive:gadget`.
 
 #### Special category `dag` (generate + deploy, not a GDrive sync)
 
@@ -374,22 +374,22 @@ install:
 ```yaml
 gadgets:
   enabled: true
-  summarize:                            # -> ~/.config/summarize/config.json
+  summarize:                            # -> config.json "summarize"
     device_name: ""                     # empty = hostname
-    logs_dir: ""                        # empty = default (~/.claude + codex log directory)
-    reports_dir: ""                     # empty = outputs/reports
+    logs_dir: ""                        # empty = default (outputs/logs/summarize)
+    reports_dir: ""                     # empty = outputs/reports/summarize
     hugo_site: "tools/website"          # repo-relative Hugo site root
     rclone_remote: "gdrive:gadget/summarize"
     rclone_path: ""                     # empty = remote default
     default_api: claude_cli             # ollama | claude_cli | anthropic | openai; default: ollama
-  research:                             # -> ~/.config/research/config.json
+  research:                             # -> config.json "research"
     model: sonnet
     default_mode: fast
     default_depth: 1
     max_students: 10
     output_dir: ""
     semantic_scholar_api_key: ""        # setting this can raise the rate limit
-  research_scout:                       # -> ~/.config/research_scout/config.json
+  research_scout:                       # -> config.json "research_scout"
     default_api: claude_cli
     hugo_site: "tools/website"          # repo-relative Hugo site root
     default_lookback_days: 7
@@ -429,7 +429,7 @@ Unless `--no-verify` is added, the script runs a readiness check at the end: it 
 
 ## Summarize
 
-A complete tutorial for the AI-conversation daily/weekly/monthly summarization tool. This tool automatically reads your daily conversations with AI (Claude Code / Codex / ChatGPT / generic JSON), calls an LLM API, and generates structured daily, weekly, and monthly summaries.
+A complete tutorial for the AI-conversation daily/weekly/monthly summarization tool. This tool automatically reads your daily conversations with AI (Claude Code / Codex / Cursor Agent / ChatGPT / generic JSON), calls an LLM API, and generates structured daily, weekly, and monthly summaries.
 
 It supports a multi-device workflow: export the conversation logs on each machine, aggregate them via cloud-drive sync or manual copy, and generate the final daily report. Once you have accumulated enough daily reports, you can generate weekly reports and monthly trend summaries.
 
@@ -441,7 +441,7 @@ summarize/                   # pip-installable package (python -m summarize)
 ├── __main__.py              # Unified CLI: python -m summarize {daily,weekly,monthly,auto}
 ├── config.py                # Config loading, path resolution, device name
 ├── remote.py                # rclone upload/download
-├── parsers.py               # Conversation parsing (Claude Code / Codex / ChatGPT / generic)
+├── parsers.py               # Conversation parsing (Claude Code / Codex / Cursor Agent / ChatGPT / generic)
 ├── usage.py                 # Token usage collection (ccusage 20.x per-source namespaced commands)
 ├── summarizer.py            # LLM summarization, chunking, hierarchical merge
 ├── formatter.py             # Markdown generation, importance ranking, Hugo integration, bilingual output
@@ -476,7 +476,7 @@ outputs/                     # all generated files (under the project root, giti
     └── monthly/             # Monthly LLM cache
 
 tools/summarize/
-└── config.json              # Optional config file (device alias, output paths, rclone remote; ~/.config/summarize/config.json is still read as a fallback)
+config.json                  # Repo-root unified config (summarize section: device alias, paths, rclone; template config.example.json)
 ```
 
 ### Prerequisites
@@ -503,7 +503,7 @@ pip install -r tools/summarize/requirements.txt
 
 > **CLI usage change**: After the refactor, the recommended form is `python -m summarize daily ...`. The old `python tools/summarize/daily_summary.py ...` still works (backward compatible). All commands in this tutorial use the new form.
 
-> ⚠️ **Running `python -m summarize` directly from the repository root may be shadowed by a leftover empty directory `summarize/` of the same name at the root** (a leftover from before the `tools/` reorganization). Please call it after installing with `pip install -e .`, or run it from within the `tools/` directory; you may also delete the leftover empty directories `summarize/ research/ website/ workflow/` at the root.
+> Install with `pip install -e .`, then run `python -m summarize` from the repository root.
 
 When calling an API to generate summaries, there are four backends to choose from. The default is `ollama` — a keyless local Ollama server (see `scripts/serve_local_llm.sh`; override globally with `GADGET_LLM_BACKEND`). The three alternatives:
 
@@ -549,7 +549,7 @@ python -m summarize daily export --summarize --date 2026-02-13 --api openai
 
 When using multiple devices, it is recommended to create a config file on each device to set the device alias and output paths.
 
-Config file path: repo-local `tools/summarize/config.json` (template: `config.example.json`; `config --init` writes here). If it does not exist, `~/.config/summarize/config.json` is read as a fallback; the `SUMMARIZE_CONFIG` env var (explicit path) beats both.
+Config file path: repo-root `config.json` section `summarize` (template: root `config.example.json`; `config --init` / `onboard --init-config` write here). Override the file path with `GADGET_CONFIG`. Legacy `tools/summarize/config.json` and `~/.config/summarize/config.json` are **not** read.
 
 #### Quick creation
 
@@ -592,7 +592,7 @@ python -m summarize daily config --show
 Example output:
 
 ```
-配置文件路径: /home/user/gadget/tools/summarize/config.json
+配置文件路径: /home/user/gadget/config.json  (section: summarize)
 配置内容:
 {
   "device_name": "home-server",
@@ -631,7 +631,7 @@ Each device can set a human-readable alias via `device_name`, replacing the defa
 
 How to set it:
 - Run `config --init` for interactive setup
-- Or manually add `"device_name": "my-alias"` to the repo-local `tools/summarize/config.json` (or `~/.config/summarize/config.json` if that is what the machine uses — it is still read as a fallback)
+- Or manually add `"device_name": "my-alias"` to the `summarize` section of repo-root `config.json`
 
 #### Filename change
 
@@ -877,7 +877,7 @@ python -m summarize auto --date 2026-04-18 --api anthropic --force --deploy
 
 ```bash
 python -m summarize onboard                 # Check the requirements for summarize auto
-python -m summarize onboard --init-config   # Interactively create tools/summarize/config.json
+python -m summarize onboard --init-config   # Interactively create/update config.json summarize section
 python -m summarize onboard --deploy        # Also check Hugo deploy requirements
 python -m summarize auto                    # Automatically runs the readiness check first
 python -m summarize auto --skip-onboard-check  # Only when you explicitly want to skip the check
@@ -897,7 +897,7 @@ For passing log/reports files between multiple devices, there are two cloud-driv
 
 Point the output directory at the cloud-drive sync folder; once files are written, the cloud-drive app automatically syncs them to all devices.
 
-Set the following in each device's repo-local `tools/summarize/config.json` (or `~/.config/summarize/config.json` if that is what the machine uses — it is still read as a fallback):
+Set the following in each device's repo-root `config.json` under the `summarize` section:
 
 ```json
 {
@@ -988,7 +988,7 @@ The browser pops up an authorization page; once done, the terminal prints the to
 
 **3. Enable automatic upload**
 
-Set `rclone_remote` in the repo-local `tools/summarize/config.json` (or `~/.config/summarize/config.json` if that is what the machine uses — it is still read as a fallback):
+Set `rclone_remote` in the `summarize` section of repo-root `config.json`:
 
 ```json
 {
@@ -1236,6 +1236,7 @@ python -m summarize daily deploy --force
 |------|------|----------|
 | Claude Code | Reads `.jsonl` files under `~/.claude/projects/` | Yes |
 | Codex | Reads session directories under `~/.codex/sessions/` | Yes |
+| Cursor Agent | Reads `~/.cursor/projects/*/agent-transcripts/<uuid>/<uuid>.jsonl` (parent only; no token usage) | Yes |
 | ChatGPT | The `conversations.json` exported from ChatGPT | No, requires `--chatgpt` to specify |
 | Generic format | A JSON array of `[{"role": "user", "content": "..."}]` | No, requires `--generic` to specify |
 
@@ -1346,9 +1347,11 @@ python -m summarize daily merge --sync-all                          # Batch-sync
 python -m summarize daily merge --sync-all --deploy                 # Batch sync + deploy
 python -m summarize daily merge outputs/logs/summarize/2026-02-13_*.json  # Manually specify log files
 
-# ── Batch deploy ──
-python -m summarize daily deploy                          # Deploy all reports to Hugo
+# ── Batch deploy (no LLM re-run) ──
+python -m summarize daily deploy                          # Deploy all daily reports to Hugo
 python -m summarize daily deploy --date 2026-02-13        # Deploy a specific date
+python -m summarize weekly deploy                         # Replay-deploy saved weekly reports
+python -m summarize monthly deploy --month 2026-02        # Replay-deploy a monthly report
 
 # ── Full-pipeline automation ──
 python -m summarize auto                                  # One-click run: export → merge → weekly → monthly
@@ -1400,7 +1403,7 @@ This interactively asks for the following configuration items:
 - **Default max results**: Maximum number of papers returned per project per search (default 50)
 - **Number of high-scoring papers shown in the report**: How many are shown in detail in the weekly report (default 5)
 
-The config file is saved at `~/.config/research_scout/config.json`.
+The config is saved in the `research_scout` section of repo-root `config.json` (override path with `GADGET_CONFIG`).
 
 View the current configuration:
 
@@ -2001,7 +2004,7 @@ The priority order of parameters is: **command-line arguments > project.json > c
 
 #### Global defaults (config.json)
 
-Via `config --init` or by directly editing `~/.config/research_scout/config.json`:
+Via `config --init` or by directly editing the `research_scout` section of repo-root `config.json`:
 
 ```json
 {
@@ -2059,7 +2062,7 @@ Command-line arguments have the highest priority and do not affect the config fi
 
 #### Researcher profiling configuration
 
-The Profiler uses a separate config file, `~/.config/research/config.json`:
+The Profiler uses the `research` section of the same repo-root `config.json`:
 
 ```json
 {
@@ -2972,7 +2975,7 @@ The interface is titled **Gadget Translate**, with three dropdowns at the top + 
 
 Top control bar:
 
-- **Model**: model dropdown, defaulting to the first item in the list; selecting a model for the first time downloads and loads it (7B / FP8 models are large). Candidates come from `~/.config/gadget/translator_models.json`; when no config file exists, it falls back to the built-in default list (`tencent/Hy-MT2-1.8B`, `tencent/Hy-MT2-1.8B-FP8`, `tencent/Hy-MT2-7B`, `tencent/Hy-MT2-7B-FP8`).
+- **Model**: model dropdown, defaulting to the first item in the list; selecting a model for the first time downloads and loads it (7B / FP8 models are large). Candidates come from the `translator.models` list in repo-root `config.json`; when missing, it falls back to the built-in default list (`tencent/Hy-MT2-1.8B`, `tencent/Hy-MT2-1.8B-FP8`, `tencent/Hy-MT2-7B`, `tencent/Hy-MT2-7B-FP8`).
 - **Source** / **Target**: choose from `auto` / `zh` / `en`.
   - `auto` source: auto-detected by the text's CJK ratio (`common.translation.detect_language`).
   - `auto` target: automatically flips between zh↔en (if Chinese is detected, translate to English, otherwise translate to Chinese).
@@ -2993,7 +2996,7 @@ File handling details (`tools/translator/core.py`):
 
 #### "Models" Tab
 
-Add or remove translation models by entering a HuggingFace repo id (in the form `org/Model-Name`). Changes take effect immediately and are persisted to `~/.config/gadget/translator_models.json`.
+Add or remove translation models by entering a HuggingFace repo id (in the form `org/Model-Name`). Changes take effect immediately and are persisted to the `translator.models` list in repo-root `config.json`.
 
 - **Add**: enter a repo id and click add; empty or duplicate entries are a no-op.
 - **Delete selected**: deletes the model selected in the dropdown; if the list becomes empty, it falls back to the built-in default list.
@@ -3048,5 +3051,5 @@ When the backend is not forced, the automatic selection logic (`common/engine.py
 - Entry point: `tools/translator/__main__.py`
 - UI: `tools/translator/app.py`
 - Translation/file logic: `tools/translator/core.py`
-- Model list: `tools/translator/models.py` (`~/.config/gadget/translator_models.json`)
+- Model list: `tools/translator/models.py` (repo-root `config.json` → `translator.models`)
 - Shared engine: `common/engine.py`, `common/translation.py`
