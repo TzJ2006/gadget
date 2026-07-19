@@ -205,8 +205,8 @@ points back to this section.
 - **Check GPU vs CPU split:** `ollama ps` (PROCESSOR column) — should read `100% GPU`.
 - **Live token timing (Windows):** `%LOCALAPPDATA%\Ollama\server.log` (prompt eval = prefill,
   eval = generation). WSL: `journalctl -u ollama -f | grep "eval time"`.
-- **Reports auto-upload:** if the summarize config (repo-local `tools/summarize/config.json`,
-  else `~/.config/summarize/config.json`) has `rclone_remote`, `merge` uploads the report to
+- **Reports auto-upload:** if the summarize section of repo-root `config.json`
+  (override with `GADGET_CONFIG`) has `rclone_remote`, `merge` uploads the report to
   that remote as a side effect.
 - **WSL-only:** don't launch `ollama serve` with `nohup … &` and let the shell return — WSL
   shuts the distro down when idle, killing detached processes. Use the systemd `ollama`

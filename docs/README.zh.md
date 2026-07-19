@@ -76,7 +76,7 @@ gadget/
 
 ### Summarize — AI 对话日报/周报/月报
 
-自动读取你每天与 AI 的对话记录（Claude Code / Codex / ChatGPT / 通用 JSON），调用 LLM API 生成结构化日报、周报和月度总结。多设备工作流：在每台设备上导出对话 log，通过云盘同步或手动拷贝汇总，生成最终日报；积累足够日报后可继续生成周报和月度趋势总结。通过 [ccusage](https://github.com/ryoppippi/ccusage) 20.x 的逐源命名空间命令（`ccusage claude`、`ccusage codex`、`ccusage gemini`…）自动发现并统计所有 agent CLI 的 token 用量和费用。AI 总结后端四选一，统一通过 `--api` 切换：`ollama`（默认——本地 Ollama，无需 key，Qwen3.6-35B）、`claude_cli`（复用 Claude Code CLI 登录态，无需 API key）、`anthropic`、`openai`。
+自动读取你每天与 AI 的对话记录（Claude Code / Codex / Cursor Agent / ChatGPT / 通用 JSON），调用 LLM API 生成结构化日报、周报和月度总结。多设备工作流：在每台设备上导出对话 log，通过云盘同步或手动拷贝汇总，生成最终日报；积累足够日报后可继续生成周报和月度趋势总结。通过 [ccusage](https://github.com/ryoppippi/ccusage) 20.x 的逐源命名空间命令（`ccusage claude`、`ccusage codex`、`ccusage gemini`…）自动发现并统计所有 agent CLI 的 token 用量和费用。AI 总结后端四选一，统一通过 `--api` 切换：`ollama`（默认——本地 Ollama，无需 key，Qwen3.6-35B）、`claude_cli`（复用 Claude Code CLI 登录态，无需 API key）、`anthropic`、`openai`。
 
 ```bash
 python -m summarize daily export                                   # Phase 1: 导出所有未导出日期
@@ -129,12 +129,12 @@ python -m benchmark.cli --report --deploy  # 生成报告并发布到 Hugo /benc
 
 ### Website — Hugo 博客
 
-Hugo 静态博客站点（"TzJ's Net"，PaperMod 主题），部署到 GitHub Pages（`https://tzj2006.github.io/`）。内置增量图片/视频压缩流水线（仅压缩自 `.last_build` 以来变更的媒体：图片走 pngquant，视频走 HandBrakeCLI）和本地模型双语翻译（默认 Ollama，Linux 兜底 vLLM、Windows 兜底 transformers，模型 `tencent/Hy-MT2-1.8B` 首次运行自动下载，不走云端 LLM API）。自动生成的内容（日报/周报/月报、研究报告、benchmark 页面、图片）由部署管线直接写入 `website/content|static`（单一内容根，文件带 `gadget_generated` 标记，与手写内容共存；无 gadget 标记的手写文件管线绝不覆盖），构建时翻译、压缩、构建并推送。`website/public/` 是一个**独立的**部署仓库（`tzj2006/tzj2006.github.io`），由构建脚本自动 commit + push，不要直接 commit 到其中。
+Hugo 静态博客站点（"TzJ's Net"，PaperMod 主题），部署到 GitHub Pages（`https://tzj2006.github.io/`）。内置增量图片/视频压缩流水线（仅压缩自 `.last_build` 以来变更的媒体：图片走 pngquant，视频走 HandBrakeCLI）和本地模型双语翻译（默认 Ollama，Linux 兜底 vLLM、Windows 兜底 transformers，模型 `tencent/Hy-MT2-1.8B` 首次运行自动下载，不走云端 LLM API）。自动生成的内容（日报/周报/月报、研究报告、benchmark 页面、图片）由部署管线直接写入 `tools/website/content|static`（单一内容根，文件带 `gadget_generated` 标记，与手写内容共存；无 gadget 标记的手写文件管线绝不覆盖），构建时翻译、压缩、构建并推送。`tools/website/public/` 是一个**独立的**部署仓库（`tzj2006/tzj2006.github.io`），由构建脚本自动 commit + push，不要直接 commit 到其中。
 
 ```bash
 pip install -e ".[website]"                          # 安装依赖（含 torch + transformers 翻译依赖）
 cd tools/website && bash update.sh                   # macOS/Linux：增量压缩 + Hugo 构建 + 推送 Pages
-powershell -ExecutionPolicy Bypass -File update.ps1  # Windows
+powershell -ExecutionPolicy Bypass -File tools/website/update.ps1  # Windows（脚本会自行 cd 到所在目录）
 cd tools/website && hugo server -D                   # 本地预览（dev server，含草稿）
 ```
 
@@ -168,7 +168,7 @@ python -m translator             # 启动 Gradio GUI（浏览器打开）
 
 ### scripts/ — 运维与维护脚本
 
-- `sync.py` — 集中式 rclone 数据同步（push / pull / status / bootstrap / config，覆盖 summarize / website / research / test 各类目；另含特殊 `dag` 类目用于生成 + 部署 DAG 站）。运行 `python scripts/sync.py`，配置在 `~/.config/gadget/sync.json`。
+- `sync.py` — 集中式 rclone 数据同步（push / pull / status / bootstrap / config，覆盖 summarize / website / research / test / backups 各类目；另含特殊 `dag` 类目用于生成 + 部署 DAG 站）。运行 `python scripts/sync.py`，配置为仓库根 `config.json` 的 `sync` 段（可用 `GADGET_CONFIG` 覆盖路径）。
 - `onboard.py` — 仓库级一次性机器 onboarding：填一张 YAML sheet（`tokens/onboard.yaml`），跑一次脚本，自动完成 SSH 配置、Claude/Codex CLI 安装与鉴权、pip extras 与 ai-companion 安装、各工具 config、rclone bootstrap。
 - 其余：`audit_content_languages.py`（审计/修复双语 Hugo 内容）、`fix_report_languages.py`、`profile_translation.py`（翻译引擎 GPU profiler）。
 
@@ -195,8 +195,11 @@ outputs/
 ├── reports/      # 最终报告（Markdown、JSON、HTML）
 ├── cache/        # LLM 缓存、搜索缓存
 ├── data/         # 结构化数据（CSV、JSON profiles）
-└── site/         # Hugo staging：auto-generated content/static 的真源
+├── images/       # 图表与生成图片
+└── backups/      # 强制覆盖前的备份（website-force 等）
 ```
+
+Hugo 站点内容直接写入 `tools/website/content|static`（已无单独的 `outputs/site` staging 树）。
 
 ## 环境要求
 
@@ -214,4 +217,5 @@ outputs/
 - 四个 LLM 后端统一通过 `--api` 参数切换：`ollama`（默认，本地 Qwen3.6-35B）、`claude_cli`、`anthropic`、`openai`
 - 翻译链路不走 `--api`，而是使用 `GADGET_TRANSLATION_BACKEND` 选择的本地推理引擎：`ollama`（模型已 pull 时默认，走本地 Ollama 服务）→ `llamacpp`/`vllm`/`transformers`（进程内），模型 `tencent/Hy-MT2-1.8B`
 - 跨设备数据同步使用 `python scripts/sync.py push/pull`（需配置 rclone）
-- 永远不要 `git add` 自动生成内容、rclone 同步的数据、构建产物（`build/`、`gadget.egg-info/`）或 `website/` 下的部署/主题仓库
+- 永远不要 `git add` 自动生成内容、rclone 同步的数据、构建产物（`build/`、`gadget.egg-info/`）或 `tools/website/` 下的部署/主题仓库
+- 各工具配置统一在仓库根 `config.json`（已 gitignore；从 `config.example.json` 复制）。可用 `GADGET_CONFIG` 覆盖路径。

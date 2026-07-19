@@ -1,6 +1,6 @@
 # Summarize — AI 对话日报 & 月度总结
 
-自动读取每天与 AI 的对话记录（Claude Code / Codex / ChatGPT / 通用 JSON），调用 LLM API 生成结构化日报和月度总结。
+自动读取每天与 AI 的对话记录（Claude Code / Codex / Cursor Agent / ChatGPT / 通用 JSON），调用 LLM API 生成结构化日报和月度总结。
 
 支持多设备工作流：在每台设备上导出对话 log，通过云盘同步或手动拷贝汇总，生成最终日报。同时通过 [ccusage](https://github.com/ryoppippi/ccusage) 20.x 的逐源命名空间命令（`ccusage <source> daily`）自动发现并统计所有 agent CLI（Claude Code / Codex / Gemini 等）的 token 用量和费用。
 
@@ -19,7 +19,7 @@
                                                           outputs/reports/summarize/2026-02-monthly-tokens.png
 ```
 
-### 日报流程 (`daily_summary.py`)
+### 日报流程 (`python -m summarize daily`)
 
 - **export** (Phase 1) — 各设备本地运行，解析对话并导出为可移植 JSON log，不需要 API key。不带 `--date` 时自动导出所有未导出日期
 - **merge** (Phase 2) — 收集所有设备的 log 文件，调 API 生成最终汇总日报。支持 `--sync` 自动从 rclone 远端拉取 log，`--sync-all` 批量处理所有日期
@@ -28,17 +28,19 @@
 
 无子命令时默认执行 export（仅导出，不调 API）。
 
-### 周报流程 (`weekly_summary.py`)
+### 周报流程 (`python -m summarize weekly`)
 
 - **generate** — 读取一周的日报 JSON，调 LLM 分析趋势，生成结构化周报（ISO 8601 周一至周日）
+- **deploy** — 从已保存周报回放部署到 Hugo（不重跑 LLM）
 - **list** — 列出可用周及日报数量
 
-### 月度流程 (`monthly_summary.py`)
+### 月度流程 (`python -m summarize monthly`)
 
 - **generate** — 读取一个月的所有日报 JSON，调 LLM 分析趋势和模式，生成结构化月度总结
+- **deploy** — 从已保存月报回放部署到 Hugo（不重跑 LLM）
 - **list** — 列出可用月份及日报数量
 
-### 全流程自动化 (`auto.py`)
+### 全流程自动化 (`python -m summarize auto`)
 
 一键运行完整管线：daily export → daily merge → weekly → monthly。适合定时任务或日常一键总结。
 
@@ -58,7 +60,7 @@ python -m summarize auto --force            # 强制重新生成
 
 ```bash
 python -m summarize onboard                 # 检查 summarize auto 所需条件
-python -m summarize onboard --init-config   # 交互式创建仓库内 tools/summarize/config.json
+python -m summarize onboard --init-config   # 交互式写入仓库根 config.json 的 summarize 段
 python -m summarize onboard --deploy        # 同时检查 Hugo 部署要求
 python -m summarize auto                    # 自动先运行 readiness check
 python -m summarize auto --skip-onboard-check  # 仅在明确要跳过检查时使用
@@ -67,6 +69,7 @@ python -m summarize auto --skip-onboard-check  # 仅在明确要跳过检查时�
 ## 依赖
 
 ```bash
+pip install -e .                            # 安装 summarize 包（推荐）
 pip install -r tools/summarize/requirements.txt
 ```
 
@@ -91,52 +94,57 @@ Token 统计（可选，需要 Node.js）：ccusage 20.x 一个工具即覆盖�
 
 ```bash
 # 首次使用：配置设备别名和输出路径（可选但推荐）
-python tools/summarize/daily_summary.py config --init
+python -m summarize daily config --init
 
 # Phase 1: 导出（不需要 API key）
-python tools/summarize/daily_summary.py export                          # 导出所有未导出日期（默认行为）
-python tools/summarize/daily_summary.py export --date 2026-02-13        # 导出指定日期
-python tools/summarize/daily_summary.py --date 2026-02-13               # 等同于 export --date
+python -m summarize daily export                          # 导出所有未导出日期（默认行为）
+python -m summarize daily export --date 2026-02-13        # 导出指定日期
 
 # Phase 2: 合并生成日报
-python tools/summarize/daily_summary.py merge --sync --date 2026-02-13  # 从远端同步 log 后合并
-python tools/summarize/daily_summary.py merge --sync-all                # 同步所有日期，批量处理
-python tools/summarize/daily_summary.py merge outputs/logs/summarize/2026-02-13_*.json  # 手动指定文件
+python -m summarize daily merge --sync --date 2026-02-13  # 从远端同步 log 后合并
+python -m summarize daily merge --sync-all                # 同步所有日期，批量处理
+python -m summarize daily merge outputs/logs/summarize/2026-02-13_*.json  # 手动指定文件
 
 # 批量部署报告到 Hugo
-python tools/summarize/daily_summary.py deploy                          # 部署所有报告
-python tools/summarize/daily_summary.py deploy --date 2026-02-13        # 部署指定日期
+python -m summarize daily deploy                          # 部署所有报告
+python -m summarize daily deploy --date 2026-02-13        # 部署指定日期
+python -m summarize weekly deploy                         # 回放部署已保存周报（不重跑 LLM）
+python -m summarize monthly deploy --month 2025-10        # 回放部署指定月报
 
-# 月度总结
-python tools/summarize/monthly_summary.py list                              # 查看可用月份
-python tools/summarize/monthly_summary.py generate --month 2026-02          # 生成月度总结
-python tools/summarize/monthly_summary.py generate --month 2026-02 --deploy # 生成 + Hugo 部署
-python tools/summarize/monthly_summary.py generate                          # 默认上个月
+# 周报 / 月度总结
+python -m summarize weekly list
+python -m summarize weekly generate --week 2026-W12 --deploy
+python -m summarize monthly list
+python -m summarize monthly generate --month 2026-02 --deploy
 
 # 全流程自动化（推荐）
-python -m summarize auto --deploy                                     # 一键: export → merge → weekly → monthly + 部署
-python -m summarize auto --date 2026-04-18                            # 指定目标日期
+python -m summarize auto --deploy
+python -m summarize auto --date 2026-04-18
 
 # 首次或换新机器时检查依赖
 python -m summarize onboard --deploy
 python -m summarize onboard --init-config
 ```
 
+> 旧入口 `python tools/summarize/daily_summary.py ...` / `weekly_summary.py` / `monthly_summary.py` 仍可用（向后兼容 re-export shim），推荐使用上面的 `python -m summarize` 形式。
+
 ## 配置文件
 
-通过 summarize 配置文件设置设备别名、输出路径和云盘同步。解析顺序：`SUMMARIZE_CONFIG` 环境变量（显式路径）> 仓库内 `tools/summarize/config.json`（`config --init` 写入这里，gitignored，模板 `config.example.json`）> 旧版 `~/.config/summarize/config.json`：
+通过仓库根 `config.json` 的 `summarize` 段设置设备别名、输出路径和云盘同步。解析顺序：`GADGET_CONFIG` 环境变量（显式路径）> 仓库根 **`config.json`**（`config --init` / `onboard --init-config` 写入这里，gitignored，模板 `config.example.json`）。**不再**读取 `tools/summarize/config.json` 或 `~/.config/summarize/config.json`。
 
 ```bash
-python tools/summarize/daily_summary.py config --init   # 交互式创建
-python tools/summarize/daily_summary.py config --show   # 查看当前配置
+python -m summarize daily config --init   # 交互式创建/更新 summarize 段
+python -m summarize daily config --show   # 查看当前配置
 ```
 
 ```json
 {
-  "device_name": "home-server",
-  "logs_dir": "~/Google Drive/summarize/logs",
-  "reports_dir": "~/Google Drive/summarize/reports",
-  "rclone_remote": "gdrive:gadget/summarize"
+  "summarize": {
+    "device_name": "home-server",
+    "logs_dir": "~/Google Drive/summarize/logs",
+    "reports_dir": "~/Google Drive/summarize/reports",
+    "rclone_remote": "gdrive:gadget/summarize"
+  }
 }
 ```
 
@@ -159,11 +167,11 @@ python tools/summarize/daily_summary.py config --show   # 查看当前配置
 
 ```bash
 # 设备 A / B 各自 export（自动上传到 remote/logs/）
-python tools/summarize/daily_summary.py export --date 2026-02-13
+python -m summarize daily export --date 2026-02-13
 
 # 任意设备 merge（--sync 自动从远端下载 log）
-python tools/summarize/daily_summary.py merge --sync --date 2026-02-13
-python tools/summarize/daily_summary.py merge --sync --date 2026-02-13 --deploy
+python -m summarize daily merge --sync --date 2026-02-13
+python -m summarize daily merge --sync --date 2026-02-13 --deploy
 ```
 
 详见 [tutorial.md](tutorial.md) 中的「云盘同步」章节。
@@ -190,7 +198,7 @@ python tools/summarize/daily_summary.py merge --sync --date 2026-02-13 --deploy
 
 ## 月度总结内容
 
-`monthly_summary.py` 读取一个月的所有日报 JSON，由 LLM 综合分析趋势，同时机械聚合 token 用量和统计数据。
+`monthly generate` 读取一个月的所有日报 JSON，由 LLM 综合分析趋势，同时机械聚合 token 用量和统计数据。
 
 | 章节 | 内容 | 来源 |
 |------|------|------|
@@ -215,6 +223,7 @@ python tools/summarize/daily_summary.py merge --sync --date 2026-02-13 --deploy
 |------|------|----------|
 | Claude Code | `~/.claude/projects/` 下的 `.jsonl` | 是 |
 | Codex | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | 是 |
+| Cursor Agent | `~/.cursor/projects/*/agent-transcripts/<uuid>/<uuid>.jsonl`（parent only；无 token usage） | 是 |
 | ChatGPT | 导出的 `conversations.json` | 否，需 `--chatgpt` |
 | 通用格式 | `[{"role": "...", "content": "..."}]` | 否，需 `--generic` |
 
@@ -225,33 +234,29 @@ python tools/summarize/daily_summary.py merge --sync --date 2026-02-13 --deploy
 merge 时加 `--deploy` 会将日报发布为 Hugo bugJournal 文章并执行站点构建推送：
 
 ```bash
-python tools/summarize/daily_summary.py merge --deploy --hugo-site /path/to/site outputs/logs/summarize/*.json
+python -m summarize daily merge --deploy --hugo-site tools/website outputs/logs/summarize/*.json
 ```
 
-### 批量部署
-
-使用独立的 `deploy` 子命令可以将已有报告批量部署到 Hugo，无需重新调 API：
+### 批量部署（不重跑 LLM）
 
 ```bash
-python tools/summarize/daily_summary.py deploy                                    # 部署所有报告
-python tools/summarize/daily_summary.py deploy --date 2026-02-13                  # 部署指定日期
-python tools/summarize/daily_summary.py deploy --hugo-site /path/to/site          # 指定 Hugo 站点路径
-python tools/summarize/daily_summary.py deploy --reports-dir /path/to/reports     # 指定报告目录
-python tools/summarize/daily_summary.py deploy --force                            # 强制重新部署
+python -m summarize daily deploy                                    # 部署所有日报
+python -m summarize daily deploy --date 2026-02-13                  # 部署指定日期
+python -m summarize weekly deploy                                   # 回放部署周报
+python -m summarize monthly deploy --month 2026-02                  # 回放部署月报
+python -m summarize daily deploy --force                            # 强制重新部署（覆盖前自动备份）
 ```
 
-### 月度总结部署
-
-`monthly_summary.py generate --deploy` 会将月度报告和 token 趋势图一并发布到 Hugo：
+### 生成时一并部署
 
 ```bash
-python tools/summarize/monthly_summary.py generate --month 2026-02 --deploy
-python tools/summarize/monthly_summary.py generate --month 2026-02 --deploy --hugo-site /path/to/site
+python -m summarize monthly generate --month 2026-02 --deploy
+python -m summarize weekly generate --week 2026-W12 --deploy
 ```
 
 发布内容：
-- `content/bugJournal/YYYY-MM-monthly.md` — 月度总结文章（日期设为月末，排在所有日报之后）
-- `static/images/monthly/YYYY-MM-monthly-tokens.png` — Token 趋势图
+- `tools/website/content/bugJournal/...` — 日报 / 周报 / 月报文章（带 `gadget_generated` 标记）
+- `tools/website/static/images/{daily,weekly,monthly}/` — 用量图表
 
 ## 详细教程
 

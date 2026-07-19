@@ -58,6 +58,7 @@ from summarize.parsers import (  # noqa: F401
     parse_chatgpt_export,
     parse_generic,
     parse_codex,
+    parse_cursor,
     collect_conversations,
 )
 
