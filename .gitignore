@@ -81,7 +81,9 @@ tools/website/static/benchmark/
 tools/website/static/benchmark-report/
 tools/research/cache/
 tools/research/projects/
-tools/research/reports/
+# Legacy reports path (tombstone README only; SoT = outputs/reports/research-scout/)
+tools/research/reports/*
+!tools/research/reports/README.md
 tools/research/logs/
 test/
 

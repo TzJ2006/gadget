@@ -57,7 +57,7 @@ python tools/research/research_scout.py config --init
 - **默认最大结果数**：每个项目每次搜索最多返回多少篇论文（默认 50）
 - **报告中展示的高分论文数**：周报中详细展示多少篇（默认 5）
 
-配置文件保存在 `~/.config/research_scout/config.json`。
+配置保存在仓库根 `config.json` 的 `research_scout` 段（可用 `GADGET_CONFIG` 覆盖路径）。
 
 查看当前配置：
 
@@ -665,7 +665,7 @@ python tools/research/research_scout.py deploy --force
 
 ### 全局默认值（config.json）
 
-通过 `config --init` 或直接编辑 `~/.config/research_scout/config.json`：
+通过 `config --init` 或直接编辑仓库根 `config.json` 的 `research_scout` 段：
 
 ```json
 {
@@ -709,7 +709,7 @@ python tools/research/research_scout.py report --project robot-manipulation \
 
 ### 研究者画像配置
 
-Profiler 使用独立的配置文件 `~/.config/research/config.json`：
+Profiler 使用同一仓库根 `config.json` 的 `research` 段：
 
 ```json
 {
