@@ -14,6 +14,7 @@ Usage:
     python -m summarize auto --date 2026-04-19   # override "yesterday"
 """
 
+import os
 import subprocess
 import sys
 import time
@@ -41,12 +42,17 @@ def _unload_ollama() -> None:
     print("[auto] Ollama models unloaded (set GADGET_KEEP_OLLAMA=1 to keep them warm)")
 
 
-def _run(cmd: list[str]) -> bool:
+def _run(cmd: list[str], *, defer_hugo_update: bool = False) -> bool:
     print(f"\n{'='*60}")
     print(f"[auto] {' '.join(cmd)}")
     print(f"{'='*60}")
     t0 = time.monotonic()
-    result = subprocess.run(cmd)
+    if defer_hugo_update:
+        env = os.environ.copy()
+        env["GADGET_DEFER_HUGO_UPDATE"] = "1"
+        result = subprocess.run(cmd, env=env)
+    else:
+        result = subprocess.run(cmd)
     elapsed = time.monotonic() - t0
     if result.returncode != 0:
         print(f"[auto] exited {result.returncode} after {elapsed:.0f}s, continuing...")
@@ -69,17 +75,34 @@ def _find_missing_weeks(reports_dir: Path) -> list[str]:
         week_key = f"{iso_year:04d}-W{iso_week:02d}"
         weeks.setdefault(week_key, []).append(f.stem)
 
+    week_keys = sorted(weeks)
+    suffix = f": {', '.join(week_keys)}" if week_keys else ""
+    print(f"\n[info] 共发现 {len(week_keys)} 个有日报数据的 weeks{suffix}")
+
     today = date.today()
     missing = []
-    for week_key in sorted(weeks):
+    skipped = 0
+    for week_key in week_keys:
         parts = week_key.upper().split("-W")
         iso_year, iso_week = int(parts[0]), int(parts[1])
         sunday = date.fromisocalendar(iso_year, iso_week, 7)
         if sunday >= today:
+            print(f"[info] 跳过 {week_key}（该周尚未结束，截止 {sunday}）")
+            skipped += 1
             continue
         weekly_json = reports_dir / f"{week_key}-weekly.json"
-        if not weekly_json.exists() or _stale(weekly_json, weeks[week_key], reports_dir):
+        if not weekly_json.exists():
+            print(f"[info] 需生成 {week_key}（周报不存在）")
             missing.append(week_key)
+        elif _stale(weekly_json, weeks[week_key], reports_dir):
+            print(f"[info] 需重新生成 {week_key}（日报比周报新）")
+            missing.append(week_key)
+        else:
+            print(f"[info] 跳过 {week_key}（周报已是最新）")
+            skipped += 1
+
+    targets = f": {', '.join(missing)}" if missing else ""
+    print(f"[info] weeks 扫描完成: 跳过 {skipped} 个，需生成 {len(missing)} 个{targets}")
     return missing
 
 
@@ -99,16 +122,33 @@ def _find_missing_months(reports_dir: Path) -> list[str]:
         month_key = f.stem[:7]  # YYYY-MM
         months.setdefault(month_key, []).append(f.stem)
 
+    month_keys = sorted(months)
+    suffix = f": {', '.join(month_keys)}" if month_keys else ""
+    print(f"\n[info] 共发现 {len(month_keys)} 个有日报数据的 months{suffix}")
+
     today = date.today()
     missing = []
-    for month_key in sorted(months):
+    skipped = 0
+    for month_key in month_keys:
         year, month = int(month_key[:4]), int(month_key[5:7])
         is_past = (year < today.year) or (year == today.year and month < today.month)
         if not is_past:
+            print(f"[info] 跳过 {month_key}（该月尚未结束）")
+            skipped += 1
             continue
         monthly_json = reports_dir / f"{month_key}-monthly.json"
-        if not monthly_json.exists() or _stale(monthly_json, months[month_key], reports_dir):
+        if not monthly_json.exists():
+            print(f"[info] 需生成 {month_key}（月报不存在）")
             missing.append(month_key)
+        elif _stale(monthly_json, months[month_key], reports_dir):
+            print(f"[info] 需重新生成 {month_key}（日报比月报新）")
+            missing.append(month_key)
+        else:
+            print(f"[info] 跳过 {month_key}（月报已是最新）")
+            skipped += 1
+
+    targets = f": {', '.join(missing)}" if missing else ""
+    print(f"[info] months 扫描完成: 跳过 {skipped} 个，需生成 {len(missing)} 个{targets}")
     return missing
 
 
@@ -130,7 +170,10 @@ def cmd_auto(args) -> None:
         if not ready:
             sys.exit(2)
 
-    print(f"[auto] Aggregation target: {target.isoformat()}")
+    iso_year, iso_week, _ = target.isocalendar()
+    print(f"[auto] Date aggregation target: {target.isoformat()}")
+    print(f"[auto] Week aggregation target: {iso_year:04d}-W{iso_week:02d}")
+    print(f"[auto] Month aggregation target: {target:%Y-%m}")
 
     api_args = ["--api", args.api] if args.api else []
     deploy_args = ["--deploy"] if args.deploy else []
@@ -148,12 +191,8 @@ def cmd_auto(args) -> None:
     # 2. Daily merge (sync + merge all unfinalized dates, exclude today)
     today_str = date.today().isoformat()
     _run([py, "-m", "summarize", "daily", "merge", "--sync-all", "--before", today_str]
-         + api_args + deploy_args + hugo_args + force_args + workers_args)
-
-    # 2.5 Deploy backlog: merge --deploy only covers dates merged this run,
-    # so run the dedicated deploy step to pick up any undeployed reports.
-    if args.deploy:
-        _run([py, "-m", "summarize", "daily", "deploy"] + hugo_args)
+         + api_args + deploy_args + hugo_args + force_args + workers_args,
+         defer_hugo_update=args.deploy)
 
     # 3. Weekly: generate all completed weeks whose report is missing or
     #    older than a covered daily (re-merged dailies invalidate the aggregate)
@@ -163,9 +202,10 @@ def cmd_auto(args) -> None:
         for week_str in weeks_to_gen:
             print(f"\n[auto] Generating weekly: {week_str}")
             _run([py, "-m", "summarize", "weekly", "generate", "--week", week_str, "--force"]
-                 + api_args + deploy_args + hugo_args)
+                 + api_args + deploy_args + hugo_args,
+                 defer_hugo_update=args.deploy)
     else:
-        print("\n[auto] All weekly reports up to date.")
+        print("\n[auto] Weekly command: none (没有需要生成的周报)")
 
     # 4. Monthly: same rule as weekly
     months_to_gen = _find_missing_months(_DEFAULT_REPORTS_DIR)
@@ -174,9 +214,14 @@ def cmd_auto(args) -> None:
         for month_str in months_to_gen:
             print(f"\n[auto] Generating monthly: {month_str}")
             _run([py, "-m", "summarize", "monthly", "generate", "--month", month_str, "--force"]
-                 + api_args + deploy_args + hugo_args)
+                 + api_args + deploy_args + hugo_args,
+                 defer_hugo_update=args.deploy)
     else:
-        print("\n[auto] All monthly reports up to date.")
+        print("\n[auto] Monthly command: none (没有需要生成的月报)")
+
+    # Generation stages every report type; build and push the site exactly once.
+    if args.deploy:
+        _run([py, "-m", "summarize", "daily", "deploy"] + hugo_args)
 
     _unload_ollama()
     print(f"\n[auto] Pipeline complete.")

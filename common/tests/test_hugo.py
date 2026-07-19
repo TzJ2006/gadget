@@ -58,3 +58,12 @@ def test_run_hugo_update_missing_script_returns_false(tmp_path):
     site.mkdir()
     with patch("common.hugo.platform.system", return_value="Windows"):
         assert run_hugo_update(site) is False
+
+
+def test_run_hugo_update_can_be_deferred(tmp_path, monkeypatch):
+    monkeypatch.setenv("GADGET_DEFER_HUGO_UPDATE", "1")
+
+    with patch("common.hugo.subprocess.run") as mock_run:
+        assert run_hugo_update(tmp_path) is True
+
+    mock_run.assert_not_called()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import platform
 import shutil
 import subprocess
@@ -15,12 +16,18 @@ def run_hugo_update(hugo_site: Path) -> bool:
     """Run the Hugo site update script (cross-platform).
 
     Looks for ``update.sh`` (UNIX / Git Bash) or ``update.ps1`` (Windows).
+    ``GADGET_DEFER_HUGO_UPDATE=1`` stages content without running the script,
+    allowing an orchestrator to build once after all report types are ready.
     Returns True on success, False if no script found.
 
     ``hugo_site`` may be relative (e.g. ``tools/website`` from config); it is
     resolved against the gadget repo root so ``-File`` / bash script args stay
     correct regardless of the process cwd.
     """
+    if os.environ.get("GADGET_DEFER_HUGO_UPDATE") == "1":
+        logger.info("Hugo site update deferred until pipeline completion")
+        return True
+
     from common.paths import resolve_repo_path
 
     hugo_site = resolve_repo_path(hugo_site)
