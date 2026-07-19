@@ -54,7 +54,7 @@ __main__.py        # Unified CLI: python -m summarize {daily,weekly,monthly,auto
 cli.py             # argparse for daily subcommands (export/merge/deploy/config)
 config.py          # Config loading: _load_config(), _resolve_output_dir(), _get_device_name()
 remote.py          # rclone upload/download utilities
-parsers.py         # Conversation parsers: Claude Code, Codex, ChatGPT, generic JSON
+parsers.py         # Conversation parsers: Claude Code, Codex, Cursor Agent, ChatGPT, generic JSON
 usage.py           # Token usage tracking: ccusage 20.x per-source (discover/fetch/normalize/save/merge)
 summarizer.py      # Prompt templates, conversation formatting, LLM dispatch
 formatter.py       # Markdown rendering, Hugo post creation, bilingual output
@@ -84,7 +84,7 @@ auto.py            → subprocess calls to python -m summarize (no direct import
 
 ### Two-phase daily pipeline
 
-**Phase 1 — Export** (`cmd_export` / `cmd_export_past`): Runs on each device locally. Scans `~/.claude/projects/` JSONL + `~/.codex/sessions/` + optional ChatGPT/generic sources. Outputs `logs/YYYY-MM-DD_<device>.json`. Also fetches token usage via ccusage 20.x — `discover_sources()` finds which agent CLIs have data (from the unified report's `metadata.agents`), then fetches each via `ccusage <source> daily --json --breakdown`, normalizes, and writes one `usage_<source>_<device>.json` per source. Optionally calls LLM for per-device summary (`--summarize`). Uploads to rclone remote.
+**Phase 1 — Export** (`cmd_export` / `cmd_export_past`): Runs on each device locally. Scans `~/.claude/projects/` JSONL + `~/.codex/sessions/` + `~/.cursor/projects/*/agent-transcripts/` (Cursor Agent parent JSONL; no token usage — Cursor does not expose reliable local counts) + optional ChatGPT/generic sources. Outputs `logs/YYYY-MM-DD_<device>.json`. Also fetches token usage via ccusage 20.x — `discover_sources()` finds which agent CLIs have data (from the unified report's `metadata.agents`), then fetches each via `ccusage <source> daily --json --breakdown`, normalizes, and writes one `usage_<source>_<device>.json` per source. Optionally calls LLM for per-device summary (`--summarize`). Uploads to rclone remote.
 
 **Phase 2 — Merge** (`cmd_merge`): Runs on central machine. Loads all device logs for a date, deduplicates, builds multi-device prompt, calls `_call_summarize()` → final report JSON + Markdown.
 
@@ -125,7 +125,7 @@ Every item in tasks/problems/learnings has `level: "high"|"low"` and `importance
 
 CLI flag > env var (`SUMMARIZE_LOGS_DIR` / `SUMMARIZE_REPORTS_DIR`) > config file > hardcoded default (`outputs/logs/summarize/`, `outputs/reports/summarize/`).
 
-Config file location: `SUMMARIZE_CONFIG` env var (explicit path — beats both lookups; used for test isolation) > repo-local **`tools/summarize/config.json`** (gitignored — copy `config.example.json`; `config --init` writes here) > legacy per-user `~/.config/summarize/config.json` when the repo-local one is absent.
+Config file location: `GADGET_CONFIG` env var (explicit path — test isolation / multi-config) → repo-root **`config.json`** section `summarize` (gitignored — copy root `config.example.json`; `config --init` / `onboard --init-config` write here). Legacy `tools/summarize/config.json` and `~/.config/summarize/config.json` are **not** read.
 
 **Config-driven CLI defaults** — so `python -m summarize auto` (and daily/weekly/monthly) run "the way I want" with no flag soup. `config.py::cli_defaults()` maps config keys to argparse dests; each parser calls `set_defaults(**cli_defaults())` before `parse_args` (per-subparser for daily/weekly/monthly, since a subparser default overrides a parent's). A CLI flag still wins over config. `config.py::apply_env_from_config()` (called at the top of `__main__.main()`) bridges the local-LLM/translation knobs into env via `os.environ.setdefault` so `common.llm` (ollama path) / `common.engine` (translation) pick them up unchanged — a real exported env var still wins. This replaces the `eval "$(bash scripts/serve_local_llm.sh env)"` step for a persistent local setup.
 

@@ -113,13 +113,13 @@ There is **no MCP integration**. An earlier refactor removed the server module (
   - `site_staging.py`: `write_site_content()`, `copy_site_static()` — write auto-generated Hugo content/static files **directly into the Hugo site tree** (`resolve_site_staging_root(hugo_site) == hugo_site`, default `tools/website`). There is no separate staging tree. Written content is stamped `gadget_generated: true`; an existing file without a gadget marker is human-written and raises `HumanContentError` unless `overwrite_human=True`
   - `website_backup.py`: generated/human ownership rule (`classify_file`, `classify_content`, `stamp_generated`) + force-overwrite backups — `force=True` backs the previous file up into `outputs/backups/website-force/YYYYMMDD-HHMMSS/` (with `manifest.json`: sha256, paths, ownership, action, reason) before overwriting; backups are never auto-deleted
 - **tools/** — The five standalone tool products (grouped for navigability):
-  - **tools/summarize/** — AI conversation summarization (see `tools/summarize/CLAUDE.md`): Two-phase daily pipeline (export → merge) + weekly/monthly aggregation + full-pipeline auto mode. Refactored into sub-modules with unified CLI (`python -m summarize`). `llm_backends.py` is a re-export shim for `common/`. New: `auto.py` (daily→weekly→monthly orchestration; frees all resident Ollama models when the pipeline completes — `GADGET_KEEP_OLLAMA=1` keeps them warm), `charts.py` (token usage PNG charts via matplotlib), `onboarding.py` (`python -m summarize onboard` — checks/sets up requirements for auto mode; config template `config.example.json`).
+  - **tools/summarize/** — AI conversation summarization (see `tools/summarize/CLAUDE.md`): Two-phase daily pipeline (export → merge) + weekly/monthly aggregation + full-pipeline auto mode. Refactored into sub-modules with unified CLI (`python -m summarize`). `llm_backends.py` is a re-export shim for `common/`. New: `auto.py` (daily→weekly→monthly orchestration; frees all resident Ollama models when the pipeline completes — `GADGET_KEEP_OLLAMA=1` keeps them warm), `charts.py` (token usage PNG charts via matplotlib), `onboarding.py` (`python -m summarize onboard` — checks/sets up requirements for auto mode; root config template `config.example.json`).
   - **tools/research/** — Unified research toolkit (see `tools/research/CLAUDE.md`): Paper discovery (modular `scout/` package), researcher profiler (modular package), citation graph analysis. `research_scout.py` is a backward-compat shim — actual logic in `scout/`. `cache.py` is a re-export shim for `common.cache.DiskCache`.
   - **tools/benchmark/** — CPU/GPU benchmark suite (see `tools/benchmark/CLAUDE.md`): Modular `benchmark/` package with CSV append mode for multi-hardware accumulation. Renamed from `test/`.
   - **tools/website/** — Hugo blog (see `tools/website/CLAUDE.md`): PaperMod theme, incremental image/video compression, GitHub Pages deploy.
   - **tools/translator/** — Gradio document translator: `core.py` (translation logic over the `common.engine` backends), `app.py` (Gradio UI wiring), `__main__.py` (`python -m translator`). Optional-dependency extra `translator` (gradio + translation-gguf).
 - *(Skills moved out)* — all Claude Code skills (gadget domain skills + the generic AI-dev/methodology skills) now live in the separate **ai-companion** repo (`git@github.com:TzJ2006/ai-companion.git`), checked out at the sibling `../ai-companion/`. gadget no longer carries a `skills/` directory.
-- **scripts/** — Ops + maintenance utilities: `sync.py` (centralized rclone data sync — push/pull/status, categories `summarize`/`website` (`tools/website/content` + `static` — the single Hugo content root)/`research`/`test` (benchmark data)/`backups` (force-regeneration backups) + special `dag`; all transfers use `rclone copy` — additive, never deletes; run as `python scripts/sync.py`; config `~/.config/gadget/sync.json`), `onboard.py` (one-time machine onboarding driven by a `tokens/onboard.yaml` sheet — SSH, Claude/Codex CLI auth, pip extras, per-tool config, rclone bootstrap; template `scripts/onboard.example.yaml`), `smoke.sh` (read-only smoke test across all tools), `serve_local_llm.sh` (set up the local Ollama LLM for summarize — creates a tuned Qwen3.6-35B variant and prints env to use; `eval "$(bash scripts/serve_local_llm.sh env)"`), `wsl_local_llm_cleanup.sh`, `audit_content_languages.py` (audit/fix bilingual Hugo content), `fix_report_languages.py`, `profile_translation.py` (translation-engine GPU profiler).
+- **scripts/** — Ops + maintenance utilities: `sync.py` (centralized rclone data sync — push/pull/status, categories `summarize`/`website` (`tools/website/content` + `static` — the single Hugo content root)/`research`/`test` (benchmark data)/`backups` (force-regeneration backups) + special `dag`; all transfers use `rclone copy` — additive, never deletes; run as `python scripts/sync.py`; config = `sync` section of repo-root `config.json`, override with `GADGET_CONFIG`), `onboard.py` (one-time machine onboarding driven by a `tokens/onboard.yaml` sheet — SSH, Claude/Codex CLI auth, pip extras, per-tool config, rclone bootstrap; template `scripts/onboard.example.yaml`), `smoke.sh` (read-only smoke test across all tools), `serve_local_llm.sh` (set up the local Ollama LLM for summarize — creates a tuned Qwen3.6-35B variant and prints env to use; `eval "$(bash scripts/serve_local_llm.sh env)"`), `wsl_local_llm_cleanup.sh`, `audit_content_languages.py` (audit/fix bilingual Hugo content), `fix_report_languages.py`, `profile_translation.py` (translation-engine GPU profiler).
 
 ## Cross-Module Dependencies
 
@@ -190,15 +190,15 @@ Optional-dependency extras in `pyproject.toml`: `summarize`, `research`, `benchm
 
 summarize: anthropic or openai (`requirements.txt` provided). Optional: Node.js (for ccusage / `@ccusage/codex` token stats), matplotlib (for token usage charts).
 research: arxiv, anthropic or openai, openreview-py (`requirements.txt` provided). Optional: PyMuPDF (PDF text extraction in detailed profiler / `--insight` mode). bioRxiv/PubMed use stdlib only.
-benchmark: torch, numpy, pandas, plotly, tqdm (`requirements.txt` provided). Optional: threadpoolctl, pyopencl.
+benchmark: torch, numpy, pandas, plotly, tqdm (`requirements.txt` provided). Optional: threadpoolctl; pyopencl (OpenCL detection for `--info` only — gpu run path is cuda/mps/xpu).
 website: Pillow (image processing), torch + transformers (translation). Optional: vLLM (Linux, faster batch inference), llama-cpp-python (GGUF backend).
 
 ## Notes
 
 - `tokens/` directory is gitignored and holds API tokens/secrets — never commit its contents.
 - Generated data/report outputs go to `outputs/` (gitignored), organized by type: `outputs/reports/`, `outputs/logs/`, `outputs/cache/`, `outputs/data/`, `outputs/backups/`. **Exception:** generated *website* content is written directly into the single Hugo content root `tools/website/content|static` (gitignored via `.gitignore` allowlists) alongside hand-written posts — ownership is tracked per-file via the `gadget_generated: true` frontmatter marker (`common/website_backup.py`). `outputs/reports/*` remains the canonical report archive; website files are a derived Hugo representation of it.
-- **Environment variables**: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` for API access; `SUMMARIZE_LOGS_DIR` and `SUMMARIZE_REPORTS_DIR` to override default output paths; `SUMMARIZE_CONFIG` to point at an explicit summarize config file (beats the repo-local/home lookup — used for test isolation).
-- **Config files**: summarize resolves `SUMMARIZE_CONFIG` env > repo-local `tools/summarize/config.json` (gitignored; `config --init` writes here) > `~/.config/summarize/config.json`; research uses `~/.config/research_scout/config.json` + `~/.config/research/config.json` — each created via the tool's `config --init`.
+- **Environment variables**: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` for API access; `SUMMARIZE_LOGS_DIR` and `SUMMARIZE_REPORTS_DIR` to override default output paths; `GADGET_CONFIG` to point at an explicit root config file (beats repo-root `config.json` — used for test isolation).
+- **Config files**: all tools share repo-root `config.json` (gitignored; template `config.example.json`) with sections `summarize` / `research_scout` / `research` / `sync` / `translator`. Override path with `GADGET_CONFIG`. Each tool's `config --init` writes its section.
 
 ## Git Tracking Rules
 
@@ -219,22 +219,40 @@ This repo follows the AI Dev Companion pipeline. All AI agents must read `AGENTS
 - **Enforcement:** `.codex/hooks.json` (Codex) and `.claude/settings.json` (Claude Code, local) wire the change-tracking hooks to the sibling engine. (Re)install with `npx tsx ../ai-companion/scripts/install.ts . --enforce` after building ai-companion.
 
 <!-- AI-DEV-COMPANION:START -->
-## AI Dev Companion
+## AI Dev Companion — Constraints
 
-_Managed by `aidev install` — content inside this block is overwritten on reinstall._
+This project is tracked by AI Dev Companion. The following rules are enforced:
 
-This repository is wired to **AI Dev Companion** (a separate repo, checked out at
-the sibling `../ai-companion/`): function-level change tracking plus a
-planning/execution skill pipeline.
+### Mandatory Workflows
 
-**Workflow — prefer these over ad-hoc edits for non-trivial changes:**
-`/idea` → `/ccdiscuss` (align) → `/ccplan` (plan; STOPS for approval) → `/ccedit`
-(DAG execution) → `/ccdebug` (on failure). Use `/cconboard` to onboard existing code.
+1. **All code changes are automatically recorded** via PostToolUse hook — every Edit/Write to tracked files is captured
+2. **Before starting a feature**, use `/ccplan` to create an ECL plan in `docs/ecl/`
+3. **Before editing guarded files**, check `docs/ecl/*.yaml` for active feature guards and preserve invariants
+4. **After editing**, the hook records: timestamp, file, tool, ECL context automatically
+5. **When tests fail**, use `/ccdebug` — fix code, not tests (max 3 retries)
+6. **For codebase analysis**, use `/cconboard` to generate structured documentation
 
-**Change tracking:** a PostToolUse hook records every `.py`/`.ts` edit at function
-level (and `.yaml`/`.md` at file level) into `.devcompanion/`. Plans live in
-`docs/ecl/*.yaml`.
+### Tracked File Extensions
 
-**Feature guards:** if `docs/ecl/*.yaml` declares `feature_guard` key_files, preserve
-their invariants when editing those files and run their verification afterward.
+Changes to `.py`, `.pyi`, `.ts`, `.tsx`, `.mts`, `.cts` files are tracked at function level.
+
+### Storage Layout
+
+- `.devcompanion/queue/` — event queue (hook writes here, daemon processes)
+- `.devcompanion/reviews/` — processed review sessions (JSON)
+- `.devcompanion/history/` — per-file change history (JSON)
+- `docs/ecl/` — active feature constraints (YAML, committed to git)
+
+### Feature Guard Protocol
+
+When `docs/ecl/*.yaml` files contain `feature_guard` sections:
+- Before editing a guarded file, announce which invariants must be preserved
+- After editing, run the guard's verification command
+- If verification fails, revert and investigate — do not proceed with broken guards
+
+### AI Dev Companion Location
+
+- Install root: `D:\GitHub\ai-companion`
+- Hook: `D:\GitHub\ai-companion/packages/hook/dist/index.js`
+- Skills: `D:\GitHub\ai-companion/skills/`
 <!-- AI-DEV-COMPANION:END -->

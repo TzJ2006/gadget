@@ -19,7 +19,8 @@ from common.hugo import run_hugo_update
 from common.paths import GADGET_ROOT, TOOLS_DIR
 
 _PROJECT_ROOT = GADGET_ROOT
-_DEFAULT_CSV = str(_PROJECT_ROOT / "outputs" / "data" / "benchmark" / "results.csv")
+# Single SoT shared with submit/ingest/CI (was split vs outputs/data/benchmark/results.csv).
+_DEFAULT_CSV = str(TOOLS_DIR / "benchmark" / "benchmark_results.csv")
 _DEFAULT_HTML = str(_PROJECT_ROOT / "outputs" / "reports" / "benchmark" / "report.html")
 
 

@@ -62,7 +62,7 @@
 - [Website](#website)
   - [安装依赖](#安装依赖)
   - [一键构建 + 部署](#一键构建--部署)
-  - [构建流水线（`update.sh` 十步）](#构建流水线updatesh-十步)
+  - [构建流水线（`update.sh` 八步）](#构建流水线updatesh-八步)
   - [本地预览（dev server）](#本地预览dev-server)
   - [增量翻译状态（`translate_site_batch.py`）](#增量翻译状态translatesitebatchpy)
   - [预检（`preflight_check.py`）](#预检preflightcheckpy)
@@ -166,7 +166,7 @@ pip install -e ".[translator]"         # Gradio 翻译器
 - `GADGET_LLM_BACKEND` — 全局覆盖默认 `--api` 后端
 - `SUMMARIZE_LOGS_DIR`、`SUMMARIZE_REPORTS_DIR` — 覆盖 summarize 默认输出路径
 
-配置解析顺序（所有工具一致）：CLI 参数 > 环境变量 > `config.json` > 硬编码默认值。各工具配置文件：summarize 按 `SUMMARIZE_CONFIG` 环境变量 > 仓库内 `tools/summarize/config.json` > `~/.config/summarize/config.json` 解析；research 使用 `~/.config/research_scout/config.json` 与 `~/.config/research/config.json`。均可用各工具的 `config --init` 创建。
+配置解析顺序（所有工具一致）：CLI 参数 > 环境变量 > `config.json` 段 > 硬编码默认值。所有工具共用仓库根 **`config.json`**（gitignored；模板 `config.example.json`），按段命名（`summarize`、`research_scout`、`research`、`sync`、`translator`）。用 `GADGET_CONFIG` 覆盖文件路径。各工具的 `config --init` 写入对应段。
 
 #### 测试
 
@@ -184,7 +184,7 @@ pytest tools/research/tests/             # research: 流水线契约测试
 
 ### 数据同步：`scripts/sync.py`
 
-基于 rclone 的集中式个人数据同步（与 Google Drive 之间）。配置在 `~/.config/gadget/sync.json`。
+基于 rclone 的集中式个人数据同步（与 Google Drive 之间）。配置为仓库根 `config.json` 的 `sync` 段（可用 `GADGET_CONFIG` 覆盖路径）。
 
 #### 子命令
 
@@ -200,7 +200,7 @@ python scripts/sync.py bootstrap --remote gdrive:gadget  # 新设备一键初始
 #### 选项
 
 - `--dry-run` — 预览，不实际传输；可放在子命令前后任意位置（例如 `python scripts/sync.py --dry-run push` 或 `push --dry-run` 均可）。
-- `--category <name>` — 只同步某一类。可用类目：`summarize`、`website`、`research`、`test`（顶层另有特殊类目 `dag`，见下）。`push`/`pull`/`status` 均支持。
+- `--category <name>` — 只同步某一类。可用类目：`summarize`、`website`、`research`、`test`、`backups`（顶层另有特殊类目 `dag`，见下）。`push`/`pull`/`status` 均支持。
 - `--include-config` — `push` 时同时把配置文件备份到远端（供其他设备 bootstrap）。
 - `--include-tokens` — `push` / `bootstrap` 时包含 `tokens/` 目录（含 API 密钥）。
 
@@ -231,7 +231,7 @@ python scripts/sync.py pull --dry-run                   # 预览 pull
 - rclone 远端基础路径（默认 `gdrive:gadget`）
 - 若 PATH 上找不到 `rclone`，再询问 rclone 二进制路径（如 `~/.local/bin/rclone`）
 
-写入 `~/.config/gadget/sync.json`。如未单独配置，脚本也会尝试从 summarize config 推导远端基础路径。
+写入仓库根 `config.json` 的 `sync` 段。如未单独配置，脚本也会尝试从 summarize config 推导远端基础路径。
 
 #### 新设备一键初始化（`bootstrap`）
 
@@ -241,7 +241,7 @@ python scripts/sync.py bootstrap --remote gdrive:gadget --include-tokens   # 同
 python scripts/sync.py bootstrap --dry-run
 ```
 
-`bootstrap` 依次：写最小 `sync.json` → 校验远端连通性（`rclone lsd`）→ 拉取配置文件 → （可选 `--include-tokens`）拉取 tokens → 拉取全部数据目录。`--remote` 默认 `gdrive:gadget`。
+`bootstrap` 依次：向仓库根 `config.json` 写入最小 `sync` 段 → 校验远端连通性（`rclone lsd`）→ 拉取配置文件 → （可选 `--include-tokens`）拉取 tokens → 拉取全部数据目录。`--remote` 默认 `gdrive:gadget`。
 
 #### 特殊类目 `dag`（生成 + 部署，非 GDrive 同步）
 
@@ -374,22 +374,22 @@ install:
 ```yaml
 gadgets:
   enabled: true
-  summarize:                            # -> ~/.config/summarize/config.json
+  summarize:                            # -> config.json "summarize"
     device_name: ""                     # 空 = hostname
-    logs_dir: ""                        # 空 = 默认（~/.claude + codex log 目录）
-    reports_dir: ""                     # 空 = outputs/reports
+    logs_dir: ""                        # 空 = 默认（outputs/logs/summarize）
+    reports_dir: ""                     # 空 = outputs/reports/summarize
     hugo_site: "tools/website"          # 相对仓库根的 Hugo 站点
     rclone_remote: "gdrive:gadget/summarize"
     rclone_path: ""                     # 空 = 远端默认
     default_api: claude_cli             # ollama | claude_cli | anthropic | openai; 默认: ollama
-  research:                             # -> ~/.config/research/config.json
+  research:                             # -> config.json "research"
     model: sonnet
     default_mode: fast
     default_depth: 1
     max_students: 10
     output_dir: ""
     semantic_scholar_api_key: ""        # 设置可提高速率上限
-  research_scout:                       # -> ~/.config/research_scout/config.json
+  research_scout:                       # -> config.json "research_scout"
     default_api: claude_cli
     hugo_site: "tools/website"          # 相对仓库根的 Hugo 站点
     default_lookback_days: 7
@@ -397,9 +397,9 @@ gadgets:
     default_top_papers_in_report: 5
     max_high_relevance: 20
     default_insight_top_n: 3
-  benchmark: {}                         # 无 config 文件；仅 pip extra + import 检查
-  translator: {}                        # 无 config 文件；仅 pip extra + import 检查
-  website: {}                           # 无 config 文件；仅 pip extra + import 检查
+  benchmark: {}                         # 无独立 config；仅 pip extra + import 检查
+  translator: {}                        # 模型列表在 config.json translator.models
+  website: {}                           # 无独立 config；仅 pip extra + import 检查
 ```
 
 **`sync`** — 可选的 rclone bootstrap（复用 `scripts/sync.py`），默认关闭：
@@ -429,7 +429,7 @@ python scripts/onboard.py --verify-only          # 只跑结尾的就绪检查
 
 ## Summarize
 
-AI 对话日报 & 周报 & 月度总结工具完整教程。这个工具自动读取你每天和 AI 的对话记录（Claude Code / Codex / ChatGPT / 通用 JSON），调 LLM API 生成结构化日报、周报和月度总结。
+AI 对话日报 & 周报 & 月度总结工具完整教程。这个工具自动读取你每天和 AI 的对话记录（Claude Code / Codex / Cursor Agent / ChatGPT / 通用 JSON），调 LLM API 生成结构化日报、周报和月度总结。
 
 支持多设备工作流：在每台机器上导出对话 log，通过云盘同步或手动拷贝汇总，生成最终日报。积累足够日报后可生成周报和月度趋势总结。
 
@@ -441,7 +441,7 @@ summarize/                   # pip 可安装包（python -m summarize）
 ├── __main__.py              # 统一 CLI: python -m summarize {daily,weekly,monthly,auto}
 ├── config.py                # 配置加载、路径解析、设备名
 ├── remote.py                # rclone 上传/下载
-├── parsers.py               # 对话解析 (Claude Code / Codex / ChatGPT / generic)
+├── parsers.py               # 对话解析 (Claude Code / Codex / Cursor Agent / ChatGPT / generic)
 ├── usage.py                 # token 用量采集 (ccusage 20.x 逐源命名空间命令)
 ├── summarizer.py            # LLM 总结、分块、分层合并
 ├── formatter.py             # Markdown 生成、重要性排序、Hugo 集成、双语输出
@@ -476,7 +476,7 @@ outputs/                     # 所有生成文件（项目根目录下，已 git
     └── monthly/             # 月度 LLM 缓存
 
 tools/summarize/
-└── config.json              # 可选配置文件（设备别名、输出路径、rclone 远端；~/.config/summarize/config.json 仍作为回退被读取）
+config.json                  # 仓库根统一配置（summarize 段：设备别名、输出路径、rclone；模板 config.example.json）
 ```
 
 ### 前置条件
@@ -503,7 +503,7 @@ pip install -r tools/summarize/requirements.txt
 
 > **CLI 用法变更**：重构后推荐使用 `python -m summarize daily ...` 形式。旧的 `python tools/summarize/daily_summary.py ...` 仍然可用（向后兼容）。本教程中的命令均使用新形式。
 
-> ⚠️ **从仓库根目录直接 `python -m summarize` 可能被根目录下遗留的同名空目录 `summarize/` 遮蔽**（pre-`tools/` 改版残留）。请用 `pip install -e .` 安装后调用，或在 `tools/` 目录下运行；亦可删除根目录残留的 `summarize/ research/ website/ workflow/` 空目录。
+> 请先 `pip install -e .`，再从仓库根目录运行 `python -m summarize`。
 
 调 API 生成总结时，有四种后端可选。默认是 `ollama` —— 无需 key 的本地 Ollama 服务（见 `scripts/serve_local_llm.sh`；可用 `GADGET_LLM_BACKEND` 全局覆盖）。另外三种：
 
@@ -549,7 +549,7 @@ python -m summarize daily export --summarize --date 2026-02-13 --api openai
 
 多设备使用时，建议在每台设备上创建配置文件，设置设备别名和输出路径。
 
-配置文件路径：仓库内 `tools/summarize/config.json`（模板 `config.example.json`；`config --init` 写到这里）。不存在时回退读取 `~/.config/summarize/config.json`；`SUMMARIZE_CONFIG` 环境变量（显式路径）优先于两者。
+配置文件路径：仓库根 `config.json` 的 `summarize` 段（模板：根目录 `config.example.json`；`config --init` / `onboard --init-config` 写到这里）。用 `GADGET_CONFIG` 覆盖文件路径。不再读取 `tools/summarize/config.json` 或 `~/.config/summarize/config.json`。
 
 #### 快速创建
 
@@ -592,7 +592,7 @@ python -m summarize daily config --show
 输出示例：
 
 ```
-配置文件路径: /home/user/gadget/tools/summarize/config.json
+配置文件路径: /home/user/gadget/config.json  (section: summarize)
 配置内容:
 {
   "device_name": "home-server",
@@ -631,7 +631,7 @@ python -m summarize daily export --output /tmp/test --date 2026-02-13
 
 设置方法：
 - 运行 `config --init` 交互式设置
-- 或手动在仓库内 `tools/summarize/config.json`（若该机器使用 `~/.config/summarize/config.json`，也可以改它——仍作为回退被读取）中添加 `"device_name": "my-alias"`
+- 或手动在仓库根 `config.json` 的 `summarize` 段中添加 `"device_name": "my-alias"`
 
 #### 文件名变化
 
@@ -877,7 +877,7 @@ python -m summarize auto --date 2026-04-18 --api anthropic --force --deploy
 
 ```bash
 python -m summarize onboard                 # 检查 summarize auto 所需条件
-python -m summarize onboard --init-config   # 交互式创建 tools/summarize/config.json
+python -m summarize onboard --init-config   # 交互式创建/更新 config.json 的 summarize 段
 python -m summarize onboard --deploy        # 同时检查 Hugo 部署要求
 python -m summarize auto                    # 自动先运行 readiness check
 python -m summarize auto --skip-onboard-check  # 仅在明确要跳过检查时使用
@@ -897,7 +897,7 @@ python -m summarize auto --skip-onboard-check  # 仅在明确要跳过检查时�
 
 将输出目录指向云盘同步文件夹，文件写入后由云盘 App 自动同步到所有设备。
 
-在每台设备仓库内的 `tools/summarize/config.json`（若该机器使用 `~/.config/summarize/config.json`，也可以改它——仍作为回退被读取）中设置：
+在每台设备仓库根 `config.json` 的 `summarize` 段中设置：
 
 ```json
 {
@@ -988,7 +988,7 @@ rclone authorize "onedrive"  # OneDrive
 
 **3. 启用自动上传**
 
-在仓库内 `tools/summarize/config.json`（若该机器使用 `~/.config/summarize/config.json`，也可以改它——仍作为回退被读取）中设置 `rclone_remote`：
+在仓库根 `config.json` 的 `summarize` 段中设置 `rclone_remote`：
 
 ```json
 {
@@ -1236,6 +1236,7 @@ python -m summarize daily deploy --force
 |------|------|----------|
 | Claude Code | 读取 `~/.claude/projects/` 下的 `.jsonl` 文件 | 是 |
 | Codex | 读取 `~/.codex/sessions/` 下的会话目录 | 是 |
+| Cursor Agent | 读取 `~/.cursor/projects/*/agent-transcripts/<uuid>/<uuid>.jsonl`（仅 parent；无 token usage） | 是 |
 | ChatGPT | ChatGPT 导出的 `conversations.json` | 否，需 `--chatgpt` 指定 |
 | 通用格式 | `[{"role": "user", "content": "..."}]` 的 JSON 数组 | 否，需 `--generic` 指定 |
 
@@ -1346,9 +1347,11 @@ python -m summarize daily merge --sync-all                          # 批量同�
 python -m summarize daily merge --sync-all --deploy                 # 批量同步 + 部署
 python -m summarize daily merge outputs/logs/summarize/2026-02-13_*.json  # 手动指定 log 文件
 
-# ── 批量部署 ──
-python -m summarize daily deploy                          # 部署所有报告到 Hugo
+# ── 批量部署（不重跑 LLM） ──
+python -m summarize daily deploy                          # 部署所有日报到 Hugo
 python -m summarize daily deploy --date 2026-02-13        # 部署指定日期
+python -m summarize weekly deploy                         # 回放部署已保存周报
+python -m summarize monthly deploy --month 2026-02        # 回放部署指定月报
 
 # ── 全流程自动化 ──
 python -m summarize auto                                  # 一键运行: export → merge → weekly → monthly
@@ -1400,7 +1403,7 @@ python tools/research/research_scout.py config --init
 - **默认最大结果数**：每个项目每次搜索最多返回多少篇论文（默认 50）
 - **报告中展示的高分论文数**：周报中详细展示多少篇（默认 5）
 
-配置文件保存在 `~/.config/research_scout/config.json`。
+配置保存在仓库根 `config.json` 的 `research_scout` 段（可用 `GADGET_CONFIG` 覆盖路径）。
 
 查看当前配置：
 
@@ -2001,7 +2004,7 @@ python tools/research/research_scout.py deploy --force
 
 #### 全局默认值（config.json）
 
-通过 `config --init` 或直接编辑 `~/.config/research_scout/config.json`：
+通过 `config --init` 或直接编辑仓库根 `config.json` 的 `research_scout` 段：
 
 ```json
 {
@@ -2059,7 +2062,7 @@ python tools/research/research_scout.py report --project robot-manipulation \
 
 #### 研究者画像配置
 
-Profiler 使用独立的配置文件 `~/.config/research/config.json`：
+Profiler 使用同一仓库根 `config.json` 的 `research` 段：
 
 ```json
 {
@@ -2972,7 +2975,7 @@ python -m translator
 
 顶部控制栏：
 
-- **模型 Model**：模型下拉，默认选中列表第一项；首次选择某模型会下载并加载（7B / FP8 模型较大）。候选来自 `~/.config/gadget/translator_models.json`，没有配置文件时回退到内置默认列表（`tencent/Hy-MT2-1.8B`、`tencent/Hy-MT2-1.8B-FP8`、`tencent/Hy-MT2-7B`、`tencent/Hy-MT2-7B-FP8`）。
+- **模型 Model**：模型下拉，默认选中列表第一项；首次选择某模型会下载并加载（7B / FP8 模型较大）。候选来自仓库根 `config.json` 的 `translator.models` 列表，没有配置时回退到内置默认列表（`tencent/Hy-MT2-1.8B`、`tencent/Hy-MT2-1.8B-FP8`、`tencent/Hy-MT2-7B`、`tencent/Hy-MT2-7B-FP8`）。
 - **源语言 Source** / **目标 Target**：可选 `auto` / `zh` / `en`。
   - `auto` 源：按文本 CJK 比例自动检测（`common.translation.detect_language`）。
   - `auto` 目标：自动在 zh↔en 间翻转（检测到中文则译英，否则译中）。
@@ -2993,7 +2996,7 @@ python -m translator
 
 #### 标签页「模型管理 Models」
 
-增删翻译模型，填 HuggingFace repo id（形如 `org/Model-Name`）。改动即时生效并持久化到 `~/.config/gadget/translator_models.json`。
+增删翻译模型，填 HuggingFace repo id（形如 `org/Model-Name`）。改动即时生效并持久化到仓库根 `config.json` 的 `translator.models` 列表。
 
 - **添加 Add**：填入 repo id 后点添加；空或重复为 no-op。
 - **删除选中 Delete**：删除下拉选中的模型；若删空则回退到内置默认列表。
@@ -3048,5 +3051,5 @@ GADGET_TRANSLATION_BACKEND=llamacpp GADGET_TRANSLATION_MODEL=tencent/Hy-MT2-1.8B
 - 入口：`tools/translator/__main__.py`
 - UI：`tools/translator/app.py`
 - 翻译/文件逻辑：`tools/translator/core.py`
-- 模型列表：`tools/translator/models.py`（`~/.config/gadget/translator_models.json`）
+- 模型列表：`tools/translator/models.py`（仓库根 `config.json` → `translator.models`）
 - 共享引擎：`common/engine.py`、`common/translation.py`

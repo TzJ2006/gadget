@@ -1,7 +1,7 @@
 """Conversation parsing utilities for multiple AI assistant log formats.
 
-Parsers for Claude Code, Codex, ChatGPT export, and generic JSON conversation
-formats. Each parser returns a list of unified conversation dicts.
+Parsers for Claude Code, Codex, Cursor Agent, ChatGPT export, and generic JSON
+conversation formats. Each parser returns a list of unified conversation dicts.
 """
 
 import json
@@ -9,11 +9,21 @@ import os
 import platform
 import re
 import sys
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from .config import _load_config
+
+
+# Cursor Agent user text embeds: <timestamp>Tuesday, Jul 14, 2026, 5:16 PM (UTC-4)</timestamp>
+_CURSOR_TS_TAG_RE = re.compile(
+    r"<timestamp>\s*(.*?)\s*</timestamp>", re.IGNORECASE | re.DOTALL)
+_CURSOR_TS_BODY_RE = re.compile(
+    r"^(.*?)\s*\(\s*UTC\s*([+-]\d{1,2})(?::?(\d{2}))?\s*\)\s*$",
+    re.IGNORECASE | re.DOTALL)
+_CURSOR_USER_QUERY_RE = re.compile(
+    r"<user_query>\s*(.*?)\s*</user_query>", re.IGNORECASE | re.DOTALL)
 
 
 def _is_dir(p: Path) -> bool:
@@ -56,11 +66,101 @@ def _discover_codex_session_dirs() -> list[Path]:
             if _is_dir(d := home / ".codex" / "sessions")]
 
 
+def _discover_cursor_transcript_roots() -> list[Path]:
+    """发现所有 ~/.cursor/projects/*/agent-transcripts 目录（WSL 下含 Windows 侧）。"""
+    roots = []
+    for home in _home_dirs():
+        projects = home / ".cursor" / "projects"
+        if not _is_dir(projects):
+            continue
+        try:
+            for project_dir in projects.iterdir():
+                transcripts = project_dir / "agent-transcripts"
+                if _is_dir(transcripts):
+                    roots.append(transcripts)
+        except OSError:
+            continue
+    return roots
+
+
+def _iter_cursor_parent_jsonl(transcript_root: Path):
+    """Yield (project_slug, jsonl_path) for parent agent transcripts only.
+
+    Layout: <root>/<uuid>/<uuid>.jsonl — skips subagents/ and stubs.
+    """
+    project_slug = transcript_root.parent.name
+    try:
+        entries = list(transcript_root.iterdir())
+    except OSError:
+        return
+    for conv_dir in entries:
+        if not _is_dir(conv_dir):
+            continue
+        jsonl = conv_dir / f"{conv_dir.name}.jsonl"
+        if jsonl.is_file():
+            yield project_slug, jsonl
+
+
+def _parse_cursor_timestamp(text: str) -> Optional[datetime]:
+    """Parse a Cursor <timestamp>...</timestamp> value to an aware datetime."""
+    if not text:
+        return None
+    m = _CURSOR_TS_TAG_RE.search(text)
+    body = (m.group(1) if m else text).strip()
+    if not body:
+        return None
+
+    offset = timezone.utc
+    body_m = _CURSOR_TS_BODY_RE.match(body)
+    if body_m:
+        body = body_m.group(1).strip()
+        hours = int(body_m.group(2))
+        minutes = int(body_m.group(3) or 0)
+        # Preserve sign: hours=-4, minutes=30 → -4:30
+        sign = 1 if hours >= 0 else -1
+        offset = timezone(timedelta(hours=hours, minutes=sign * minutes))
+
+    for fmt in (
+        "%A, %b %d, %Y, %I:%M %p",
+        "%A, %B %d, %Y, %I:%M %p",
+        "%a, %b %d, %Y, %I:%M %p",
+    ):
+        try:
+            return datetime.strptime(body, fmt).replace(tzinfo=offset)
+        except ValueError:
+            continue
+    return None
+
+
+def _cursor_message_text(content, *, strip_user_wrappers: bool = False) -> str:
+    """Extract plain text from Cursor message content blocks (skip tool_use)."""
+    parts = []
+    if isinstance(content, str):
+        parts.append(content)
+    elif isinstance(content, list):
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                t = block.get("text")
+                if t:
+                    parts.append(t)
+    text = "\n".join(parts).strip()
+    if not text or not strip_user_wrappers:
+        return text
+
+    text = _CURSOR_TS_TAG_RE.sub("", text).strip()
+    qm = _CURSOR_USER_QUERY_RE.search(text)
+    if qm:
+        text = qm.group(1).strip()
+    return text.strip()
+
+
 # ─── 统一对话格式 ───────────────────────────────────────────────
 
 # 每个 conversation 结构:
 # {
-#     "source": "claude_code" | "codex" | "chatgpt" | "generic",
+#     "source": "claude_code" | "codex" | "cursor" | "chatgpt" | "generic",
 #     "project": "project_name",
 #     "timestamp": "ISO8601",
 #     "messages": [{"role": "user"|"assistant", "content": "..."}]
@@ -100,7 +200,7 @@ def _extract_text_content(content) -> str:
 
 
 def discover_all_dates() -> set[date]:
-    """扫描 ~/.claude/projects/ 和 ~/.codex/sessions/ 下所有 JSONL，返回存在对话记录的所有日期集合。"""
+    """扫描 Claude / Codex / Cursor 对话日志，返回存在记录的所有日期集合。"""
     dates = set()
 
     # Claude Code 对话（自动发现 ~/.claude*/projects/）
@@ -158,6 +258,39 @@ def discover_all_dates() -> set[date]:
                             dates.add(d)
                     except (ValueError, TypeError):
                         continue
+
+    # Cursor Agent 对话（parent JSONL；日期来自 <timestamp>，否则 mtime）
+    for transcript_root in _discover_cursor_transcript_roots():
+        for _slug, jsonl_file in _iter_cursor_parent_jsonl(transcript_root):
+            file_dates = set()
+            try:
+                with open(jsonl_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if obj.get("role") not in ("user", "assistant"):
+                            continue
+                        msg = obj.get("message") or {}
+                        content = msg.get("content", "") if isinstance(msg, dict) else ""
+                        raw = _cursor_message_text(content)
+                        ts = _parse_cursor_timestamp(raw)
+                        if ts is not None:
+                            file_dates.add(ts.astimezone().date())
+            except (OSError, UnicodeDecodeError):
+                continue
+            if file_dates:
+                dates.update(file_dates)
+            else:
+                try:
+                    dates.add(datetime.fromtimestamp(
+                        jsonl_file.stat().st_mtime).astimezone().date())
+                except OSError:
+                    continue
 
     return dates
 
@@ -561,6 +694,84 @@ def parse_codex(target_date: date) -> list[dict]:
     return conversations
 
 
+def parse_cursor(target_date: date) -> list[dict]:
+    """扫描 ~/.cursor/projects/*/agent-transcripts/ 下 parent JSONL，按日期筛选。
+
+    日期优先取 user 文本内嵌 ``<timestamp>``（转本地日历日）；整份文件无标签时
+    回退文件 mtime。跳过 ``subagents/``。无可信 token 字段 — 只导出对话。
+    """
+    roots = _discover_cursor_transcript_roots()
+    if not roots:
+        return []
+
+    conversations = []
+    for transcript_root in roots:
+        for project_slug, jsonl_file in _iter_cursor_parent_jsonl(transcript_root):
+            messages = []
+            session_ts: Optional[datetime] = None
+            hit_dates: set[date] = set()
+
+            try:
+                with open(jsonl_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        role = obj.get("role")
+                        if role not in ("user", "assistant"):
+                            continue
+
+                        msg = obj.get("message") or {}
+                        content = msg.get("content", "") if isinstance(msg, dict) else ""
+                        raw_text = _cursor_message_text(content)
+                        ts = _parse_cursor_timestamp(raw_text)
+                        if ts is not None:
+                            hit_dates.add(ts.astimezone().date())
+                            if session_ts is None:
+                                session_ts = ts
+
+                        text = _cursor_message_text(
+                            content, strip_user_wrappers=(role == "user"))
+                        if text:
+                            messages.append({"role": role, "content": text})
+            except (OSError, UnicodeDecodeError) as e:
+                print(f"[warn] 读取 {jsonl_file} 失败: {e}")
+                continue
+
+            if not messages:
+                continue
+
+            if hit_dates:
+                if target_date not in hit_dates:
+                    continue
+            else:
+                try:
+                    mtime_dt = datetime.fromtimestamp(
+                        jsonl_file.stat().st_mtime).astimezone()
+                except OSError:
+                    continue
+                if mtime_dt.date() != target_date:
+                    continue
+                session_ts = mtime_dt
+
+            conversations.append({
+                "source": "cursor",
+                "project": project_slug,
+                "timestamp": (
+                    session_ts.isoformat() if session_ts is not None
+                    else target_date.isoformat()
+                ),
+                "messages": messages,
+            })
+
+    return conversations
+
+
 def collect_conversations(target_date: date, chatgpt: Optional[str] = None,
                           generic: Optional[list[str]] = None) -> list[dict]:
     """从本地各来源收集对话记录。"""
@@ -578,14 +789,20 @@ def collect_conversations(target_date: date, chatgpt: Optional[str] = None,
     print(f"[info] 找到 {len(codex_convs)} 个 Codex 会话")
     all_conversations.extend(codex_convs)
 
-    # 3. ChatGPT 导出
+    # 3. Cursor Agent 对话（默认扫描；无 token usage）
+    print("[info] 扫描 Cursor Agent 对话记录...")
+    cursor_convs = parse_cursor(target_date)
+    print(f"[info] 找到 {len(cursor_convs)} 个 Cursor 会话")
+    all_conversations.extend(cursor_convs)
+
+    # 4. ChatGPT 导出
     if chatgpt:
         print(f"[info] 解析 ChatGPT 导出: {chatgpt}")
         chatgpt_convs = parse_chatgpt_export(chatgpt, target_date)
         print(f"[info] 找到 {len(chatgpt_convs)} 个 ChatGPT 会话")
         all_conversations.extend(chatgpt_convs)
 
-    # 4. 通用格式
+    # 5. 通用格式
     for gpath in (generic or []):
         print(f"[info] 解析通用格式: {gpath}")
         generic_convs = parse_generic(gpath, target_date)

@@ -6,7 +6,7 @@ A unified benchmarking solution for measuring CPU and GPU FLOPS performance acro
 
 - **Cross-platform**: macOS, Linux, Windows
 - **CPU Benchmarks**: Single-core and all-cores FLOPS measurement
-- **GPU Support**: NVIDIA (CUDA), Apple Silicon (MPS), Intel (XPU), AMD (OpenCL)
+- **GPU Support**: NVIDIA (CUDA), Apple Silicon (MPS), Intel (XPU). (`detect.py` may list OpenCL devices for `--info`; `gpu.py` does **not** run OpenCL benchmarks.)
 - **Multiple Precisions**: FP64, FP32, FP16, BF16 (bfloat16), FP8 (experimental)
 - **Duration Control**: Configurable per-test duration (default 10 seconds, `--duration`)
 - **Accurate Measurement**: Warmup runs, statistical analysis (median, IQR outlier removal)
@@ -25,7 +25,7 @@ pip install torch numpy pandas plotly tqdm
 
 # Optional dependencies
 pip install threadpoolctl  # For precise BLAS thread control
-pip install pyopencl       # For Intel/AMD GPU support
+# pyopencl: optional for OpenCL *detection* in --info only (not used by gpu benchmarks)
 ```
 
 ### Usage
@@ -52,7 +52,7 @@ python -m benchmark.cli --duration 60
 
 ### Output
 
-- **CSV file**: `outputs/data/benchmark/results.csv` - All historical data (append mode)
+- **CSV SoT (single file)**: `tools/benchmark/benchmark_results.csv` — CLI default, submit/ingest, and CI (append mode)
 - **HTML report**: `outputs/reports/benchmark/report.html` - Interactive leaderboards and charts
 
 Output paths are relative to the project root (`gadget/`). Override with `--output` (CSV) and `--report-output` (HTML).
@@ -187,7 +187,7 @@ benchmark/                     # Project root (renamed from test/)
 │   ├── core.py        # Base classes and utilities (RobustTimer, CSV handling)
 │   ├── cpu.py         # CPU benchmarks (single-core scalar, BLAS)
 │   ├── detect.py      # Hardware detection (CPU, GPU, system info)
-│   ├── gpu.py         # GPU benchmarks (CUDA, MPS, XPU, OpenCL)
+│   ├── gpu.py         # GPU benchmarks (CUDA, MPS, XPU)
 │   ├── report.py      # HTML report generation (Plotly charts, leaderboards)
 │   └── README.md      # Detailed module documentation
 ├── scripts/           # Submission helpers (submit_result.py, ingest_submissions.py)
