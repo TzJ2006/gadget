@@ -16,7 +16,7 @@ extra) so `common` and the tool packages are importable. Config resolution is
   - `python -m summarize daily export --date 2026-02-13 --summarize`
   - `python -m summarize daily merge --sync-all`
   - `python -m summarize auto --deploy`
-- **Config**: `SUMMARIZE_CONFIG` env (explicit path — beats both lookups; test isolation / multi-config switching), else repo-local `tools/summarize/config.json` (preferred; copy `config.example.json`), else `~/.config/summarize/config.json`. Init: `python -m summarize daily config --init`.
+- **Config**: `GADGET_CONFIG` env (explicit path — test isolation / multi-config) → repo-root `config.json` section `summarize` (template: `config.example.json`). Init: `python -m summarize daily config --init` or `python -m summarize onboard --init-config`.
 - **Outputs**: `outputs/logs/summarize/` (export logs + usage), `outputs/reports/summarize/` (daily/weekly/monthly `.json`+`.md`), `outputs/images/summarize/` (usage PNGs), `outputs/cache/summarize/` (chunk cache).
 - **Gotchas**: startup runs `apply_env_from_config()` which bridges config keys → env vars via `os.environ.setdefault` (a real exported env var still wins). `cli_defaults()` lets config supply `--api`/`--deploy`/`--hugo-site`/`--workers`. Runs fine from repo root.
 - Evidence: `tools/summarize/__main__.py:13-46`, `cli.py:38-112`, `config.py:15-26,100-118`.
@@ -27,7 +27,7 @@ extra) so `common` and the tool packages are importable. Config resolution is
   - `python tools/research/research_scout.py report --project my-project --api claude_cli`
   - `python tools/research/research_scout.py ask "找 Pieter Abbeel 最近的机器人操作论文"`
   - Profiler standalone: `python -m research {analyze,show,list,config}`
-- **Config**: scout `~/.config/research_scout/config.json` (primary); profiler `~/.config/research/config.json` (fallback, merged — scout keys win). Init: `research_scout.py config --init` (scout) and `python -m research config --init` (profiler).
+- **Config**: repo-root `config.json` sections `research_scout` (scout) and `research` (profiler; merged — scout keys win). Override path with `GADGET_CONFIG`. Init: `research_scout.py config --init` (scout) and `python -m research config --init` (profiler).
 - **Outputs**: scout → `outputs/reports/research-scout/`, `outputs/cache/research-scout/{eval,papers,insight}/`, `outputs/logs/research-scout/research_scout.log`. Profiler → `outputs/data/research-profiler/profiles/`, `outputs/reports/research-profiler/`. Project defs live in `tools/research/projects/<name>/`.
 - **Gotchas**: `research_scout.py` is a **deprecation shim** (emits `DeprecationWarning`, inserts repo root on `sys.path`) — real logic in `scout/`. Stage-1 screening times out on ~100 papers → cap `--max-results ~50` or raise `--timeout`. `--conference`/`--author` are mutually exclusive. `--insight` (Stage 4/5) needs `openreview-py`; PyMuPDF optional for full-text.
 - Evidence: `research_scout.py:25-35`, `scout/cli.py:838-937`, `scout/config.py:53-54`, `config.py:10-11`.
@@ -44,7 +44,7 @@ extra) so `common` and the tool packages are importable. Config resolution is
 
 ## website — Hugo blog build + deploy
 
-- **Run**: `cd tools/website && bash update.sh` (macOS/Linux/Git-Bash). Windows: `powershell -ExecutionPolicy Bypass -File update.ps1`. Dev preview: `hugo server -D`.
+- **Run**: `cd tools/website && bash update.sh` (macOS/Linux/Git-Bash). Windows: `powershell -ExecutionPolicy Bypass -File tools/website/update.ps1` (from repo root; script cds to its dir). Dev preview: `cd tools/website && hugo server -D`.
 - **Read-only audit**: `python tools/website/preflight_check.py --no-fix` (reports pair/language issues, writes nothing, loads no model).
 - **Config**: no JSON config — reads Hugo `config.yml`, state files `.last_build` (incremental) and `.translation_state.json`.
 - **Outputs**: builds into `tools/website/public/` — a **separate git repo** (`tzj2006.github.io`) pushed to GitHub Pages. `content/` + `static/` are the single Hugo roots (generated + hand-written together; generated files carry `gadget_generated`/`gadget:src-hash` markers).
@@ -54,7 +54,7 @@ extra) so `common` and the tool packages are importable. Config resolution is
 ## translator — Gradio document/text translator
 
 - **Run**: `python -m translator` (launches Gradio UI on `127.0.0.1`).
-- **Config**: `~/.config/gadget/translator_models.json` — the model dropdown list, edited via the UI. Defaults: `tencent/Hy-MT2-1.8B` (+ `-1.8B-FP8`, `-7B`, `-7B-FP8`).
+- **Config**: repo-root `config.json` section `translator.models` — the model dropdown list, edited via the UI. Defaults: `tencent/Hy-MT2-1.8B` (+ `-1.8B-FP8`, `-7B`, `-7B-FP8`). Override path with `GADGET_CONFIG`.
 - **Outputs**: none persistent — file translation writes `<stem>.<lang>.md` to the OS temp dir for download.
 - **Gotchas**: needs the `translator` extra (gradio + translation-gguf). `main()` prepends `127.0.0.1,localhost` to `NO_PROXY` so Gradio's launch health-check isn't routed through an HTTP proxy (else `WinError 10061` on Windows). 7B/FP8 models download + cold-load on first use. Not in the `all` extra by design.
 - Evidence: `tools/translator/__main__.py:3-6`, `app.py:138-145`, `models.py:15-22`.
@@ -66,7 +66,7 @@ extra) so `common` and the tool packages are importable. Config resolution is
   - `python scripts/sync.py push --category summarize`
   - `python scripts/sync.py config --init`
   - Special: `python scripts/sync.py --category dag` (no subcommand — generates + deploys the encrypted DAG site).
-- **Config**: `~/.config/gadget/sync.json` (`rclone_remote`, `rclone_path`); if absent, derives from summarize config. Init: `python scripts/sync.py config --init`.
+- **Config**: repo-root `config.json` section `sync` (`rclone_remote`, `rclone_path`); if absent, derives from summarize config. Override path with `GADGET_CONFIG`. Init: `python scripts/sync.py config --init`.
 - **Outputs**: no local dir — rclone-copies local trees ↔ remote (summarize logs/reports/images, research projects+cache, benchmark data, website content, etc.).
 - **Gotchas**: needs the `rclone` binary on PATH (else hard exit). `status` does **network I/O** (`rclone check`, compare-only, no writes). The `dag` category is not a GDrive sync — it needs `STATICRYPT_PASSWORD`, Node/npx/tsx, and the sibling `../ai-companion` repo, and it triggers `update.sh`.
 - Evidence: `scripts/sync.py:42-44,65-113,533-553,594-655`.

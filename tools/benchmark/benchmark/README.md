@@ -6,7 +6,7 @@ A unified, cross-platform benchmarking solution for measuring CPU and GPU FLOPS 
 
 - **Cross-platform**: Supports macOS, Linux, Windows
 - **CPU Benchmarks**: Single-core and all-cores FLOPS measurement
-- **GPU Support**: NVIDIA (CUDA), Apple Silicon (MPS), Intel (XPU), AMD (OpenCL fallback)
+- **GPU Support**: NVIDIA (CUDA), Apple Silicon (MPS), Intel (XPU). OpenCL may appear in `--info` detection only; not benchmarked.
 - **All Precision Levels**: FP64, FP32, FP16, BF16, FP8 (where supported)
 - **Accurate Measurement**: Warmup runs, statistical analysis (median, IQR outlier removal)
 - **CSV Output**: Append results to CSV with full hardware/software information
@@ -22,7 +22,7 @@ pip install torch numpy pandas plotly tqdm
 
 # Optional dependencies
 pip install threadpoolctl  # For precise BLAS thread control
-pip install pyopencl       # For Intel/AMD GPU support (fallback)
+# pyopencl: optional for OpenCL detection in --info only (not used by gpu.py)
 ```
 
 ## Usage
@@ -198,7 +198,7 @@ benchmark/
 ├── core.py        # BaseBenchmark, RobustTimer, BenchmarkResults, CSV handling
 ├── cpu.py         # CpuSingleCoreBenchmark, CpuAllCoresBenchmark
 ├── detect.py      # get_cpu_info(), get_gpu_info(), get_system_info()
-├── gpu.py         # GpuBenchmark (CUDA, MPS, XPU, OpenCL support)
+├── gpu.py         # GpuBenchmark (CUDA, MPS, XPU)
 ├── report.py      # BenchmarkReport (HTML generation with Plotly charts)
 └── README.md      # This file
 ```

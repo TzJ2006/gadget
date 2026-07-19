@@ -38,7 +38,8 @@ from .config import (
 )
 from .remote import _rclone_upload, _rclone_upload_dir, _rclone_download_logs, _rclone_download_reports, _find_rclone
 from .parsers import (discover_all_dates, parse_claude_code, parse_codex,
-                      parse_chatgpt_export, parse_generic, collect_conversations)
+                      parse_cursor, parse_chatgpt_export, parse_generic,
+                      collect_conversations)
 from .usage import (fetch_ccusage,
                     load_ccusage_for_date, _merge_token_usages, _refresh_usage_snapshots)
 from .summarizer import (SUMMARY_PROMPT, MERGE_PROMPT_PREFIX, MERGE_DEVICE_SUMMARY_PREFIX,

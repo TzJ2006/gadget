@@ -181,7 +181,7 @@ analysis.py     → Main orchestrator: BFS over researchers, calls all modules
   |
 models.py       → Dataclasses: Paper, ResearcherMetrics, ResearcherTier, StudentCandidate, ResearcherProfile
 cache.py        → Re-export shim for common.cache.DiskCache
-config.py       → Config at ~/.config/research/config.json
+config.py       → Config: research section of repo-root config.json (GADGET_CONFIG)
 ```
 
 ### Researcher Analysis Pipeline
@@ -220,7 +220,7 @@ Four-phase pipeline in `discover_students()`:
 
 ### Research Scout
 
-Config at `~/.config/research_scout/config.json`. Resolution: CLI flag > `project.json` > `config.json` > hardcoded default (via `_resolve_param()`).
+Config: `research_scout` section of repo-root `config.json` (override with `GADGET_CONFIG`). Resolution: CLI flag > `project.json` > config section > hardcoded default (via `_resolve_param()`).
 
 | Parameter | Config key | Default |
 |-----------|-----------|---------|
@@ -238,7 +238,7 @@ Per-project source configuration (in `project.json`): `sources`, `pubmed_journal
 
 ### Researcher Profiler
 
-Config at `~/.config/research/config.json` (separate from Scout config). Resolution: CLI > config > default. Note: `cmd_profile()` in `research_scout.py` also reads Scout's `config.json` as fallback for `default_api`.
+Config: `research` section of the same repo-root `config.json` (separate section from Scout). Resolution: CLI > config section > default. Note: scout merges `research_scout` + `research` sections (scout keys win).
 
 | Parameter | Config key | Default |
 |-----------|-----------|---------|

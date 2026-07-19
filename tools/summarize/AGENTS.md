@@ -19,9 +19,9 @@ Use these to verify changes to this module:
 
 ```bash
 python -m pytest tools/summarize/tests/                          # Unit tests
-python tools/summarize/daily_summary.py config --show            # Config resolution
-python tools/summarize/daily_summary.py export --date 2026-02-13 # Export validation
-python tools/summarize/monthly_summary.py list                   # Report discovery
+python -m summarize daily config --show                          # Config resolution
+python -m summarize daily export --date 2026-02-13               # Export validation
+python -m summarize monthly list                                 # Report discovery
 ```
 
 ## Coding Conventions
@@ -40,5 +40,5 @@ python tools/summarize/monthly_summary.py list                   # Report discov
 
 ## Security
 
-- Never commit conversation logs, API keys, or the summarize config (repo-local `tools/summarize/config.json` — gitignored — or `~/.config/summarize/config.json`)
+- Never commit conversation logs, API keys, or the repo-root `config.json` (gitignored; contains the `summarize` section)
 - Treat device names and exported JSON as potentially sensitive

@@ -1,6 +1,6 @@
 # AI 对话日报 & 周报 & 月度总结工具 — 快速上手
 
-这个工具自动读取你每天和 AI 的对话记录（Claude Code / Codex / ChatGPT / 通用 JSON），调 LLM API 生成结构化日报、周报和月度总结。
+这个工具自动读取你每天和 AI 的对话记录（Claude Code / Codex / Cursor Agent / ChatGPT / 通用 JSON），调 LLM API 生成结构化日报、周报和月度总结。
 
 支持多设备工作流：在每台机器上导出对话 log，通过云盘同步或手动拷贝汇总，生成最终日报。积累足够日报后可生成周报和月度趋势总结。
 
@@ -15,7 +15,7 @@
 - **日报「今日概览」部分字段也能渲染**：只返回 `how`/`impact` 或只有 `devices` 时，不再出现空标题或内容丢失。
 - **分块缓存键纳入 prompt/上下文**：prompt 前缀或设备摘要变化时正确失效旧分块缓存，不再复用旧 prompt 下生成的摘要。
 
-> ⚠️ **从仓库根目录直接 `python -m summarize` 可能被根目录下遗留的同名空目录 `summarize/` 遮蔽**（pre-`tools/` 改版残留）。请用 `pip install -e .` 安装后调用，或在 `tools/` 目录下运行；亦可删除根目录残留的 `summarize/ research/ website/ workflow/` 空目录。
+> 请先 `pip install -e .`，再从仓库根目录运行 `python -m summarize`。
 
 ## 目录结构
 
@@ -25,7 +25,7 @@ summarize/                   # pip 可安装包（python -m summarize）
 ├── __main__.py              # 统一 CLI: python -m summarize {daily,weekly,monthly,auto}
 ├── config.py                # 配置加载、路径解析、设备名
 ├── remote.py                # rclone 上传/下载
-├── parsers.py               # 对话解析 (Claude Code / Codex / ChatGPT / generic)
+├── parsers.py               # 对话解析 (Claude Code / Codex / Cursor Agent / ChatGPT / generic)
 ├── usage.py                 # token 用量采集 (ccusage 20.x 逐源命名空间命令)
 ├── summarizer.py            # LLM 总结、分块、分层合并
 ├── formatter.py             # Markdown 生成、重要性排序、Hugo 集成、双语输出
@@ -59,8 +59,7 @@ outputs/                     # 所有生成文件（项目根目录下，已 git
     ├── weekly/              # 周报 LLM 缓存
     └── monthly/             # 月度 LLM 缓存
 
-tools/summarize/
-└── config.json              # 可选配置文件（设备别名、输出路径、rclone 远端；config --init 创建，gitignored，模板 config.example.json）
+config.json                  # 仓库根统一配置（summarize 段：设备别名、输出路径、rclone 远端；config --init 写入，gitignored，模板 config.example.json）
 ```
 
 ## 前置条件
@@ -132,7 +131,7 @@ python -m summarize daily export --summarize --date 2026-02-13 --api openai
 
 多设备使用时，建议在每台设备上创建配置文件，设置设备别名和输出路径。
 
-配置文件解析顺序：`SUMMARIZE_CONFIG` 环境变量（显式路径，优先级最高）> 仓库内 `tools/summarize/config.json`（`config --init` 写入这里，gitignored，模板 `config.example.json`）> 旧版 `~/.config/summarize/config.json`
+配置文件解析顺序：`GADGET_CONFIG` 环境变量（显式路径，优先级最高）> 仓库根 `config.json` 的 `summarize` 段（`config --init` / `onboard --init-config` 写入这里，gitignored，模板根目录 `config.example.json`）。不再读取 `tools/summarize/config.json` 或 `~/.config/summarize/config.json`。
 
 ### 快速创建
 
@@ -175,7 +174,7 @@ python -m summarize daily config --show
 输出示例：
 
 ```
-配置文件路径: /home/user/gadget/tools/summarize/config.json
+配置文件路径: /home/user/gadget/config.json  (section: summarize)
 配置内容:
 {
   "device_name": "home-server",
@@ -214,7 +213,7 @@ python -m summarize daily export --output /tmp/test --date 2026-02-13
 
 设置方法：
 - 运行 `config --init` 交互式设置
-- 或手动在 `tools/summarize/config.json` 中添加 `"device_name": "my-alias"`
+- 或手动在仓库根 `config.json` 的 `summarize` 段中添加 `"device_name": "my-alias"`
 
 ### 文件名变化
 
@@ -467,7 +466,7 @@ python -m summarize auto --date 2026-04-18 --api anthropic --force --deploy
 
 将输出目录指向云盘同步文件夹，文件写入后由云盘 App 自动同步到所有设备。
 
-在每台设备的 summarize 配置文件（仓库内 `tools/summarize/config.json`）中设置：
+在每台设备的仓库根 `config.json` 的 `summarize` 段中设置：
 
 ```json
 {
@@ -564,7 +563,7 @@ rclone authorize "onedrive"  # OneDrive
 
 #### 3. 启用自动上传
 
-在 summarize 配置文件（`tools/summarize/config.json`）中设置 `rclone_remote`：
+在仓库根 `config.json` 的 `summarize` 段中设置 `rclone_remote`：
 
 ```json
 {
@@ -796,6 +795,7 @@ python -m summarize daily deploy --hugo-site /path/to/site --reports-dir /path/t
 |------|------|----------|
 | Claude Code | 读取 `~/.claude/projects/` 下的 `.jsonl` 文件 | 是 |
 | Codex | 读取 `~/.codex/sessions/` 下的会话目录 | 是 |
+| Cursor Agent | 读取 `~/.cursor/projects/*/agent-transcripts/<uuid>/<uuid>.jsonl`（仅 parent；无 token usage） | 是 |
 | ChatGPT | ChatGPT 导出的 `conversations.json` | 否，需 `--chatgpt` 指定 |
 | 通用格式 | `[{"role": "user", "content": "..."}]` 的 JSON 数组 | 否，需 `--generic` 指定 |
 
@@ -878,9 +878,11 @@ python -m summarize daily merge --sync-all                          # 批量同�
 python -m summarize daily merge --sync-all --deploy                 # 批量同步 + 部署
 python -m summarize daily merge outputs/logs/summarize/2026-02-13_*.json  # 手动指定 log 文件
 
-# ── 批量部署 ──
-python -m summarize daily deploy                          # 部署所有报告到 Hugo
+# ── 批量部署（不重跑 LLM） ──
+python -m summarize daily deploy                          # 部署所有日报到 Hugo
 python -m summarize daily deploy --date 2026-02-13        # 部署指定日期
+python -m summarize weekly deploy                         # 回放部署已保存周报
+python -m summarize monthly deploy --month 2026-02        # 回放部署指定月报
 
 # ── 全流程自动化 ──
 python -m summarize auto                                  # 一键运行: export → merge → weekly → monthly

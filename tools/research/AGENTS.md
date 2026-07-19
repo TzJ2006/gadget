@@ -38,5 +38,5 @@ python -c "from research.cache import DiskCache; print('OK')"     # Import chain
 
 ## Security
 
-- Never commit API keys or `~/.config/research_scout/config.json`
+- Never commit API keys or the repo-root `config.json` (gitignored; contains `research` / `research_scout` sections)
 - arXiv/Semantic Scholar API keys go in environment variables only

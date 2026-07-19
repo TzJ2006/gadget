@@ -6,7 +6,7 @@
 ## Module Scope
 
 - `benchmark/` Python package: `cli.py`, `cpu.py`, `gpu.py`, `detect.py`, `core.py`, `report.py`, `publish.py`
-- `data/` — benchmark results CSV, submission logs
+- `data/` — submission queue/audit (`pending_submissions.ndjson`, etc.); CSV SoT is `benchmark_results.csv` (CLI + ingest + CI)
 - `scripts/` — ingestion and submission utilities
 - `results/` — historical GPU speed test images
 

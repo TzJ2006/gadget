@@ -88,7 +88,7 @@ Analyze the conversation content, extract the following information, and return 
     "conversation_summaries": [
         {
             "project": "Human-readable project name (e.g. CalendarPro, not path format)",
-            "source": "claude_code | codex | chatgpt | generic",
+            "source": "claude_code | codex | cursor | chatgpt | generic",
             "timestamp": "Original timestamp of this session",
             "topic": "Session topic title (60 characters or fewer)",
             "summary": "2-4 sentence narrative: what was discussed, key decisions, final outcome",
