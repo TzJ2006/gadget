@@ -1,42 +1,21 @@
-# AGENTS.md — website module
+# tools/website — Hugo Blog
 
-> **Workflow Protocol**: Follow [../../AGENTS.md](../../AGENTS.md) — AI Dev Companion pipeline (/ccdiscuss → /ccplan → /ccedit → /ccdebug; plans in `../../docs/ecl/*.yaml`).
-> Paraphrase the task and get explicit confirmation before editing code.
+Hugo static blog ("TzJ's Net", PaperMod theme) deployed to GitHub Pages (`https://tzj2006.github.io/`). Pipeline scripts: `update.sh` / `update.ps1` (incremental media compression → bilingual translation → preflight → hugo build → push), `compress_image.py` (pngquant), `compress_video.py` (HandBrakeCLI), `translate_content.py` + `translate_site_batch.py` (local-inference translation, incremental state in `.translation_state.json`), `preflight_check.py`. Site config: `config.yml`; content in `content/`, layouts in `layouts/`, static assets in `static/`.
 
-## Module Scope
-
-- Hugo blog with PaperMod theme (GitHub Pages deploy)
-- `update.sh` / `update.ps1` — incremental compress + Hugo build + deploy
-- `compress_image.py`, `compress_video.py` — media optimization
-- `translate_content.py`, `translate_site_batch.py` — bilingual content via local inference
-- `preflight_check.py` — pre-deploy validation
-- `config.yml` — Hugo site configuration
-
-## Verification Commands
-
-Use these to verify changes to this module:
+## Commands
 
 ```bash
-cd tools/website && hugo --minify 2>&1 | tail -5                        # Hugo build succeeds
-python tools/website/preflight_check.py                                  # Preflight validation
-python -c "from common.translation import translate_markdown_document; print('OK')"  # Translation import
+pip install -e ".[website]"                        # from repo root: Pillow + torch/transformers
+cd tools/website && bash update.sh                 # macOS/Linux: full incremental publish
+powershell -ExecutionPolicy Bypass -File tools/website/update.ps1   # Windows (script cds to its own dir)
+cd tools/website && hugo server -D                 # local preview incl. drafts (never exits)
+python tools/website/preflight_check.py --help     # pre-deploy validation (needs PyYAML)
 ```
 
-## Coding Conventions
+## Quirks
 
-- Hugo content in `content/`, layouts in `layouts/`, static in `static/`
-- Bilingual pairs: `file.md` (English) + `file.zh.md` (Chinese)
-- Translation uses `common.engine` + `common.translation` — no cloud LLM APIs
-- Media: compress before commit, never commit uncompressed originals
-
-## File Conventions
-
-| Purpose | Location |
-|---------|----------|
-| Plans / ECL | `../../docs/ecl/*.yaml` |
-| Change tracking | `../../.devcompanion/` |
-
-## Git Tracking
-
-- Do NOT commit: `public/`, `themes/`, `resources/`, `.hugo_build.lock`
-- DO commit: `content/`, `layouts/`, `static/`, `config.yml`, Python scripts
+- `public/` is a **separate** git repo (`tzj2006/tzj2006.github.io`), committed and pushed by the update scripts — never commit into it manually.
+- Ownership rule: auto-generated pages carry `gadget_generated: true` frontmatter; files without it are hand-written, and the deploy pipeline refuses to overwrite them (`HumanContentError`).
+- Bilingual pairs `file.md` / `file.zh.md`; translation is local inference via `common.engine` — no cloud LLM APIs.
+- Media compression is incremental against `.last_build` — only files changed since the last build are recompressed; compress media before commit, never commit uncompressed originals.
+- Git: never commit `public/`, `themes/`, `resources/`, `.hugo_build.lock`; generated content/media are gitignored via allowlist patterns in the root `.gitignore` — check it before adding files under `content/` or `static/`.
