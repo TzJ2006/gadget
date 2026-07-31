@@ -1,46 +1,66 @@
-# AGENTS.md — Agentic Workflow Protocol
+# gadget — Agent Guide
 
-This file defines the workflow for ALL AI agents (Claude Code, Codex, Cursor, Copilot) working in this repository. Read it before taking action.
+Python 3.10+ toolkit of five standalone tools — AI conversation reports (`summarize`), paper discovery (`research`), CPU/GPU benchmarking (`benchmark`), a Hugo blog with automated publish (`website`), and a Gradio document translator (`translator`) — sharing one infrastructure package `common/` (LLM calls, JSON repair, disk cache, atomic IO, local-inference translation, Hugo deploy). Everything installs editable via `pip install -e .` from `pyproject.toml`; each tool has its own optional-dependency extra. The dev workflow engine and skills live in the separate sibling repo `../ai-companion/`, wired in via Edit/Write hooks; plans/decisions persist as ECL YAML under `docs/ecl/`.
 
-This repo is developed **with** AI Dev Companion (the **ai-companion** TypeScript monorepo — a *separate repo*, `git@github.com:TzJ2006/ai-companion.git`, checked out at the sibling `../ai-companion/`): function-level change tracking plus a planning/execution skill pipeline. For any non-trivial change, prefer the pipeline below over ad-hoc edits.
+## Commands
 
-## Pipeline
+```bash
+pip install -e ".[all]"        # setup: common + summarize/research/benchmark/website extras (translator extra separate)
+bash scripts/smoke.sh          # read-only smoke net across all tools (--help/--info/imports; no LLM, network, or writes)
 
+# Tests — per-module pytest suites, no repo-wide runner; baseline suites are pure-mock (no network/GPU/keys)
+python -m pytest common/tests scripts/tests
+cd tools && python -m pytest summarize/tests research/tests translator/tests/test_core.py
+python -m pytest tools/summarize/tests/test_config.py                # single file
+python -m pytest tools/summarize/tests/test_config.py::test_name -v  # single test
+
+# Run (details + verification commands in each tool's own AGENTS.md)
+python -m summarize auto --deploy                     # daily → weekly → monthly reports + Hugo deploy
+python tools/research/research_scout.py report --project my-project
+cd tools/benchmark && python -m benchmark.cli         # must cd into tools/benchmark first
+cd tools/website && bash update.sh                    # Windows: powershell -ExecutionPolicy Bypass -File tools/website/update.ps1
+python -m translator                                  # Gradio GUI (blocks until closed)
+python scripts/sync.py push|pull|status               # rclone cross-device data sync
 ```
-/idea  →  /ccdiscuss  →  /ccplan  →  /ccedit  →  /ccdebug
-backlog    align          plan        execute     debug-on-failure
-                            ▲
-                      /cconboard  (onboard existing code)
+
+No linter/formatter is configured (no ruff/black/flake8 config) — match the existing style.
+
+## Architecture
+
+```text
+common/           Shared pip package: llm.py (4 backends), engine.py (translation engines), translation.py,
+                  bilingual.py, hugo.py, cache.py, json_utils.py, io.py, config.py, paths.py, site_staging.py,
+                  website_backup.py; tests in common/tests/
+tools/summarize/  Daily/weekly/monthly AI-conversation reports (unified CLI: python -m summarize)
+tools/research/   Paper discovery + researcher profiling + citation graph (scout/ package, apis/ clients)
+tools/benchmark/  CPU/GPU FLOPS benchmark (benchmark/ package, append-only benchmark_results.csv)
+tools/website/    Hugo blog (PaperMod), media compression, bilingual translation, GitHub Pages deploy
+tools/translator/ Gradio translator GUI over common.engine (core.py logic, app.py UI)
+scripts/          Ops: sync.py (rclone), onboard.py (machine setup), smoke.sh, serve_local_llm.sh,
+                  profile_translation.py, content-language audits; tests in scripts/tests/
+docs/             Design docs, docs/ecl/ plans, docs/reference/ deep dives (architecture, development, debugging)
+outputs/          All generated artifacts (gitignored): logs/ reports/ cache/ data/ images/ backups/
+tokens/           API keys + onboarding sheet (gitignored — never commit or quote)
 ```
 
-- **/ccdiscuss** — Align on intent before planning. The human writes the expected result first; the AI surfaces its five questions (是什么 / 为什么做 / 如何做 / 为什么这样做 / 期望结果) and flags divergence. Output: an aligned ECL. Read-only.
-- **/ccplan** — Diverge-then-converge requirement engineering. Output: an ECL document under `docs/ecl/*.yaml`. **STOPS for approval before any implementation.**
-- **/ccedit** — DAG-driven executor for an *approved* ECL: topologically sorts the function graph, runs independent nodes in parallel, runs each node's `verify`, and writes `status` back. Routes failures to `/ccdebug`.
-- **/ccdebug** — Failure → source function → root cause → fix. Fix code, not tests; max 3 retries; full regression before done.
-- **/cconboard** — Scan, analyze, modularize, test, and document existing code.
+Rules of the layering (see `docs/reference/architecture.md`): hub-and-spoke — shared code lives in `common/`, **no tool imports another tool** (cross-tool only via subprocess or reading config), and `common/` never imports from `tools/`. Backward-compat re-export shims must stay alive: `summarize/llm_backends.py`, `research/cache.py`, `research/research_scout.py`.
 
-## Confirmation Gate (hard requirement)
+Config resolution order everywhere: CLI flag > environment variable > repo-root `config.json` (gitignored; template `config.example.json`; path override `GADGET_CONFIG`) > hardcoded default. LLM backend is switched uniformly via `--api`: `ollama` (default, keyless local) / `claude_cli` / `anthropic` / `openai` (global override `GADGET_LLM_BACKEND`). Translation is local inference only — `common.engine.create_engine()` auto-picks Ollama / llama.cpp GGUF / vLLM / transformers (override `GADGET_TRANSLATION_BACKEND`), model `tencent/Hy-MT2-1.8B` auto-downloaded on first run.
 
-Before writing or modifying any code file, paraphrase your understanding of the task back to the user — goal, in-scope files, success criteria, and what you will NOT do — and get explicit confirmation. Do not write code "while waiting." `/ccplan` Phase 9 enforces this stop-for-approval; outside the skills, apply it manually.
+## Conventions
 
-## ECL — the persistent plan (`docs/ecl/*.yaml`)
+- PEP 8, 4-space indent, `snake_case` functions, `PascalCase` classes, `UPPER_CASE` constants; typed Python with `pathlib.Path`.
+- Tests live next to their module in `tests/` (`common/tests`, `scripts/tests`, `tools/<tool>/tests`) as `test_*.py`; heavy deps (models, LLM APIs) stubbed with `unittest.mock`.
+- Generated artifacts go to `outputs/` — with one exception: generated website content is written directly into `tools/website/content|static`, stamped with `gadget_generated: true` frontmatter. Files without that marker are human-written and must never be overwritten (raises `HumanContentError`).
+- Docs are bilingual: English at root (`README.md`, `TUTORIAL.md`), Chinese in `docs/` (`README.zh.md`, `TUTORIAL.zh.md`); Hugo content pairs `file.md` / `file.zh.md`.
+- Never `git add` generated content, synced data, `build/`, `gadget.egg-info/`, or the deploy/theme repos under `tools/website/`.
 
-Plans and decisions live as Evolving Constraint Language YAML in `docs/ecl/`. A single file can act as:
-1. a **planning document** (requirements, features, modules, functions, decisions);
-2. an **execution DAG** (`functions:` nodes carrying `depends_on`, `output`, `verify`, `status`); and/or
-3. a **feature guard** — a `feature_guard` section listing `key_files`, `invariants`, and a `verification` command. When a guard names key files, preserve their invariants when editing those files and run the verification afterward.
+## Gotchas
 
-## Change Tracking
-
-A PostToolUse hook records every `.py`/`.ts` edit at function level (and `.yaml`/`.md` at file level) into `.devcompanion/`. It runs automatically — no action needed.
-
-## Verification
-
-Each tool module documents its verification commands in its own `AGENTS.md`. Run the relevant ones (typically `python -m pytest <tool>/tests/`) before considering a task complete. ECL FN nodes additionally carry their own `verify` commands, which `/ccedit` runs during execution.
-
-## Enforcement
-
-- Hooks are wired in `.codex/hooks.json` (Codex) and `.claude/settings.json` (Claude Code; local, gitignored) to the sibling `../ai-companion/` change-tracking hooks.
-- (Re)install the hooks per machine with `npx tsx ../ai-companion/scripts/install.ts . --enforce` after building ai-companion (`cd ../ai-companion && npm install && npm run build`).
-- Cursor / Copilot: follow this protocol manually.
-- Read prior ECLs in `docs/ecl/*.yaml` and change history in `.devcompanion/` for context when resuming work.
+- Benchmark commands must be run from `tools/benchmark/` (paths are cwd-relative); results **append** to `benchmark_results.csv` by design — never rewrite or dedupe it.
+- Ollama base URLs default to `127.0.0.1`, never `localhost` — Windows resolves localhost IPv6-first, adding a ~2s stall per request (`common/llm.py`, `common/engine.py`).
+- `test/` at the repo root is a gitignored experiment sandbox, **not** a pytest suite; the benchmark tool is `tools/benchmark/`.
+- `tools/website/public/` is a separate deployment git repo (`tzj2006/tzj2006.github.io`) committed and pushed by the update scripts — never commit into it manually.
+- `tools/summarize/tests/test_daily_e2e.py` needs a live Ollama + local device logs; it auto-skips otherwise.
+- `pip install -e .` drops `build/` and `gadget.egg-info/` at the repo root — gitignored build artifacts, leave them alone.
+- `config.json` and `tokens/` hold secrets (gitignored) — never commit, and never quote their contents into docs or logs.

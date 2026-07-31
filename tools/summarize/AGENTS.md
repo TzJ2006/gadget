@@ -1,44 +1,26 @@
-# AGENTS.md — summarize module
+# tools/summarize — AI Conversation Reports
 
-> **Workflow Protocol**: Follow [../../AGENTS.md](../../AGENTS.md) — AI Dev Companion pipeline (/ccdiscuss → /ccplan → /ccedit → /ccdebug; plans in `../../docs/ecl/*.yaml`).
-> Paraphrase the task and get explicit confirmation before editing code.
+Generates daily/weekly/monthly summaries of AI conversation logs (Claude Code / Codex / Cursor Agent / ChatGPT / generic JSON) via LLM, with token-usage stats from ccusage. Two-phase daily pipeline (per-device `export` → aggregate `merge`), weekly/monthly aggregation, and one-click `auto` orchestration (`auto.py` drives the subcommands via subprocess). Unified CLI is `python -m summarize`; legacy `daily_summary.py` / `weekly_summary.py` / `monthly_summary.py` entry points still work as re-export shims.
 
-## Module Scope
-
-- `daily_summary.py` — main daily pipeline (export, merge, deploy, config)
-- `monthly_summary.py` — monthly reports from daily JSON
-- `weekly_summary.py` — weekly aggregation
-- `auto.py` — full-pipeline orchestration (daily → weekly → monthly)
-- `formatter.py` — bilingual markdown formatting
-- `charts.py` — token usage PNG charts
-- `llm_backends.py` — compatibility shim for `../../common/`
-
-## Verification Commands
-
-Use these to verify changes to this module:
+## Commands
 
 ```bash
-python -m pytest tools/summarize/tests/                          # Unit tests
-python -m summarize daily config --show                          # Config resolution
-python -m summarize daily export --date 2026-02-13               # Export validation
-python -m summarize monthly list                                 # Report discovery
+python -m summarize onboard                            # check/setup requirements for auto mode
+python -m summarize daily export                       # phase 1: export all unexported dates
+python -m summarize daily merge --sync-all             # phase 2: sync all dates + merge day by day
+python -m summarize weekly generate --week 2026-W12 --deploy
+python -m summarize monthly generate --month 2026-02 --deploy
+python -m summarize auto --deploy                      # full pipeline: export → merge → weekly → monthly + deploy
+python -m summarize daily config --init                # first-time config
+cd tools && python -m pytest summarize/tests           # unit tests (pure mock, no network/keys)
 ```
 
-## Coding Conventions
+LLM backend via `--api`: `ollama` (default) / `claude_cli` / `anthropic` / `openai`. Optional: Node.js for ccusage token stats, matplotlib for `charts.py` PNG charts.
 
-- PEP 8, 4-space indent, `snake_case` functions, `UPPER_CASE` constants
-- Typed Python with `Path`, `dict`, `Optional[...]` annotations
-- Stable JSON field names: `token_usage`, `conversation_summaries`, `device_name`, `_finalized`
-- Generated files → `outputs/{logs,reports,cache}/summarize/`, never in source control
+## Quirks
 
-## File Conventions
-
-| Purpose | Location |
-|---------|----------|
-| Plans / ECL | `../../docs/ecl/*.yaml` |
-| Change tracking | `../../.devcompanion/` |
-
-## Security
-
-- Never commit conversation logs, API keys, or the repo-root `config.json` (gitignored; contains the `summarize` section)
-- Treat device names and exported JSON as potentially sensitive
+- `tests/test_daily_e2e.py` needs a live Ollama + translation model + local device logs — it auto-skips otherwise. Run with `eval "$(bash scripts/serve_local_llm.sh env)"` first.
+- `llm_backends.py` is a re-export shim for `common/`; `tests/test_imports.py` parametrically enforces that contract — keep it green after refactors.
+- `auto` unloads resident Ollama models when the pipeline completes; set `GADGET_KEEP_OLLAMA=1` to keep them warm (e.g. back-to-back cron runs).
+- Keep JSON field names stable (`token_usage`, `conversation_summaries`, `device_name`, `_finalized`) — merge and renderers parse them across devices.
+- Exported logs and reports go to `outputs/{logs,reports,cache}/` and may contain sensitive conversation content — never commit them.

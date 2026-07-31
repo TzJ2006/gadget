@@ -1,34 +1,24 @@
-# AGENTS.md — benchmark module
+# tools/benchmark — CPU/GPU FLOPS Benchmark
 
-> **Workflow Protocol**: Follow [../../AGENTS.md](../../AGENTS.md) — AI Dev Companion pipeline (/ccdiscuss → /ccplan → /ccedit → /ccdebug; plans in `../../docs/ecl/*.yaml`).
-> Paraphrase the task and get explicit confirmation before editing code.
+Cross-platform floating-point benchmark for NVIDIA (CUDA) / Apple Silicon (MPS) / Intel (XPU) across FP64–FP8 precisions. Logic lives in the `benchmark/` package (`cli.py`, `core.py`, `cpu.py`, `gpu.py`, `detect.py`, `report.py`, `publish.py`); `benchmark_results.csv` is the append-only source of truth, `data/` holds the leaderboard submission queue, `scripts/` the ingest/submit utilities.
 
-## Module Scope
+## Commands
 
-- `benchmark/` Python package: `cli.py`, `cpu.py`, `gpu.py`, `detect.py`, `core.py`, `report.py`, `publish.py`
-- `data/` — submission queue/audit (`pending_submissions.ndjson`, etc.); CSV SoT is `benchmark_results.csv` (CLI + ingest + CI)
-- `scripts/` — ingestion and submission utilities
-- `results/` — historical GPU speed test images
-
-## Verification Commands
-
-Use these to verify changes to this module:
+All commands must run from this directory (`cd tools/benchmark`). Deps: `pip install -e ".[benchmark]"` from repo root (torch, numpy, pandas, plotly, tqdm).
 
 ```bash
-cd tools/benchmark && python -m benchmark.cli --cpu-only --duration 3   # CPU smoke test
-cd tools/benchmark && python -m benchmark.cli --report-only             # Report generation
-cd tools/benchmark && python -m benchmark.cli --info                    # System info check
+python -m benchmark.cli                          # run all benchmarks (appends to CSV)
+python -m benchmark.cli --cpu-only --duration 3  # quick CPU smoke (default duration 10s)
+python -m benchmark.cli --gpu-only
+python -m benchmark.cli --info                   # hardware detection only, no CSV write
+python -m benchmark.cli --report-only            # HTML report from existing CSV
+python -m benchmark.cli --report --deploy        # run + report + publish to Hugo /benchmark/
 ```
 
-## Coding Conventions
+## Quirks
 
-- PEP 8, 4-space indent, `snake_case` functions, `PascalCase` classes, `UPPER_CASE` constants
-- Benchmark payloads as explicit dicts with stable keys (`dtype`, `backend`, `flops_per_sec`)
-- Small composable functions in `benchmark/` — no inline logic in CLI handlers
-
-## File Conventions
-
-| Purpose | Location |
-|---------|----------|
-| Plans / ECL | `../../docs/ecl/*.yaml` |
-| Change tracking | `../../.devcompanion/` |
+- No pytest suite — verify changes with `--info`, `--cpu-only --duration 3`, and `--report-only`.
+- `import benchmark` pulls in `report.py` → plotly, so even `--info` fails with ModuleNotFoundError until the `benchmark` extra is installed.
+- GPU run path is cuda/mps/xpu only; OpenCL appears in `--info` detection but is never benchmarked.
+- The CSV is append-mode by design (multi-hardware accumulation leaderboard) — never overwrite, dedupe, or sort it in place.
+- Benchmark payloads are explicit dicts with stable keys (`dtype`, `backend`, `flops_per_sec`) — keep field names stable; report/ingest/CI all parse them.
