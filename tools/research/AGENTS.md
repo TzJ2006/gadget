@@ -1,42 +1,25 @@
-# AGENTS.md — research module
+# tools/research — Paper Discovery & Researcher Analysis
 
-> **Workflow Protocol**: Follow [../../AGENTS.md](../../AGENTS.md) — AI Dev Companion pipeline (/ccdiscuss → /ccplan → /ccedit → /ccdebug; plans in `../../docs/ecl/*.yaml`).
-> Paraphrase the task and get explicit confirmation before editing code.
+Unified research toolkit: paper discovery over arXiv/bioRxiv/PubMed with a three-stage LLM pipeline, deep paper insight (`--insight`: full text + OpenReview reviews), researcher profiling (ArXiv + Semantic Scholar), and citation-graph analysis. `research_scout.py` is a backward-compat shim over the `scout/` package (search / evaluate / report / insight / ask); the profiler is `models.py` / `scoring.py` / `analysis.py` / `student_discovery.py` / `homepage_discovery.py`; rate-limited API clients live in `apis/`.
 
-## Module Scope
-
-- `scout/` — paper discovery package (search, evaluate, report, insight, ask)
-- `research_scout.py` — backward-compat CLI shim
-- `apis/` — arXiv, OpenReview, Semantic Scholar clients with rate limiting
-- Profiler: `models.py`, `scoring.py`, `analysis.py`, `student_discovery.py`, `homepage_discovery.py`
-- `cache.py` — re-export shim for `common.cache.DiskCache`
-- `llm.py` — imports `common.llm.call_llm_raw` + `common.json_utils`
-
-## Verification Commands
-
-Use these to verify changes to this module:
+## Commands (from repo root)
 
 ```bash
-python -m research --help                                         # CLI loads without error
-python tools/research/research_scout.py search --query "test" --limit 1 # Search smoke test
-python -c "from research.cache import DiskCache; print('OK')"     # Import chain check
+python tools/research/research_scout.py report --project my-project   # full pipeline: search → eval → report
+python tools/research/research_scout.py ask "natural-language query"  # auto-routes source
+python tools/research/research_scout.py search --conference "CVPR 2025"
+python tools/research/research_scout.py profile "Sergey Levine"
+python tools/research/research_scout.py citations 2301.12597          # arXiv ID or DOI
+python tools/research/research_scout.py deploy                        # publish reports to Hugo
+python -m research --help                                             # standalone profiler entry (analyze/show/list/config)
+cd tools && python -m pytest research/tests                           # unit tests (LLM mocked)
 ```
 
-## Coding Conventions
+Subcommands: `init / ask / list / search / report / profile / citations / deploy / config`. LLM backend via `--api`: `ollama` (default) / `claude_cli` / `anthropic` / `openai`.
 
-- PEP 8, typed Python, `Path`-based file handling
-- All LLM calls via `common.llm` — no direct API usage in this module
-- Cache via `common.cache.DiskCache` with namespace separation
-- Generated outputs → `outputs/{reports,cache}/research/`
+## Quirks
 
-## File Conventions
-
-| Purpose | Location |
-|---------|----------|
-| Plans / ECL | `../../docs/ecl/*.yaml` |
-| Change tracking | `../../.devcompanion/` |
-
-## Security
-
-- Never commit API keys or the repo-root `config.json` (gitignored; contains `research` / `research_scout` sections)
-- arXiv/Semantic Scholar API keys go in environment variables only
+- All LLM calls go through `common.llm` — never call provider SDKs directly in this module.
+- `cache.py` is a re-export shim for `common.cache.DiskCache` — keep the import path alive.
+- Optional deps: `openreview-py` (reviewer analysis in `--insight`), PyMuPDF (PDF full-text extraction); bioRxiv/PubMed clients are stdlib-only.
+- Config lives in the repo-root `config.json` sections `research` / `research_scout` (gitignored); project state under `projects/`; outputs/caches under `outputs/`.
