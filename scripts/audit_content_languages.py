@@ -30,14 +30,20 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.llm import call_llm_raw
-from common.translation import detect_language, translate_markdown_document, zh_path
+from common.translation import (
+    _scan_frontmatter_fields,
+    detect_language,
+    sanitize_frontmatter_language,
+    split_frontmatter,
+    translate_markdown_document,
+    wrong_language,
+    zh_path,
+)
 
 logger = logging.getLogger(__name__)
 
 # ─── Constants ───────────────────────────────────────────────────────
 
-CJK_LOW_THRESHOLD = 0.05   # .zh.md below this → likely untranslated
-CJK_HIGH_THRESHOLD = 0.05  # .md above this → likely wrong language
 BODY_MIN_LENGTH = 50        # skip very short files
 
 IssueKind = Literal[
@@ -47,6 +53,7 @@ IssueKind = Literal[
     "missing_en",        # .zh.md exists but .md is missing
     "yaml_error",        # frontmatter has syntax issues
     "prompt_leak",       # translation artifact in content
+    "fm_lang",           # title/summary/keywords in the wrong language
 ]
 
 ISSUE_LABELS = {
@@ -56,6 +63,7 @@ ISSUE_LABELS = {
     "missing_en": "Missing English counterpart (.md)",
     "yaml_error": "YAML frontmatter syntax error",
     "prompt_leak": "Translation prompt leaked into content",
+    "fm_lang": "Frontmatter field in the wrong language",
 }
 
 
@@ -179,23 +187,35 @@ def scan_directory(root: Path) -> AuditResult:
                 detail="Translation prompt markers found in content",
             ))
 
-        # Check language ratio in body
+        # Frontmatter language — the body check below can't see it, yet Hugo
+        # renders title/keywords right at the top of every page.
+        expected = "zh" if ".zh.md" in f.name else "en"
+        frontmatter, _ = split_frontmatter(text)
+        _, wrong_fields = _scan_frontmatter_fields(
+            frontmatter, predicate=lambda v: detect_language(v) != expected,
+            include_labels=expected == "en",
+        )
+        if wrong_fields:
+            keys = ", ".join(sorted({fld[1].strip().rstrip(":") or "-" for fld in wrong_fields}))
+            result.issues.append(Issue(
+                kind="fm_lang", path=f,
+                detail=f"expected {expected}, wrong in: {keys}",
+            ))
+
+        # Check the body's language. Judged on prose only (wrong_language strips
+        # code/HTML/URLs first): a raw CJK ratio over the whole body is diluted
+        # to near-zero by an embedded component like the summarize usage-card,
+        # which hid nine fully-Chinese English daily reports from this scan.
         body = _extract_body(text)
         if len(body) < BODY_MIN_LENGTH:
             continue
 
         ratio = _cjk_ratio(body)
 
-        if ".zh.md" in f.name and ratio < CJK_LOW_THRESHOLD:
+        if wrong_language(body, expected):
             result.issues.append(Issue(
-                kind="zh_low_cjk", path=f,
-                detail=f"CJK ratio {ratio:.3f} (expected >{CJK_LOW_THRESHOLD})",
-                cjk_ratio=ratio,
-            ))
-        elif ".zh.md" not in f.name and ratio > CJK_HIGH_THRESHOLD:
-            result.issues.append(Issue(
-                kind="en_high_cjk", path=f,
-                detail=f"CJK ratio {ratio:.3f} (expected <{CJK_HIGH_THRESHOLD})",
+                kind="zh_low_cjk" if expected == "zh" else "en_high_cjk", path=f,
+                detail=f"body prose is not {expected} (CJK ratio {ratio:.3f})",
                 cjk_ratio=ratio,
             ))
 
@@ -321,7 +341,7 @@ def _close_engine():
 def fix_issues(issues: list[Issue], *, dry_run: bool = False) -> tuple[int, int]:
     """Phase 3: Re-translate files that need fixing."""
     to_fix = [i for i in issues if i.audit_verdict == "retranslate"
-              or i.kind in ("missing_zh", "missing_en", "yaml_error")]
+              or i.kind in ("missing_zh", "missing_en", "yaml_error", "fm_lang")]
     if not to_fix:
         print("  No files need fixing.")
         return 0, 0
@@ -330,6 +350,26 @@ def fix_issues(issues: list[Issue], *, dry_run: bool = False) -> tuple[int, int]
 
     for issue in to_fix:
         path = issue.path
+
+        if issue.kind == "fm_lang":
+            # Frontmatter only — the body is fine, so don't pay for (or risk)
+            # a whole-document re-translation.
+            expected = "zh" if ".zh.md" in path.name else "en"
+            if dry_run:
+                print(f"    [dry-run] fix {expected} frontmatter in {path.name}")
+                fixed += 1
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+                out = sanitize_frontmatter_language(text, expected, _get_engine())
+                if out != text:
+                    path.write_text(out, encoding="utf-8")
+                print(f"    [fixed] frontmatter in {path.name}")
+                fixed += 1
+            except Exception as e:
+                print(f"    [error] {path.name}: {e}")
+                failed += 1
+            continue
 
         if issue.kind == "yaml_error":
             # Fix YAML by switching outer quotes to single quotes

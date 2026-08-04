@@ -246,11 +246,13 @@ def _validate_minimum_content(text: str) -> None:
         raise ValueError("Translated output has unclosed frontmatter")
 
 
-def validate_translated_output(translated: str, original: str) -> str:
+def validate_translated_output(
+    translated: str, original: str, target_lang: str | None = None
+) -> str:
     """Clean and validate translated output against the original.
 
-    Raises ValueError if the output is garbage or suspiciously short
-    relative to the original.
+    Raises ValueError if the output is garbage, suspiciously short relative to
+    the original, or (when *target_lang* is given) still in the source language.
     """
     cleaned = clean_translated_document(translated)
     min_ratio = 0.15
@@ -259,7 +261,27 @@ def validate_translated_output(translated: str, original: str) -> str:
             f"Translated output is {len(cleaned)} chars but original is "
             f"{len(original)} chars ({len(cleaned)/len(original):.0%} ratio)"
         )
+    if target_lang and wrong_language(cleaned, target_lang):
+        raise ValueError(f"Translated output is not in {target_lang}")
     return cleaned
+
+
+# A model that echoes its input (server hiccup, prompt confusion) used to sail
+# through validation and get stamped with the src-hash marker — freezing the
+# untranslated original as the "current" translation forever. Judge on prose
+# only: code/URLs/HTML are protected fragments, and a code-heavy page is mostly
+# non-prose, which would otherwise always read as English.
+# Low on purpose: a near-empty daily report's whole prose is a heading or two
+# (~35 chars). A false positive only costs a re-translation next run; a false
+# negative freezes an untranslated page on the site.
+_PROSE_MIN = 20
+
+
+def wrong_language(text: str, target_lang: str) -> bool:
+    """True when *text* has enough prose to judge and it is not in *target_lang*."""
+    protected, _ = protect_fragments(text)
+    prose = _PLACEHOLDER_RE.sub("", protected).strip()
+    return len(prose) >= _PROSE_MIN and detect_language(prose) != target_lang
 
 
 # ---------------------------------------------------------------------------
@@ -333,14 +355,37 @@ def build_translation_prompt(
 # Batch translation pipeline
 # ---------------------------------------------------------------------------
 
+# Prose fields — always translated, both directions.
 _TRANSLATABLE_KEYS = ("summary:", "description:")
+
+# Label fields: the page title and the tag chips Hugo renders under a post. Also
+# reader-facing, so leaving them untranslated puts Chinese on the English page
+# just as visibly as an untranslated body — but they are only translated INTO
+# English (see the include_labels callers). Labels are a shared taxonomy the
+# Chinese pages already carry in English ("Bug Journal", "LeetCode", "python");
+# rendering each into Chinese per-page would splinter one label into several
+# near-synonyms and break the series/taxonomy pages.
+_LABEL_KEYS = ("title:",)
+_LABEL_LIST_KEYS = ("keywords:", "tags:", "categories:")
+
+
+def _split_field(line: str, prefix: str) -> tuple[str, str]:
+    """Return (quote_char, unquoted_value) for the part of *line* after *prefix*."""
+    raw_value = line[len(prefix):].strip()
+    if raw_value[:1] in {'"', "'"} and raw_value[-1:] == raw_value[:1]:
+        return raw_value[:1], raw_value[1:-1]
+    return "", raw_value
 
 
 def _scan_frontmatter_fields(
     frontmatter: str,
     predicate: Callable[[str], bool] = lambda _: True,
+    include_labels: bool = False,
 ) -> tuple[list[str], list[tuple[int, str, str, str]]]:
     """Scan YAML frontmatter for translatable fields.
+
+    Covers the prose keys (summary/description) and, with *include_labels*, the
+    label fields too (title, and the items of keywords/tags/categories).
 
     Returns (lines, fields) where each field is
     (line_idx, prefix, quote_char, protected_value).
@@ -348,21 +393,25 @@ def _scan_frontmatter_fields(
     """
     lines = frontmatter.splitlines()
     fields: list[tuple[int, str, str, str]] = []
+    keys = _TRANSLATABLE_KEYS + (_LABEL_KEYS if include_labels else ())
+    in_list = False
+
+    def take(line_idx: int, prefix: str) -> None:
+        quote, raw_value = _split_field(lines[line_idx], prefix)
+        if raw_value.strip() and predicate(raw_value):
+            protected_value, _ = protect_fragments(raw_value)
+            fields.append((line_idx, prefix, quote, protected_value))
+
     for line_idx, line in enumerate(lines):
         stripped = line.strip()
-        for key in _TRANSLATABLE_KEYS:
-            if not stripped.startswith(key):
-                continue
-            prefix = line[: line.index(key) + len(key)]
-            raw_value = line[len(prefix):].strip()
-            quote = ""
-            if raw_value[:1] in {'"', "'"} and raw_value[-1:] == raw_value[:1]:
-                quote = raw_value[:1]
-                raw_value = raw_value[1:-1]
-            if raw_value.strip() and predicate(raw_value):
-                protected_value, _ = protect_fragments(raw_value)
-                fields.append((line_idx, prefix, quote, protected_value))
-            break
+        if in_list and stripped.startswith("- "):
+            take(line_idx, line[: line.index("- ") + 1])
+            continue
+        in_list = include_labels and stripped in _LABEL_LIST_KEYS
+        for key in keys:
+            if stripped.startswith(key):
+                take(line_idx, line[: line.index(key) + len(key)])
+                break
     return lines, fields
 
 
@@ -374,9 +423,7 @@ def _apply_translated_fields(
     """Apply batch-translated results back into frontmatter lines."""
     result_lines = list(lines)
     for (line_idx, prefix, quote, _), translated in zip(fields, results, strict=True):
-        raw_value = lines[line_idx][len(prefix):].strip()
-        if raw_value[:1] in {'"', "'"} and raw_value[-1:] == raw_value[:1]:
-            raw_value = raw_value[1:-1]
+        _, raw_value = _split_field(lines[line_idx], prefix)
         _, protected_map = protect_fragments(raw_value)
         restored = restore_fragments(translated, protected_map).strip().strip('"').strip("'")
         result_lines[line_idx] = f"{prefix} {quote}{restored}{quote}".rstrip()
@@ -388,9 +435,9 @@ def sanitize_frontmatter_language(
     expected_lang: str,
     engine: TranslationEngine,
 ) -> str:
-    """Fix frontmatter summary/description that are in the wrong language.
+    """Fix reader-facing frontmatter fields that are in the wrong language.
 
-    Scans the summary: and description: fields. If any field's detected
+    Scans the translatable scalar and list fields. If any field's detected
     language doesn't match *expected_lang*, translates it via *engine*.
     Returns the full document with corrected frontmatter (body unchanged).
     """
@@ -399,7 +446,8 @@ def sanitize_frontmatter_language(
         return content
 
     lines, fixups = _scan_frontmatter_fields(
-        frontmatter, predicate=lambda v: detect_language(v) != expected_lang
+        frontmatter, predicate=lambda v: detect_language(v) != expected_lang,
+        include_labels=expected_lang == "en",
     )
 
     if not fixups:
@@ -415,9 +463,7 @@ def sanitize_frontmatter_language(
     accepted_results: list[str] = []
     for field, translated in zip(fixups, results, strict=True):
         line_idx = field[0]
-        raw_value = lines[line_idx][len(field[1]):].strip()
-        if raw_value[:1] in {'"', "'"} and raw_value[-1:] == raw_value[:1]:
-            raw_value = raw_value[1:-1]
+        _, raw_value = _split_field(lines[line_idx], field[1])
         _, protected_map = protect_fragments(raw_value)
         restored = restore_fragments(translated, protected_map).strip().strip('"').strip("'")
         if detect_language(restored) == expected_lang:
@@ -440,14 +486,13 @@ def translate_frontmatter(
     target_lang: str,
     engine: TranslationEngine,
 ) -> str:
-    """Translate summary/description fields in YAML frontmatter.
-
-    Title is kept in the original language for both versions.
-    """
+    """Translate the reader-facing YAML frontmatter fields (see
+    ``_TRANSLATABLE_KEYS`` / ``_TRANSLATABLE_LIST_KEYS``)."""
     if not frontmatter:
         return ""
 
-    lines, fields = _scan_frontmatter_fields(frontmatter)
+    lines, fields = _scan_frontmatter_fields(
+        frontmatter, include_labels=target_lang == "en")
     if not fields:
         return frontmatter
 
@@ -547,7 +592,8 @@ def translate_documents_batch(
         frontmatter, body = split_frontmatter(content)
 
         # Frontmatter fields
-        fm_lines, fm_fields = _scan_frontmatter_fields(frontmatter) if frontmatter else ([], [])
+        fm_lines, fm_fields = _scan_frontmatter_fields(
+            frontmatter, include_labels=target_lang == "en") if frontmatter else ([], [])
         fm_prompt_indices: list[int] = []
         for f in fm_fields:
             fm_prompt_indices.append(len(all_prompts))
@@ -628,7 +674,7 @@ def translate_documents_batch(
         translated_body = restore_fragments(translated_body, plan["protected_map"])
 
         result = _reattach_body(plan["frontmatter"], translated_fm, translated_body)
-        result = validate_translated_output(result, plan["content"])
+        result = validate_translated_output(result, plan["content"], target_lang)
         translated_docs.append(result)
 
     return translated_docs
@@ -656,7 +702,7 @@ def translate_markdown_document(
         translated_fm = translate_frontmatter(frontmatter, target_lang, eng)
         translated_body = translate_body(body, target_lang, eng, pbar=pbar)
         result = _reattach_body(frontmatter, translated_fm, translated_body)
-        return validate_translated_output(result, content)
+        return validate_translated_output(result, content, target_lang)
 
     if engine is not None:
         return _do_translate(engine)
