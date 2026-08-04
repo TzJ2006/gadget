@@ -17,12 +17,18 @@ from common.translation import (
 logger = logging.getLogger(__name__)
 
 
+# Bump when the pipeline changes what it emits for the same source, so already
+# staged pages re-translate once instead of being skipped forever by their
+# still-matching src-hash. v2: frontmatter title/keywords/tags are translated too.
+_MARKER_VERSION = "2"
+
+
 def _hash_marker(src_hash: str) -> str:
     """Invisible HTML comment stamped into BOTH staged files so a re-deploy of
     unchanged source skips the (5–15s) translation entirely. Both must match:
     checking only the translated side could serve a stale original after a
     content flip-flop around a failed translation."""
-    return f"<!-- gadget:src-hash:{src_hash} -->"
+    return f"<!-- gadget:src-hash:v{_MARKER_VERSION}:{src_hash} -->"
 
 
 def write_bilingual(
