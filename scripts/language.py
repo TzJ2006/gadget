@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Audit and fix bilingual Hugo content for language consistency.
+"""Language tools: Hugo bilingual audit and summarize report rename.
 
-Three-phase pipeline:
-  1. SCAN  — detect language mismatches, missing counterparts, broken YAML
-  2. AUDIT — use Claude CLI to review flagged files and decide action
-  3. FIX   — re-translate via Ollama for files Claude flags as broken
+Subcommands share counterpart-path helpers and a lazily loaded translation
+engine (loaded once per process, unloaded on exit).
 
 Usage:
-    python scripts/audit_content_languages.py --scan              # Phase 1 only (fast)
-    python scripts/audit_content_languages.py --scan --audit      # Phase 1 + 2
-    python scripts/audit_content_languages.py --fix               # All three phases
-    python scripts/audit_content_languages.py --fix --dry-run     # Preview fixes
-    python scripts/audit_content_languages.py --scan --dir tools/website/content  # Specific dir
+    python scripts/language.py hugo --scan              # Phase 1 only (fast)
+    python scripts/language.py hugo --scan --audit      # Phase 1 + 2
+    python scripts/language.py hugo --fix               # All three phases
+    python scripts/language.py hugo --fix --dry-run     # Preview fixes
+    python scripts/language.py hugo --scan --dir tools/website/content
+
+    python scripts/language.py reports --dry-run        # Preview report renames
+    python scripts/language.py reports                  # Rename + translate reports
+    python scripts/language.py reports --dir outputs/reports/summarize
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.io import atomic_write
 from common.llm import call_llm_raw
 from common.translation import (
     _scan_frontmatter_fields,
@@ -42,7 +45,39 @@ from common.translation import (
 
 logger = logging.getLogger(__name__)
 
-# ─── Constants ───────────────────────────────────────────────────────
+# ─── Shared: counterpart paths + engine lifecycle ────────────────────
+
+_zh_counterpart = zh_path
+
+
+def _en_counterpart(zh: Path) -> Path:
+    """Get .md path from a .zh.md path."""
+    stem = zh.stem  # e.g. "foo.zh" or "2026-W12-weekly.zh"
+    if stem.endswith(".zh"):
+        stem = stem[:-3]
+    return zh.parent / f"{stem}{zh.suffix}"
+
+
+_engine = None
+
+
+def _get_engine():
+    global _engine
+    if _engine is None:
+        from common.engine import create_engine
+        _engine = create_engine()
+        _engine.load()
+    return _engine
+
+
+def _close_engine():
+    global _engine
+    if _engine is not None:
+        _engine.unload()
+        _engine = None
+
+
+# ─── Hugo bilingual audit ────────────────────────────────────────────
 
 BODY_MIN_LENGTH = 50        # skip very short files
 
@@ -81,8 +116,6 @@ class AuditResult:
     issues: list[Issue] = field(default_factory=list)
     scanned: int = 0
 
-
-# ─── Phase 1: Scan ──────────────────────────────────────────────────
 
 def _extract_body(text: str) -> str:
     """Strip YAML frontmatter, return body only."""
@@ -133,19 +166,6 @@ def _check_yaml_frontmatter(text: str, path: Path) -> str | None:
     return None
 
 
-def _zh_counterpart(path: Path) -> Path:
-    """Get .zh.md path from .md path."""
-    return path.parent / f"{path.stem}.zh{path.suffix}"
-
-
-def _en_counterpart(zh_path: Path) -> Path:
-    """Get .md path from .zh.md path."""
-    stem = zh_path.stem  # e.g. "foo.zh"
-    if stem.endswith(".zh"):
-        stem = stem[:-3]
-    return zh_path.parent / f"{stem}{zh_path.suffix}"
-
-
 def scan_directory(root: Path) -> AuditResult:
     """Phase 1: Scan for language issues."""
     result = AuditResult()
@@ -165,7 +185,7 @@ def scan_directory(root: Path) -> AuditResult:
             continue
 
         # Classify as en or zh file
-        if ".zh.md" in f.name:
+        if f.name.endswith(".zh.md"):
             key = rel.replace(".zh.md", ".md")
             zh_files[key] = f
         else:
@@ -189,7 +209,7 @@ def scan_directory(root: Path) -> AuditResult:
 
         # Frontmatter language — the body check below can't see it, yet Hugo
         # renders title/keywords right at the top of every page.
-        expected = "zh" if ".zh.md" in f.name else "en"
+        expected = "zh" if f.name.endswith(".zh.md") else "en"
         frontmatter, _ = split_frontmatter(text)
         _, wrong_fields = _scan_frontmatter_fields(
             frontmatter, predicate=lambda v: detect_language(v) != expected,
@@ -227,17 +247,15 @@ def scan_directory(root: Path) -> AuditResult:
                 detail="No .zh.md counterpart found",
             ))
 
-    for key, zh_path in zh_files.items():
+    for key, zh_file in zh_files.items():
         if key not in en_files:
             result.issues.append(Issue(
-                kind="missing_en", path=zh_path,
+                kind="missing_en", path=zh_file,
                 detail="No .md (English) counterpart found",
             ))
 
     return result
 
-
-# ─── Phase 2: Claude Audit ──────────────────────────────────────────
 
 AUDIT_PROMPT_TEMPLATE = """\
 You are a bilingual content auditor for a Hugo blog that has English (.md) and Chinese (.zh.md) versions of each page.
@@ -317,27 +335,6 @@ def audit_issues(issues: list[Issue], root: Path, *, backend: str = "claude_cli"
         print(f"    [{verdict_display}] {issue.path.name} — {issue.detail}")
 
 
-# ─── Phase 3: Fix ───────────────────────────────────────────────────
-
-_engine = None
-
-
-def _get_engine():
-    global _engine
-    if _engine is None:
-        from common.engine import create_engine
-        _engine = create_engine()
-        _engine.load()
-    return _engine
-
-
-def _close_engine():
-    global _engine
-    if _engine is not None:
-        _engine.unload()
-        _engine = None
-
-
 def fix_issues(issues: list[Issue], *, dry_run: bool = False) -> tuple[int, int]:
     """Phase 3: Re-translate files that need fixing."""
     to_fix = [i for i in issues if i.audit_verdict == "retranslate"
@@ -354,7 +351,7 @@ def fix_issues(issues: list[Issue], *, dry_run: bool = False) -> tuple[int, int]
         if issue.kind == "fm_lang":
             # Frontmatter only — the body is fine, so don't pay for (or risk)
             # a whole-document re-translation.
-            expected = "zh" if ".zh.md" in path.name else "en"
+            expected = "zh" if path.name.endswith(".zh.md") else "en"
             if dry_run:
                 print(f"    [dry-run] fix {expected} frontmatter in {path.name}")
                 fixed += 1
@@ -401,7 +398,7 @@ def fix_issues(issues: list[Issue], *, dry_run: bool = False) -> tuple[int, int]
             source_lang, target_lang = "zh", "en"
         elif issue.kind == "prompt_leak":
             # Determine from file name which direction
-            if ".zh.md" in path.name:
+            if path.name.endswith(".zh.md"):
                 source_path = _en_counterpart(path)
                 target_path = path
                 source_lang, target_lang = "en", "zh"
@@ -477,8 +474,6 @@ def _fix_yaml_quotes(path: Path, *, dry_run: bool = False) -> bool:
     return True
 
 
-# ─── Main ────────────────────────────────────────────────────────────
-
 def print_report(result: AuditResult, root: Path) -> None:
     """Print a summary of all issues found."""
     print(f"\n{'='*60}")
@@ -505,22 +500,7 @@ def print_report(result: AuditResult, root: Path) -> None:
         print()
 
 
-def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-    parser = argparse.ArgumentParser(
-        description="Audit and fix bilingual Hugo content for language consistency",
-    )
-    parser.add_argument("--scan", action="store_true", help="Phase 1: scan for issues")
-    parser.add_argument("--audit", action="store_true", help="Phase 2: Claude reviews flagged files")
-    parser.add_argument("--fix", action="store_true", help="All phases: scan + audit + fix")
-    parser.add_argument("--dry-run", action="store_true", help="Preview fixes without writing")
-    parser.add_argument("--dir", type=Path, help="Scan a specific directory")
-    parser.add_argument("--api", default="claude_cli",
-                        choices=["claude_cli", "anthropic", "openai", "ollama"],
-                        help="LLM backend for audit phase (default: claude_cli)")
-    args = parser.parse_args()
-
+def cmd_hugo(args: argparse.Namespace) -> int:
     if not (args.scan or args.audit or args.fix):
         args.scan = True  # default to scan
 
@@ -575,6 +555,161 @@ def main() -> int:
     print(f"{'='*60}")
 
     return 1 if all_issues else 0
+
+
+# ─── Summarize report rename ─────────────────────────────────────────
+
+def detect_chinese(text: str, threshold: float = 0.05) -> bool:
+    """Return True if the document has > threshold ratio of CJK characters.
+
+    Measures the whole text (over non-whitespace chars), not just the first
+    line — daily/weekly/monthly reports open with an English template header
+    (``# Daily Report — …``), so first-line sampling misclassifies
+    Chinese-bodied reports as English and skips exactly the files to fix.
+    """
+    chars = [c for c in text if not c.isspace()]
+    total = len(chars)
+    if total == 0:
+        return False
+    cjk = sum(1 for c in chars if "\u4e00" <= c <= "\u9fff")
+    return cjk / total > threshold
+
+
+def is_buggy_translation(text: str) -> bool:
+    """Return True if a translated file contains leaked prompt text."""
+    head = text[:500]
+    return "---BEGIN---" in head or "ONLY translate:" in head or "frontmatter delimiter" in head
+
+
+def translate_zh_to_en(zh_file: Path, en_path: Path, *, dry_run: bool = False) -> bool:
+    """Translate a .zh.md file to English .md."""
+    if dry_run:
+        print(f"  [dry-run] translate {zh_file.name} → {en_path.name}")
+        return True
+
+    zh_content = zh_file.read_text(encoding="utf-8")
+    try:
+        en_content = translate_markdown_document(zh_content, "zh", "en", engine=_get_engine())
+        atomic_write(en_path, en_content)
+        print(f"  [translated] {zh_file.name} → {en_path.name}")
+        return True
+    except Exception as e:
+        print(f"  [error] Translation failed: {e}")
+        return False
+
+
+def scan_and_fix(directory: Path, *, dry_run: bool = False) -> tuple[int, int]:
+    """Scan a directory and fix all language issues. Returns (fixed, failed)."""
+    fixed, failed = 0, 0
+
+    for f in sorted(directory.glob("*.md")):
+        if f.name.endswith(".zh.md"):
+            continue
+        try:
+            content = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if not detect_chinese(content):
+            continue
+
+        zh_file = _zh_counterpart(f)
+        if dry_run:
+            print(f"  [dry-run] rename {f.name} → {zh_file.name}")
+        elif zh_file.exists():
+            # Don't clobber an existing .zh.md (silent loss on POSIX,
+            # FileExistsError crash on Windows).
+            print(f"  [skip] {zh_file.name} 已存在，跳过重命名 {f.name}")
+        else:
+            f.rename(zh_file)
+            print(f"  [renamed] {f.name} → {zh_file.name}")
+
+    for zh_file in sorted(directory.glob("*.zh.md")):
+        en_path = _en_counterpart(zh_file)
+        en_name = en_path.name
+
+        needs_translate = False
+        if not en_path.exists():
+            needs_translate = True
+            reason = "missing"
+        else:
+            en_content = en_path.read_text(encoding="utf-8")
+            if is_buggy_translation(en_content):
+                needs_translate = True
+                reason = "buggy"
+            elif detect_chinese(en_content):
+                needs_translate = True
+                reason = "still Chinese"
+
+        if needs_translate:
+            print(f"  [{reason}] {en_name}")
+            ok = translate_zh_to_en(zh_file, en_path, dry_run=dry_run)
+            if ok:
+                fixed += 1
+            else:
+                failed += 1
+
+    return fixed, failed
+
+
+def cmd_reports(args: argparse.Namespace) -> int:
+    default_dirs = [
+        ROOT / "outputs" / "reports" / "summarize",
+    ]
+    dirs = [args.dir] if args.dir else default_dirs
+
+    total_fixed, total_failed = 0, 0
+    try:
+        for d in dirs:
+            if not d.is_dir():
+                print(f"[skip] {d} does not exist")
+                continue
+
+            print(f"\n=== {d} ===\n")
+            f, fail = scan_and_fix(d, dry_run=args.dry_run)
+            total_fixed += f
+            total_failed += fail
+    finally:
+        _close_engine()
+
+    label = "[dry-run] " if args.dry_run else ""
+    print(f"\n{label}Done: {total_fixed} translated, {total_failed} failed")
+    return 1 if total_failed else 0
+
+
+# ─── CLI ─────────────────────────────────────────────────────────────
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    parser = argparse.ArgumentParser(
+        description="Hugo bilingual audit and summarize report rename",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_hugo = sub.add_parser(
+        "hugo",
+        help="Audit and fix bilingual Hugo content for language consistency",
+    )
+    p_hugo.add_argument("--scan", action="store_true", help="Phase 1: scan for issues")
+    p_hugo.add_argument("--audit", action="store_true", help="Phase 2: Claude reviews flagged files")
+    p_hugo.add_argument("--fix", action="store_true", help="All phases: scan + audit + fix")
+    p_hugo.add_argument("--dry-run", action="store_true", help="Preview fixes without writing")
+    p_hugo.add_argument("--dir", type=Path, help="Scan a specific directory")
+    p_hugo.add_argument("--api", default="claude_cli",
+                        choices=["claude_cli", "anthropic", "openai", "ollama"],
+                        help="LLM backend for audit phase (default: claude_cli)")
+    p_hugo.set_defaults(func=cmd_hugo)
+
+    p_reports = sub.add_parser(
+        "reports",
+        help="Rename Chinese summarize reports to .zh.md and translate English counterparts",
+    )
+    p_reports.add_argument("--dry-run", action="store_true", help="Preview only, don't change files")
+    p_reports.add_argument("--dir", type=Path, help="Only fix files in this directory")
+    p_reports.set_defaults(func=cmd_reports)
+
+    args = parser.parse_args()
+    return args.func(args)
 
 
 if __name__ == "__main__":

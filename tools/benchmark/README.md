@@ -10,20 +10,20 @@ A unified benchmarking solution for measuring CPU and GPU FLOPS performance acro
 - **Multiple Precisions**: FP64, FP32, FP16, BF16 (bfloat16), FP8 (experimental)
 - **Duration Control**: Configurable per-test duration (default 10 seconds, `--duration`)
 - **Accurate Measurement**: Warmup runs, statistical analysis (median, IQR outlier removal)
-- **HTML Reports**: Interactive leaderboards and charts with historical data tracking
+- **HTML Reports**: Interactive leaderboards and comparison charts (from the CSV SoT)
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-# Install from requirements.txt
+# From gadget repo root (plotly needed for --report / --report-only / --deploy)
+pip install -e ".[benchmark]"
+
+# Or from this directory
 pip install -r requirements.txt
 
-# Or install manually
-pip install torch numpy pandas plotly tqdm
-
-# Optional dependencies
+# Optional
 pip install threadpoolctl  # For precise BLAS thread control
 # pyopencl: optional for OpenCL *detection* in --info only (not used by gpu benchmarks)
 ```
@@ -40,10 +40,13 @@ python -m benchmark.cli --cpu-only
 # GPU benchmarks only
 python -m benchmark.cli --gpu-only
 
-# Generate HTML report
+# Hardware detection only (no plotly)
+python -m benchmark.cli --info
+
+# Generate HTML report (needs plotly from the benchmark extra)
 python -m benchmark.cli --report-only
 
-# Run benchmarks + auto-generate report
+# Run benchmarks + auto-generate report (needs plotly)
 python -m benchmark.cli --report
 
 # Control benchmark duration (default 10 seconds, use 60 for 1 minute)
@@ -172,7 +175,7 @@ Queue/audit files:
 ![RTX5000ada](results/GPU%20speed%20test/RTX5000ada.jpg)
 
 ### NVIDIA RTX 6000 Ada:
-![RTX6000ada](results/GPU%20speed%20test/RTX6000ada.jpg)
+![RTX6000ada](results/GPU%20speed%20test/RTX%206000%20Ada.png)
 
 ### Apple M4 Pro:
 ![M4 pro](results/GPU%20speed%20test/M4%20pro.png)
@@ -180,7 +183,7 @@ Queue/audit files:
 ## Module Structure
 
 ```
-benchmark/                     # Project root (renamed from test/)
+tools/benchmark/               # https://github.com/TzJ2006/gadget/tree/main/tools/benchmark
 ├── benchmark/
 │   ├── __init__.py    # Module exports
 │   ├── cli.py         # Command-line interface
@@ -218,7 +221,7 @@ python -m benchmark.cli --no-save
 # Generate report from specific CSV
 python -m benchmark.cli --report-only --input-csv my_results.csv --report-output report.html
 
-# Show system information
+# Show system information (no plotly)
 python -m benchmark.cli --info
 
 # Quiet mode (minimal output)
@@ -248,7 +251,7 @@ The CSV file contains all benchmark results with the following columns:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License v3 (GPL-3) — see the [LICENSE](LICENSE) file for details. Source: https://github.com/TzJ2006/gadget/tree/main/tools/benchmark
 
 ## Contributing
 

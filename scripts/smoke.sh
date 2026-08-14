@@ -62,6 +62,9 @@ run "website: preflight --help"   "." $PY tools/website/preflight_check.py --hel
 # sync — --help parses the CLI (avoids network/rclone that `status` would need)
 run "sync: --help"                "." $PY scripts/sync.py --help
 
+# language — --help parses the merged hugo/reports CLI (no engine load)
+run "language: --help"            "." $PY scripts/language.py --help
+
 echo
 printf '== %d passed, %d skipped, %d failed ==\n' "$pass" "$skip" "$fail"
 [ "$fail" -eq 0 ]

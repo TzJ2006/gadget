@@ -1,5 +1,2 @@
-# Required for --api anthropic
-anthropic>=0.18.0
-
-# Required for --api openai
-openai>=1.0.0
+# Dependencies live in pyproject.toml extras (source of truth).
+# From repo root: pip install -e ".[summarize]"

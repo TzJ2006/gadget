@@ -14,11 +14,11 @@ A unified, cross-platform benchmarking solution for measuring CPU and GPU FLOPS 
 ## Installation
 
 ```bash
-# Install from requirements.txt (recommended)
-pip install -r requirements.txt
+# From gadget repo root (plotly needed for --report / --report-only / --deploy)
+pip install -e ".[benchmark]"
 
-# Or install manually
-pip install torch numpy pandas plotly tqdm
+# Or from tools/benchmark
+pip install -r requirements.txt
 
 # Optional dependencies
 pip install threadpoolctl  # For precise BLAS thread control
@@ -42,10 +42,10 @@ python -m benchmark.cli --gpu-only
 # Custom output file
 python -m benchmark.cli --output my_results.csv
 
-# Generate HTML report from existing CSV
+# Generate HTML report from existing CSV (needs plotly from the benchmark extra)
 python -m benchmark.cli --report-only
 
-# Run benchmarks + auto-generate report
+# Run benchmarks + auto-generate report (needs plotly)
 python -m benchmark.cli --report
 
 # Control benchmark duration per test (default 10 seconds)
@@ -57,13 +57,13 @@ python -m benchmark.cli --no-save
 # Quiet mode (minimal output)
 python -m benchmark.cli --quiet
 
-# Show system information only
+# Show system information only (no plotly)
 python -m benchmark.cli --info
 ```
 
 ### Default Output Paths
 
-- **CSV**: `outputs/data/benchmark/results.csv` (relative to project root)
+- **CSV SoT**: `tools/benchmark/benchmark_results.csv` (CLI default, submit/ingest, and CI; append mode)
 - **HTML report**: `outputs/reports/benchmark/report.html` (relative to project root)
 
 Override with `--output` (CSV) and `--report-output` (HTML).
@@ -185,7 +185,7 @@ Running GPU benchmarks...
     [5/5] FP8_exp... ✗ (not supported)
 ✓ GPU benchmarks complete.
 
-Results saved to: outputs/data/benchmark/results.csv
+Results saved to: tools/benchmark/benchmark_results.csv
 Total records in file: 8
 ```
 
@@ -244,4 +244,4 @@ benchmark/
 
 ## License
 
-This benchmark tool is part of the test repository and follows the same license.
+This tool is part of [gadget](https://github.com/TzJ2006/gadget/tree/main/tools/benchmark) and is licensed under the GNU General Public License v3 (GPL-3). See [LICENSE](../LICENSE).

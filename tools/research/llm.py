@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from common.llm import call_llm_raw
@@ -22,8 +20,12 @@ def call_llm(
     cache: DiskCache | None = None,
     no_cache: bool = False,
     backend: str = "ollama",
+    timeout: int = 300,
 ) -> str:
     """Call LLM and return the response text.
+
+    Thin cache wrapper around ``common.llm.call_llm_raw``. Used by the profiler
+    and by scout evaluation (via ``call_scout_llm``).
 
     Backends:
         ollama (default)     — local Ollama server (OpenAI protocol, keyless)
@@ -40,7 +42,7 @@ def call_llm(
             logger.info("[LLM] 缓存命中")
             return cached
 
-    response = call_llm_raw(prompt, backend=backend, model=model)
+    response = call_llm_raw(prompt, backend=backend, model=model, timeout=timeout)
 
     if cache and response:
         cache.put("llm", cache_key, response)
@@ -62,7 +64,7 @@ def _save_failed_response(text: str) -> None:
         logger.warning("[LLM] 保存失败响应出错: %s", e)
 
 
-def parse_json_response(text: str, backend: str = "claude_cli") -> dict[str, Any]:
+def parse_json_response(text: str, backend: str = "ollama") -> dict[str, Any]:
     """Extract and parse JSON from LLM response text.
 
     Stages 1-3 (non-LLM) then escalating LLM repair (haiku → sonnet → opus), both
@@ -70,8 +72,8 @@ def parse_json_response(text: str, backend: str = "claude_cli") -> dict[str, Any
     (20K) and failed-response logging for debugging.
 
     Args:
-        backend: LLM backend for the repair call (claude_cli/anthropic/openai).
-            Defaults to "claude_cli" so existing callers keep working.
+        backend: LLM backend for the repair call (ollama/claude_cli/anthropic/openai).
+            Defaults to "ollama".
     """
     result = try_parse_json(text)
     if result is not None:

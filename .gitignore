@@ -12,6 +12,7 @@ build/
 # Local config
 .claude/
 .codex/
+.codex
 !ai-companion/.claude/
 !ai-companion/.claude/**
 
@@ -26,6 +27,8 @@ papers/filter_robotics_related.csv
 
 # Secrets / tokens
 tokens/
+.env
+.env.*
 
 # Hugo site (tools/website/)
 tools/website/public/
@@ -58,6 +61,7 @@ tools/summarize/config.json
 tools/website/content/bugJournal/*.md
 tools/website/content/bugJournal/*.pdf
 !tools/website/content/bugJournal/_index.md
+!tools/website/content/bugJournal/_index.zh.md
 tools/website/content/bugJournal/daily/*
 !tools/website/content/bugJournal/daily/_index.md
 !tools/website/content/bugJournal/daily/_index.zh.md
@@ -72,11 +76,13 @@ tools/website/content/research/*
 !tools/website/content/research/_index.md
 !tools/website/content/research/_index.zh.md
 tools/website/content/benchmark.md
+tools/website/content/benchmark.zh.md
 tools/website/content/benchmark/
 tools/website/content/posts/
 tools/website/content/About.pdf
 tools/website/content/Resume.pdf
 tools/website/content/Random.md
+tools/website/content/Random.zh.md
 tools/website/static/benchmark/
 tools/website/static/benchmark-report/
 tools/research/cache/

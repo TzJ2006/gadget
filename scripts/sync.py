@@ -11,7 +11,7 @@
 
 选项:
     --dry-run                        # 预览，不实际传输
-    --category <name>                # 只同步某一类 (summarize/website/research/test/backups/dag)
+    --category <name>                # 只同步某一类 (summarize/website/research/benchmark/backups/dag; test = benchmark 旧名)
     --include-config                 # push 时同时备份配置文件
     --include-tokens                 # push/bootstrap 时包含 tokens/ 目录
 
@@ -95,8 +95,8 @@ SYNC_DIRS: dict[str, list[tuple[str, str]]] = {
         ("outputs/reports/research-profiler", "research/reports-profiler"),
         ("outputs/data/research-profiler", "research/data-profiler"),
     ],
-    "test": [
-        ("outputs/data/benchmark", "test/data"),
+    "benchmark": [
+        ("outputs/data/benchmark", "benchmark/data"),
     ],
     # 强制重生成前的自动备份（website-force）+ 报告覆盖备份（summarize）
     "backups": [
@@ -115,10 +115,28 @@ SYNC_FILES: dict[str, list[tuple[str, str]]] = {
         ("tools/website/content/Resume.pdf", "website/personal/Resume.pdf"),
         ("tools/website/content/Random.md", "website/personal/Random.md"),
     ],
-    "test": [
-        ("outputs/data/benchmark/results.csv", "test/data/benchmark_results.csv"),
+    "benchmark": [
+        ("outputs/data/benchmark/results.csv", "benchmark/data/benchmark_results.csv"),
     ],
 }
+
+# Pre-2026-08 category name. Same mappings as `benchmark`; remote layout moved
+# from test/data → benchmark/data (old GDrive objects are not auto-migrated).
+CATEGORY_ALIASES: dict[str, str] = {
+    "test": "benchmark",
+}
+
+
+def resolve_category(category: str | None) -> str | None:
+    """Map a CLI --category value to a SYNC_DIRS/SYNC_FILES key."""
+    if not category:
+        return None
+    return CATEGORY_ALIASES.get(category, category)
+
+
+def rclone_category_choices() -> list[str]:
+    return list(SYNC_DIRS) + list(CATEGORY_ALIASES)
+
 
 # Config files for bootstrap — single root config.json
 BOOTSTRAP_CONFIGS: list[tuple[str, Path]] = [
@@ -227,6 +245,7 @@ def sync_dirs(direction: str, *, category: str | None = None, dry_run: bool = Fa
     remote_base = get_remote()
     ok, fail = 0, 0
 
+    category = resolve_category(category)
     for cat, mappings in SYNC_DIRS.items():
         if category and cat != category:
             continue
@@ -261,6 +280,7 @@ def sync_files(direction: str, *, category: str | None = None, dry_run: bool = F
 
     # Group files by their remote parent directory
     groups: dict[str, list[tuple[str, str, str]]] = {}  # remote_dir → [(local_rel, remote_filename, cat)]
+    category = resolve_category(category)
     for cat, mappings in SYNC_FILES.items():
         if category and cat != category:
             continue
@@ -376,8 +396,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     remote_base = get_remote()
     print(f"=== Status: 对比本地与 {remote_base} ===\n")
 
+    category = resolve_category(args.category)
     for cat, mappings in SYNC_DIRS.items():
-        if args.category and cat != args.category:
+        if category and cat != category:
             continue
         for local_rel, remote_rel in mappings:
             local_path = GADGET_ROOT / local_rel
@@ -594,7 +615,7 @@ def main() -> None:
     # the DAG site, no subcommand needed). rclone categories still go through
     # push/pull/status subcommands as before.
     parser.add_argument(
-        "--category", choices=list(SYNC_DIRS.keys()) + ["dag"],
+        "--category", choices=rclone_category_choices() + ["dag"],
         help="顶层用法仅支持 dag (生成+部署 DAG 站); 其余类目请配合 push/pull/status 子命令",
     )
     # Separate dest so a subparser's own --dry-run default does not clobber a
@@ -606,18 +627,21 @@ def main() -> None:
     # push
     p_push = sub.add_parser("push", help="本地 → 远端")
     p_push.add_argument("--dry-run", action="store_true", help="预览，不实际传输")
-    p_push.add_argument("--category", choices=list(SYNC_DIRS.keys()), help="只同步某一类")
+    p_push.add_argument("--category", choices=rclone_category_choices(),
+                        help="只同步某一类 (test = benchmark 旧名)")
     p_push.add_argument("--include-config", action="store_true", help="同时备份配置文件到远端")
     p_push.add_argument("--include-tokens", action="store_true", help="同时备份 tokens/ 到远端")
 
     # pull
     p_pull = sub.add_parser("pull", help="远端 → 本地")
     p_pull.add_argument("--dry-run", action="store_true", help="预览，不实际传输")
-    p_pull.add_argument("--category", choices=list(SYNC_DIRS.keys()), help="只同步某一类")
+    p_pull.add_argument("--category", choices=rclone_category_choices(),
+                        help="只同步某一类 (test = benchmark 旧名)")
 
     # status
     p_status = sub.add_parser("status", help="显示本地与远端差异")
-    p_status.add_argument("--category", choices=list(SYNC_DIRS.keys()), help="只检查某一类")
+    p_status.add_argument("--category", choices=rclone_category_choices(),
+                         help="只检查某一类 (test = benchmark 旧名)")
 
     # bootstrap
     p_bootstrap = sub.add_parser("bootstrap", help="一键初始化新设备 (clone 后运行)")

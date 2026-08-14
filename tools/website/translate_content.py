@@ -1,128 +1,93 @@
-"""Translate Hugo content files between English and Chinese.
+"""Ad-hoc CLI for bilingual Hugo pairs. Delegates to translate_site_batch.
 
 Usage:
     python translate_content.py <file_or_dir> --to <lang>
     python translate_content.py content/posts/my-post.md --to zh
-    python translate_content.py content/bugJournal/daily/ --to en
+    python translate_content.py content/posts/ --to zh --recursive
 
-Supports:
-    - Single file translation
-    - Batch directory translation (non-recursive by default, --recursive for deep)
-    - Frontmatter-aware: translates title, summary, description; preserves other fields
-    - Language detection: skips files already in the target language
+This is not a separate translator: it calls translate_site_batch.run() so
+pair planning, state tracking, and generated-page skipping stay in one place.
+Pipeline-generated pages are skipped unless --include-generated is passed.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import re
 import sys
 from pathlib import Path
 
-_project_root = str(Path(__file__).resolve().parent.parent.parent)
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
+SITE_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = SITE_ROOT.parent.parent
+if str(SITE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SITE_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from common.engine import TranslationEngine, create_engine, DEFAULT_TRANSLATION_MODEL
-from common.io import atomic_write
-from common.translation import LANG_NAMES, detect_language, translate_markdown_document
-
-logger = logging.getLogger(__name__)
-
-
-def _parse_frontmatter(text: str) -> tuple[str, str]:
-    """Split a markdown file into frontmatter and body."""
-    match = re.match(r"^(---\s*\n.*?\n---\s*\n)(.*)", text, re.DOTALL)
-    if match:
-        return match.group(1), match.group(2)
-    return "", text
+from common.engine import DEFAULT_TRANSLATION_MODEL
+import translate_site_batch as batch
 
 
-def _output_path(source: Path, target_lang: str) -> Path:
-    """Compute the output path for a translated file."""
-    stem = source.stem
-    for lang in ("en", "zh"):
-        if stem.endswith(f".{lang}"):
-            stem = stem[: -(len(lang) + 1)]
-            break
-    if target_lang == "en":
-        return source.parent / f"{stem}.md"
-    return source.parent / f"{stem}.{target_lang}.md"
+def _run_adhoc(
+    target: Path,
+    *,
+    target_lang: str,
+    model: str,
+    dry_run: bool,
+    recursive: bool,
+    include_index: bool,
+    include_generated: bool,
+    full: bool = False,
+    state_file: str | None = None,
+    verbose: bool = False,
+) -> int:
+    """Map an ad-hoc file/dir request onto translate_site_batch.run()."""
+    target = Path(target).resolve()
+
+    def predicate(pair: batch.PairInfo) -> bool:
+        if target.is_file():
+            return True
+        if not include_index and pair.en_path.name == "_index.md":
+            return False
+        return True
+
+    return batch.run(
+        roots=[target],
+        excluded=[],
+        state_path=Path(state_file).resolve() if state_file else batch.STATE_FILE,
+        model=model,
+        force_full=full,
+        dry_run=dry_run,
+        verbose=verbose,
+        include_generated=include_generated,
+        recursive=recursive if target.is_dir() else True,
+        pair_predicate=predicate,
+        only_target_lang=target_lang,
+    )
 
 
 def translate_file(
     path: Path,
     target_lang: str,
-    engine: TranslationEngine | None = None,
+    engine=None,
     model: str | None = None,
     dry_run: bool = False,
-) -> Path | None:
-    """Translate a single markdown file. Returns output path or None on skip/error."""
-    path = Path(path)
-    if not path.exists():
-        logger.error("File not found: %s", path)
-        return None
+    include_generated: bool = False,
+) -> int:
+    """Sync the en/zh pair for one markdown file via translate_site_batch.
 
-    content = path.read_text(encoding="utf-8")
-    if not content.strip():
-        logger.warning("Empty file, skipping: %s", path)
-        return None
-
-    _, body = _parse_frontmatter(content)
-    source_lang = detect_language(body or content)
-
-    if source_lang == target_lang:
-        logger.info("Already in %s, skipping: %s", LANG_NAMES[target_lang], path)
-        return None
-
-    out = _output_path(path, target_lang)
-
-    relocate = False
-    zh_path = _output_path(path, "zh")
-    if source_lang == "zh" and target_lang == "en" and out == path:
-        if zh_path.exists():
-            logger.info("Chinese version already exists at %s, skipping: %s", zh_path, path)
-            return None
-        relocate = True
-        if dry_run:
-            logger.info("[DRY RUN] Would relocate %s → %s and translate to English", path, zh_path)
-            return out
-        atomic_write(zh_path, content)
-        logger.info("Relocated Chinese content: %s → %s", path.name, zh_path.name)
-    elif out.exists():
-        logger.info("Translation already exists, skipping: %s", out)
-        return None
-
-    if dry_run:
-        logger.info("[DRY RUN] Would translate %s → %s", path, out)
-        return out
-
-    logger.info(
-        "Translating %s → %s: %s",
-        LANG_NAMES[source_lang],
-        LANG_NAMES[target_lang],
-        path.name,
+    ``engine`` is ignored; the batch runner loads its own translation engine.
+    """
+    del engine
+    return _run_adhoc(
+        Path(path),
+        target_lang=target_lang,
+        model=model or DEFAULT_TRANSLATION_MODEL,
+        dry_run=dry_run,
+        recursive=True,
+        include_index=True,
+        include_generated=include_generated,
     )
-
-    try:
-        result = translate_markdown_document(
-            content,
-            source_lang,
-            target_lang,
-            engine=engine,
-            model=model,
-        )
-    except RuntimeError as exc:
-        logger.error("Translation failed for %s: %s", path, exc)
-        if relocate and zh_path.exists():
-            zh_path.unlink()
-            logger.info("Rolled back relocation: removed %s", zh_path)
-        return None
-
-    atomic_write(out, result)
-    logger.info("Wrote: %s", out)
-    return out
 
 
 def translate_directory(
@@ -132,42 +97,18 @@ def translate_directory(
     recursive: bool = False,
     dry_run: bool = False,
     include_index: bool = False,
-) -> list[Path]:
-    """Translate all .md files in a directory. Returns list of output paths."""
-    directory = Path(directory)
-    pattern = "**/*.md" if recursive else "*.md"
-    results = []
-
-    md_files = sorted(directory.glob(pattern))
-    source_files = [
-        f
-        for f in md_files
-        if not any(f.stem.endswith(f".{lang}") for lang in ("en", "zh"))
-        and (include_index or f.name != "_index.md")
-    ]
-
-    logger.info(
-        "Found %d source files in %s (recursive=%s)",
-        len(source_files),
-        directory,
-        recursive,
+    include_generated: bool = False,
+) -> int:
+    """Sync en/zh pairs under a directory via translate_site_batch."""
+    return _run_adhoc(
+        Path(directory),
+        target_lang=target_lang,
+        model=model or DEFAULT_TRANSLATION_MODEL,
+        dry_run=dry_run,
+        recursive=recursive,
+        include_index=include_index,
+        include_generated=include_generated,
     )
-
-    if dry_run:
-        for source in source_files:
-            out = translate_file(source, target_lang, model=model, dry_run=True)
-            if out is not None:
-                results.append(out)
-        return results
-
-    with create_engine(model) as engine:
-        for source in source_files:
-            out = translate_file(
-                source, target_lang, engine=engine, model=model, dry_run=False,
-            )
-            if out is not None:
-                results.append(out)
-    return results
 
 
 def main() -> None:
@@ -178,14 +119,15 @@ def main() -> None:
     )
 
     parser = argparse.ArgumentParser(
-        description="Translate Hugo content between English and Chinese"
+        description="Translate Hugo content between English and Chinese "
+        "(wrapper around translate_site_batch)",
     )
     parser.add_argument("path", help="File or directory to translate")
     parser.add_argument(
         "--to",
         required=True,
         choices=["en", "zh"],
-        help="Target language",
+        help="Only produce this target language",
     )
     parser.add_argument(
         "--model",
@@ -205,35 +147,43 @@ def main() -> None:
     parser.add_argument(
         "--include-index",
         action="store_true",
-        help="Include _index.md files (skipped by default)",
+        help="Include _index.md files (skipped by default in directory mode)",
+    )
+    parser.add_argument(
+        "--include-generated",
+        action="store_true",
+        help="Translate pipeline-generated pages (skipped by default)",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Force retranslating pairs even when both language files exist",
+    )
+    parser.add_argument(
+        "--state-file",
+        default=str(batch.STATE_FILE),
+        help=f"Translation state file (default: {batch.STATE_FILE.name})",
     )
     args = parser.parse_args()
 
     target = Path(args.path)
-    if target.is_file():
-        result = translate_file(
-            target,
-            args.to,
-            model=args.model,
-            dry_run=args.dry_run,
-        )
-        if result:
-            print(f"Done: {result}")
-        else:
-            print("No translation needed or error occurred.")
-    elif target.is_dir():
-        results = translate_directory(
-            target,
-            args.to,
-            model=args.model,
-            recursive=args.recursive,
-            dry_run=args.dry_run,
-            include_index=args.include_index,
-        )
-        print(f"Translated {len(results)} files.")
-    else:
+    if not target.exists():
         print(f"Path not found: {target}", file=sys.stderr)
         sys.exit(1)
+
+    sys.exit(
+        _run_adhoc(
+            target,
+            target_lang=args.to,
+            model=args.model,
+            dry_run=args.dry_run,
+            recursive=args.recursive,
+            include_index=args.include_index,
+            include_generated=args.include_generated,
+            full=args.full,
+            state_file=args.state_file,
+        )
+    )
 
 
 if __name__ == "__main__":

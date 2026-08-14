@@ -230,7 +230,7 @@ class BenchmarkResults:
         # or the first run on a fresh checkout loses the whole benchmark run.
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(self.output_path, 'a', newline='') as f:
+        with open(self.output_path, 'a', newline='', encoding='utf-8') as f:
             fieldnames = list(self.results[0].keys())
             writer = csv.DictWriter(f, fieldnames=fieldnames)
 
@@ -251,7 +251,7 @@ class BenchmarkResults:
     def _count_existing_rows(self) -> int:
         """Count existing rows in CSV (excluding header)."""
         try:
-            with open(self.output_path, 'r') as f:
+            with open(self.output_path, 'r', encoding='utf-8') as f:
                 return sum(1 for _ in f) - 1  # Exclude header
-        except:
+        except (OSError, UnicodeError):
             return 0

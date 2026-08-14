@@ -5,13 +5,11 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from pathlib import Path
 
 from research.config import (
     load_config,
     interactive_config_init,
     show_config,
-    resolve_output_dir,
     resolve_profiler_paths,
 )
 
@@ -27,90 +25,9 @@ def _setup_logging(verbose: bool = False) -> None:
 
 def cmd_analyze(args: argparse.Namespace) -> None:
     """Handle the 'analyze' subcommand."""
-    from research.analysis import run_analysis
-    from research.cache import DiskCache
+    from research.analysis import run_profiler
 
-    config = load_config()
-    paths = resolve_profiler_paths(config)
-    cache = DiskCache(paths["cache"]) if not args.no_cache else None
-
-    from research.analysis import _parse_batch_line
-
-    # Collect names and batch hints
-    names: list[str] = []
-    batch_hints: dict[str, tuple[str, str]] = {}
-    if args.names:
-        names.extend(args.names)
-    if args.from_file:
-        path = Path(args.from_file)
-        if not path.exists():
-            print(f"错误: 文件不存在 — {path}")
-            sys.exit(1)
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    parsed_name, ph, aid = _parse_batch_line(line)
-                    names.append(parsed_name)
-                    if ph or aid:
-                        batch_hints[parsed_name] = (ph, aid)
-
-    if not names:
-        print("错误: 请提供至少一个研究者姓名")
-        print("用法: python -m research analyze \"Sergey Levine\" --mode fast")
-        sys.exit(1)
-
-    mode = args.mode or config.get("default_mode", "fast")
-    depth = args.depth if args.depth is not None else config.get("default_depth", 1)
-    max_students = args.max_students if args.max_students is not None else config.get("max_students", 10)
-    model = args.model or config.get("model", "sonnet")
-    backend = getattr(args, "api", None) or config.get("default_api", "ollama")
-    s2_key = config.get("semantic_scholar_api_key", "")
-
-    homepage_url = getattr(args, "homepage", "") or ""
-    affiliation = getattr(args, "affiliation", "") or ""
-    paper_hint = getattr(args, "paper", "") or ""
-    author_id_hint = getattr(args, "author_id", "") or ""
-
-    profiles = run_analysis(
-        seed_names=names,
-        mode=mode,
-        depth=depth,
-        max_students=max_students,
-        model=model,
-        cache=cache,
-        no_cache=args.no_cache,
-        profiles_dir=str(paths["profiles"]),
-        reports_dir=str(paths["reports"]),
-        s2_api_key=s2_key,
-        backend=backend,
-        homepage_url=homepage_url,
-        affiliation=affiliation,
-        paper_hint=paper_hint,
-        author_id_hint=author_id_hint,
-        hints=batch_hints if batch_hints else None,
-    )
-
-    # Deploy to Hugo if requested
-    if getattr(args, "deploy", False) and profiles:
-        from research.output import deploy_to_hugo
-        from common.paths import GADGET_ROOT, resolve_repo_path
-
-        raw_hugo = getattr(args, "hugo_site", None) or config.get("hugo_site", "")
-        # Distinguish "unset" from a valid path with an empty .name (e.g. "."):
-        # only fall back to the default site when no value was provided at all.
-        hugo_site = (
-            resolve_repo_path(raw_hugo)
-            if raw_hugo
-            else (GADGET_ROOT / "tools" / "website")
-        )
-        if hugo_site.exists():
-            for p in profiles:
-                deploy_to_hugo(p, hugo_site)
-            from common.hugo import run_hugo_update
-            run_hugo_update(hugo_site)
-        else:
-            print(f"警告: Hugo 站点不存在: {hugo_site}，跳过部署")
+    run_profiler(args)
 
 
 def cmd_show(args: argparse.Namespace) -> None:
