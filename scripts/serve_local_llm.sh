@@ -21,9 +21,10 @@
 # below only needs the model name. (Legacy: `--api openai` still works if you
 # also export OPENAI_BASE_URL/OPENAI_API_KEY.)
 #
-# For a PERSISTENT setup, skip the `eval` entirely: put these in
-# ~/.config/summarize/config.json (`default_api`, `model`, `reasoning_effort`, ...)
-# so `python -m summarize auto` just works. See tools/summarize/CLAUDE.md.
+# For a PERSISTENT setup, skip the `eval` entirely: put these in the repo-root
+# config.json `summarize` section (`default_api`, `model`, `reasoning_effort`,
+# ...), or point GADGET_CONFIG at another JSON file, so `python -m summarize auto`
+# just works. See tools/summarize/CLAUDE.md.
 #
 # ponytail: the knob that matters is NUM_CTX (bigger fits summarize's ~40k-token
 # chunks but costs KV-cache VRAM; 65536 loads at ~24/32 GB here). Drop toward

@@ -38,7 +38,7 @@ gadget/
 │   ├── website/        # Hugo blog (incremental media compression + automated build & publish)
 │   └── translator/     # Gradio document translator
 ├── common/             # Shared infrastructure package (LLM / cache / IO / translation / Hugo) — depended on by all tools
-├── scripts/            # Ops + maintenance scripts (sync.py, onboard.py, profile_translation.py, content-language audit…)
+├── scripts/            # Ops + maintenance scripts (sync.py, onboard.py, language.py, profile_translation.py, …)
 ├── docs/               # Design docs, ECL plans (docs/ecl/), audit reports, historical archive (docs/archive/)
 ├── outputs/            # All generated artifacts (gitignored, auto-rebuildable)
 ├── AGENTS.md           # Workflow protocol for all AI agents (read before acting)
@@ -168,9 +168,11 @@ Change shared capabilities (LLM, cache, translation, Hugo deploy) here.
 
 ### scripts/ — Ops and Maintenance Scripts
 
-- `sync.py` — centralized rclone data sync (push / pull / status / bootstrap / config, covering the summarize / website / research / test / backups categories; also includes a special `dag` category for generating + deploying the DAG site). Run `python scripts/sync.py`; config is the `sync` section of the repo-root `config.json` (override path with `GADGET_CONFIG`).
+- `sync.py` — centralized rclone data sync (push / pull / status / bootstrap / config, covering the summarize / website / research / benchmark / backups categories; also includes a special `dag` category for generating + deploying the DAG site). Run `python scripts/sync.py`; config is the `sync` section of the repo-root `config.json` (override path with `GADGET_CONFIG`).
 - `onboard.py` — repository-level one-time machine onboarding: fill in one YAML sheet (`tokens/onboard.yaml`), run the script once, and it automatically completes SSH configuration, Claude/Codex CLI installation and authentication, pip extras and ai-companion installation, per-tool config, and rclone bootstrap.
-- Others: `audit_content_languages.py` (audit/fix bilingual Hugo content), `fix_report_languages.py`, `profile_translation.py` (translation-engine GPU profiler).
+- `smoke.sh` — read-only smoke net across all tools (`--help` / `--info` / imports; no LLM, network, or writes). Run `bash scripts/smoke.sh`.
+- `serve_local_llm.sh` — create a summarize-tuned Ollama variant and print env (`eval "$(bash scripts/serve_local_llm.sh env)"`). Persistent knobs go in the repo-root `config.json` `summarize` section (override path with `GADGET_CONFIG`).
+- Others: `language.py` (Hugo bilingual audit + summarize report rename), `profile_translation.py` (translation-engine GPU profiler).
 
 ### AI Companion — Separate Repository
 
@@ -206,7 +208,7 @@ Hugo site content is written directly into `tools/website/content|static` (there
 - Python 3.10+ (the conda environment `AI` is recommended, `conda activate AI`)
 - Node.js 18+ (only the separate repo `../ai-companion/` needs it)
 - For each tool's specific dependencies see the `requirements.txt` in the corresponding directory
-- common package + all tool dependencies: `pip install -e ".[all]"`
+- common package + summarize / research / benchmark / website extras: `pip install -e ".[all]"` (`all` does **not** include `translator`; install `pip install -e ".[translator]"` separately)
 - The website/translation features use a local inference engine (Ollama by default; vLLM on Linux / transformers on Windows as fallbacks); the model `tencent/Hy-MT2-1.8B` is auto-downloaded on first run
 
 ## Notes
@@ -219,3 +221,4 @@ Hugo site content is written directly into `tools/website/content|static` (there
 - Cross-device data sync uses `python scripts/sync.py push/pull` (requires rclone configuration)
 - Never `git add` auto-generated content, rclone-synced data, build artifacts (`build/`, `gadget.egg-info/`), or the deployment/theme repos under `tools/website/`
 - Tool settings live in the repo-root `config.json` (gitignored; copy from `config.example.json`). Override the path with `GADGET_CONFIG`.
+- Licensed under GPL-3 (see `LICENSE`).

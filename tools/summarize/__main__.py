@@ -51,10 +51,11 @@ def _main_auto():
         prog="summarize auto",
         description="Run full pipeline: daily export → merge → weekly → monthly",
     )
+    from summarize.cli import add_api_flag
+
     parser.add_argument("--date", type=str, default=None,
                         help="Aggregation target date (YYYY-MM-DD), default: yesterday")
-    parser.add_argument("--api", type=str, choices=["anthropic", "openai", "ollama", "claude_cli"],
-                        default="ollama", help="LLM API (default: ollama)")
+    add_api_flag(parser)
     parser.add_argument("--deploy", action="store_true",
                         help="Deploy reports to Hugo after generation")
     parser.add_argument("--hugo-site", type=str, default=None,
@@ -80,8 +81,9 @@ def _main_onboard():
         prog="summarize onboard",
         description="Check/setup requirements for summarize auto",
     )
-    parser.add_argument("--api", type=str, choices=["anthropic", "openai", "ollama", "claude_cli"],
-                        default="ollama", help="LLM API used by auto")
+    from summarize.cli import add_api_flag
+
+    add_api_flag(parser, help_text="LLM API used by auto")
     parser.add_argument("--deploy", action="store_true",
                         help="Also check Hugo deploy requirements")
     parser.add_argument("--hugo-site", type=str, default=None,

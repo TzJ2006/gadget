@@ -14,43 +14,40 @@
 
 import argparse
 import calendar
-import hashlib
 import json
-import os
-import shutil
 import sys
 from collections import OrderedDict
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from common.bilingual import write_bilingual
-from common.io import atomic_write as _atomic_write
 from common.hugo import run_hugo_update
-from common.paths import REPORTS_DIR, CACHE_DIR
-from common.site_staging import resolve_site_content_dir, copy_site_static, write_site_content
-from common.llm import (
-    LLMCallConfig,
-    call_llm,
-    ChunkTimeoutError,
-    chunk_text,
-    timed_llm_call,
-    load_chunk_cache as _load_chunk_cache,
-    save_chunk_cache as _save_chunk_cache,
-    cleanup_chunk_cache as _cleanup_chunk_cache,
-    hierarchical_merge,
+from common.io import atomic_write as _atomic_write
+from common.llm import LLMCallConfig
+from common.site_staging import resolve_site_content_dir
+
+from .config import cli_defaults
+from .period_report import (
+    DEFAULT_BACKEND,
+    DEFAULT_REPORTS_DIR as _DEFAULT_REPORTS_DIR,
+    TIMEOUT_MONTHLY,
+    _LOW_THINKING,
+    add_deploy_arguments,
+    add_generate_arguments,
+    call_period_summarize_chunked,
+    collect_usage_by_source,
+    compute_source_hash as _compute_source_hash,
+    generate_period_chart,
+    generate_period_hugo_post,
+    load_period_cache,
+    period_cache_dir,
+    require_hugo_site,
+    resolve_period_api,
+    resolve_reports_dir,
+    resolved_timeout_monthly,
+    run_cached_period_llm,
+    save_period_cache,
 )
-from common.json_utils import (
-    parse_json_response as _parse_json_response,
-    repair_json_with_llm as _repair_json_with_llm,
-    try_repair_result,
-)
-
-from .config import _resolve_output_dir, _load_config, resolve_hugo_site
-
-_DEFAULT_REPORTS_DIR = REPORTS_DIR / "summarize"
-_DEFAULT_CACHE_DIR = CACHE_DIR / "summarize" / "monthly"
-
 
 # ─── 1. 数据加载 ───────────────────────────────────────────────────
 
@@ -484,10 +481,7 @@ def _monthly_tool_schema() -> list[dict]:
     }]
 
 
-_LOW_THINKING = {"type": "enabled", "budget_tokens": 1024}
-
-
-def _build_monthly_config(prompt_text: str, timeout: int = 1800) -> LLMCallConfig:
+def _build_monthly_config(prompt_text: str, timeout: int = TIMEOUT_MONTHLY) -> LLMCallConfig:
     """构建月度专用的 LLMCallConfig。"""
     return LLMCallConfig(
         prompt=prompt_text,
@@ -498,98 +492,32 @@ def _build_monthly_config(prompt_text: str, timeout: int = 1800) -> LLMCallConfi
     )
 
 
-def _call_monthly_summarize(api: str, text: str, month_str: str,
-                            prompt: str = MONTHLY_SUMMARY_PROMPT,
-                            timeout: int = 1800) -> dict:
-    """根据 api 参数调用月度总结 LLM。"""
-    full_prompt = prompt + text + f"\n\nTarget month: {month_str}"
-    config = _build_monthly_config(full_prompt, timeout)
-    return call_llm(api, config)
+def _monthly_report_groups(daily_reports: list[dict]) -> list[list[dict]]:
+    return [daily_reports[i:i + 7] for i in range(0, len(daily_reports), 7)]
 
 
 def _call_monthly_summarize_chunked(api: str, daily_reports: list[dict],
-                                    month_str: str, timeout: int = 1800,
+                                    month_str: str, timeout: int = TIMEOUT_MONTHLY,
                                     chunk_cache_dir: Optional[Path] = None) -> dict:
-    """分块调用 LLM 生成月度总结（当内容 >150K 字符时自动分组）。"""
-    full_text = format_reports_for_llm(daily_reports)
-    prompt_overhead = len(MONTHLY_SUMMARY_PROMPT) + 200
-
-    if len(full_text) + prompt_overhead <= 150000:
-        full_prompt = MONTHLY_SUMMARY_PROMPT + full_text + f"\n\nTarget month: {month_str}"
-        config = _build_monthly_config(full_prompt, timeout)
-        return timed_llm_call(api, config, chunk_idx=1, total=1)
-
-    # 按周分组（每 7 天一组）
-    week_groups = []
-    for i in range(0, len(daily_reports), 7):
-        week_groups.append(daily_reports[i:i+7])
-
-    text_groups = [format_reports_for_llm(g) for g in week_groups]
-    text_chunks = chunk_text(text_groups, max_chars=150000 - prompt_overhead)
-
-    n = len(text_chunks)
-    print(f"[info] Total daily reports: {len(full_text):,} chars, split into {n} chunks "
-          f"(per-chunk timeout {timeout}s, total ~{timeout * n}s)...")
-
-    global_hash = _compute_source_hash(daily_reports) if chunk_cache_dir else None
-
-    partial_summaries = []
-    cache_hits = 0
-    for i, chunk_texts in enumerate(text_chunks):
-        chunk_content = "\n".join(chunk_texts)
-
-        if chunk_cache_dir and global_hash:
-            c_hash = hashlib.sha256(chunk_content.encode("utf-8")).hexdigest()[:16]
-            cached = _load_chunk_cache(chunk_cache_dir, c_hash, global_hash, n)
-            if cached is not None:
-                cache_hits += 1
-                print(f"[info] Chunk {i+1}/{n} cache hit ({len(chunk_content):,} chars)")
-                partial_summaries.append(cached)
-                continue
-
-        print(f"[info] Summarizing chunk {i+1}/{n} ({len(chunk_content):,} chars)...")
-        full_prompt = MONTHLY_SUMMARY_PROMPT + chunk_content + f"\n\nTarget month: {month_str}"
-        config = _build_monthly_config(full_prompt, timeout)
-        result = timed_llm_call(api, config, chunk_idx=i+1, total=n)
-        partial_summaries.append(result)
-
-        if chunk_cache_dir and global_hash:
-            _save_chunk_cache(chunk_cache_dir, c_hash, result, global_hash, n)
-
-    if cache_hits:
-        print(f"[info] Chunk cache stats: {cache_hits}/{n} hits, {n - cache_hits} API calls")
-
-    if len(partial_summaries) == 1:
-        return partial_summaries[0]
-
-    def _monthly_merge_config(prompt_text: str) -> LLMCallConfig:
-        return _build_monthly_config(prompt_text, timeout)
-
-    return hierarchical_merge(api, partial_summaries, MONTHLY_MERGE_PROMPT,
-                              _monthly_merge_config, timeout)
+    """分块调用 LLM 生成月度总结（当内容超过 chunk 上限时自动分组）。"""
+    return call_period_summarize_chunked(
+        api, daily_reports,
+        summary_prompt=MONTHLY_SUMMARY_PROMPT,
+        merge_prompt=MONTHLY_MERGE_PROMPT,
+        build_config=lambda prompt_text: _build_monthly_config(prompt_text, timeout),
+        timeout=timeout,
+        format_reports=format_reports_for_llm,
+        make_groups=_monthly_report_groups,
+        target_line=f"Target month: {month_str}",
+        chunk_cache_dir=chunk_cache_dir,
+    )
 
 
 # ─── 3. 图表生成 ───────────────────────────────────────────────────
 
 def _generate_chart(usage_by_source: dict, year: int, month: int) -> Optional[Path]:
     """生成月报 usage 图表（单 PNG 三子图，按来源）。"""
-    from .charts import generate_daily_chart
-    from common.paths import IMAGES_DIR
-
-    chart_input = {}
-    for source, summary in (usage_by_source or {}).items():
-        totals = summary.get("totals", {})
-        if not totals:
-            continue
-        chart_input[source] = {
-            "totals": totals,
-            "modelBreakdowns": [{"modelName": n, **v}
-                                for n, v in summary.get("model_breakdown", {}).items()],
-        }
-    if not chart_input:
-        return None
-    out = IMAGES_DIR / "summarize"
-    return generate_daily_chart(chart_input, date(year, month, 1), output_dir=out)
+    return generate_period_chart(usage_by_source, date(year, month, 1))
 
 
 # ─── 4. 输出渲染 ───────────────────────────────────────────────────
@@ -751,49 +679,25 @@ def generate_monthly_markdown(report: dict, year: int, month: int,
 def generate_monthly_hugo_post(markdown_body: str, year: int, month: int,
                                hugo_site: Path,
                                chart_path: Optional[Path] = None,
-                               api: str = "claude_cli",
+                               api: str = DEFAULT_BACKEND,
                                force: bool = False,
                                overwrite_human: bool = False) -> Path:
     """将月度总结渲染为 Hugo bugJournal 格式并写入 staging content 目录（双语）。"""
     month_str = f"{year:04d}-{month:02d}"
-
-    summary = f"{month_str} Monthly AI conversation summary"
-    for line in markdown_body.splitlines():
-        if line.startswith("> "):
-            summary = line[2:].strip()
-            break
-    summary = summary.replace('"', '\\"')
-
     last_day = calendar.monthrange(year, month)[1]
-    hugo_date = f"{year:04d}-{month:02d}-{last_day:02d}"
-
-    frontmatter = f"""---
-title: "Monthly Summary {month_str}"
-date: {hugo_date}T23:59:00-05:00
-keywords:
-- Bug Journal
-- Monthly Summary
-summary: "{summary}"
-draft: false
----
-
-"""
-    resolve_site_content_dir(hugo_site, "bugJournal", "monthly")
-
-    if chart_path and chart_path.exists():
-        dest = copy_site_static(
-            hugo_site, chart_path,
-            Path("images") / "monthly" / chart_path.name, force=force)
-        print(f"[ok] Chart copied to Hugo: {dest}")
-
-    rel = Path("bugJournal") / "monthly" / f"{month_str}-monthly.md"
-    en_path, zh_path = write_bilingual(hugo_site, rel, frontmatter + markdown_body,
-                                       force=force, overwrite_human=overwrite_human)
-
-    print(f"[ok] Hugo monthly post generated: {en_path}")
-    if zh_path:
-        print(f"[ok] Hugo monthly post (translated): {zh_path}")
-    return en_path
+    return generate_period_hugo_post(
+        markdown_body, hugo_site,
+        title=f"Monthly Summary {month_str}",
+        post_date=date(year, month, last_day),
+        hour=23, minute=59, second=0,
+        keywords=["Bug Journal", "Monthly Summary"],
+        fallback_summary=f"{month_str} Monthly AI conversation summary",
+        content_parts=("bugJournal", "monthly"),
+        filename=f"{month_str}-monthly.md",
+        chart_path=chart_path,
+        chart_image_subdir="monthly",
+        api=api, force=force, overwrite_human=overwrite_human,
+    )
 
 
 def save_monthly_report(report: dict, markdown: str, year: int, month: int,
@@ -820,51 +724,21 @@ def save_monthly_report(report: dict, markdown: str, year: int, month: int,
 # ─── 5. 缓存 ──────────────────────────────────────────────────────
 
 def _cache_dir(reports_dir: Path) -> Path:
-    return _DEFAULT_CACHE_DIR
-
-
-def _compute_source_hash(daily_reports: list[dict]) -> str:
-    """计算所有源日报 JSON 的 SHA-256（按日期排序拼接）。"""
-    hasher = hashlib.sha256()
-    for report in sorted(daily_reports, key=lambda r: r.get("date", "")):
-        # 排除 _source_file 等临时字段
-        clean = {k: v for k, v in report.items() if not k.startswith("_")}
-        hasher.update(json.dumps(clean, ensure_ascii=False, sort_keys=True).encode("utf-8"))
-    return hasher.hexdigest()[:16]
+    return period_cache_dir("monthly")
 
 
 def _load_monthly_cache(reports_dir: Path, year: int, month: int,
                         source_hash: str) -> Optional[dict]:
     """加载月度缓存。返回 None 表示未命中。"""
-    month_str = f"{year:04d}-{month:02d}"
-    cache_file = _cache_dir(reports_dir) / f"{month_str}.json"
-    if not cache_file.exists():
-        return None
-    try:
-        with open(cache_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    if data.get("_cache_meta", {}).get("source_hash") != source_hash:
-        return None
-
-    data.pop("_cache_meta", None)
-    print(f"[info] Monthly cache hit ({cache_file.name})")
-    return data
+    return load_period_cache(
+        _cache_dir(reports_dir), f"{year:04d}-{month:02d}", source_hash)
 
 
 def _save_monthly_cache(reports_dir: Path, year: int, month: int,
                         result: dict, source_hash: str) -> None:
     """保存月度缓存（附带源哈希用于失效检测）。"""
-    month_str = f"{year:04d}-{month:02d}"
-    cache = {**result, "_cache_meta": {"source_hash": source_hash,
-                                        "cached_at": datetime.now().isoformat()}}
-    try:
-        _atomic_write(_cache_dir(reports_dir) / f"{month_str}.json",
-                      json.dumps(cache, ensure_ascii=False, indent=2))
-    except OSError as e:
-        print(f"[warn] Monthly cache write failed: {e}")
+    save_period_cache(
+        _cache_dir(reports_dir), f"{year:04d}-{month:02d}", result, source_hash)
 
 
 
@@ -879,15 +753,8 @@ def cmd_generate(args):
     month_str = f"{year:04d}-{month:02d}"
     print(f"[info] Target month: {month_str}")
 
-    # 解析 API: CLI > config default_api > ollama
-    cfg = _load_config()
-    api = getattr(args, "api", None) or cfg.get("default_api") or "ollama"
-
-    # 解析输出目录
-    reports_dir = _resolve_output_dir(getattr(args, "output", None),
-                                      "SUMMARIZE_REPORTS_DIR",
-                                      "reports_dir",
-                                      _DEFAULT_REPORTS_DIR)
+    api = resolve_period_api(args)
+    reports_dir = resolve_reports_dir(args)
 
     # 检查已有输出
     force = getattr(args, "force", False)
@@ -920,45 +787,19 @@ def cmd_generate(args):
         sys.exit(0)
     print(f"[info] Loaded {len(daily_reports)} daily reports")
 
-    # 缓存检查
-    source_hash = _compute_source_hash(daily_reports)
-    llm_result = None
+    timeout = getattr(args, "timeout", TIMEOUT_MONTHLY)
+    llm_result = run_cached_period_llm(
+        cache_dir=_cache_dir(reports_dir),
+        label=month_str,
+        daily_reports=daily_reports,
+        no_cache=no_cache,
+        force=force,
+        call_llm_fn=lambda chunk_dir: _call_monthly_summarize_chunked(
+            api, daily_reports, month_str, timeout=timeout,
+            chunk_cache_dir=chunk_dir),
+    )
 
-    if not no_cache and not force:
-        llm_result = _load_monthly_cache(reports_dir, year, month, source_hash)
-
-    # LLM 调用
-    timeout = getattr(args, "timeout", 1800)
-    chunk_cache_dir = _cache_dir(reports_dir) / "chunks" / month_str
-
-    if llm_result is None:
-        if not no_cache:
-            chunk_cache_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            llm_result = _call_monthly_summarize_chunked(
-                api, daily_reports, month_str, timeout=timeout,
-                chunk_cache_dir=chunk_cache_dir if not no_cache else None)
-        except ChunkTimeoutError as e:
-            print(f"[error] {e}")
-            sys.exit(1)
-
-        # 保存全局缓存
-        _save_monthly_cache(reports_dir, year, month, llm_result, source_hash)
-
-        # 全局缓存成功后，清理 chunk 缓存
-        _cleanup_chunk_cache(chunk_cache_dir)
-
-    # 机械聚合（按来源）
-    sources = set()
-    for r in daily_reports:
-        sources.update((r.get("token_usage_by_source") or {}).keys())
-        if r.get("token_usage"):
-            sources.add("claude_code")
-        if r.get("codex_token_usage"):
-            sources.add("codex")
-    usage_by_source = {
-        s: aggregate_token_usage(daily_reports, source=s) for s in sorted(sources)}
+    usage_by_source = collect_usage_by_source(daily_reports)
     combined_token_usage = combine_usage_summaries(*usage_by_source.values())
     statistics = compute_statistics(daily_reports, year, month)
 
@@ -985,10 +826,7 @@ def cmd_generate(args):
 
     # Hugo 部署
     if getattr(args, "deploy", False):
-        hugo_site = resolve_hugo_site(getattr(args, "hugo_site", None))
-        if not hugo_site.exists():
-            print(f"[error] Hugo site directory not found: {hugo_site}")
-            sys.exit(1)
+        hugo_site = require_hugo_site(args)
 
         generate_monthly_hugo_post(markdown, year, month, hugo_site,
                                    api=args.api, force=force,
@@ -1004,13 +842,8 @@ def cmd_deploy(args):
 
     Deployed-state = same-named file present in the Hugo content dir; --force
     redeploys (backing the previous file up to outputs/backups/website-force/)."""
-    reports_dir = _resolve_output_dir(getattr(args, "output", None),
-                                      "SUMMARIZE_REPORTS_DIR",
-                                      "reports_dir", _DEFAULT_REPORTS_DIR)
-    hugo_site = resolve_hugo_site(getattr(args, "hugo_site", None))
-    if not hugo_site.exists():
-        print(f"[error] Hugo site directory not found: {hugo_site}")
-        sys.exit(1)
+    reports_dir = resolve_reports_dir(args)
+    hugo_site = require_hugo_site(args)
 
     if getattr(args, "month", None):
         md_files = [reports_dir / f"{args.month}-monthly.md"]
@@ -1051,10 +884,7 @@ def cmd_deploy(args):
 
 def cmd_list(args):
     """列出所有可用月份及其日报数量。"""
-    reports_dir = _resolve_output_dir(getattr(args, "output", None),
-                                      "SUMMARIZE_REPORTS_DIR",
-                                      "reports_dir",
-                                      _DEFAULT_REPORTS_DIR)
+    reports_dir = resolve_reports_dir(args)
 
     if not reports_dir.exists():
         print(f"[warn] Reports directory not found: {reports_dir}")
@@ -1091,45 +921,14 @@ def main():
     sp_gen = subparsers.add_parser("generate", help="Generate monthly summary")
     sp_gen.add_argument("--month", type=str, default=None,
                         help="Target month (YYYY-MM), defaults to last month")
-    sp_gen.add_argument("--api", type=str,
-                        choices=["anthropic", "openai", "ollama", "claude_cli"],
-                        default=None, help="API to use (default: config default_api, else ollama)")
-    sp_gen.add_argument("--output", type=str, default=None,
-                        help="Reports directory (default: outputs/reports/summarize/)")
-    sp_gen.add_argument("--deploy", action="store_true",
-                        help="Also deploy to Hugo site")
-    sp_gen.add_argument("--hugo-site", type=str,
-                        default=str(Path(__file__).resolve().parent.parent / "website"),
-                        help="Hugo site root directory")
-    sp_gen.add_argument("--timeout", type=int, default=1800,
-                        help="LLM call timeout in seconds (default: 1800)")
-    sp_gen.add_argument("--no-cache", action="store_true",
-                        help="Skip LLM cache, force re-call API")
-    sp_gen.add_argument("--force", action="store_true",
-                        help="Ignore existing output, force regeneration")
-
-    sp_gen.add_argument("--overwrite-human", action="store_true",
-                        help="DANGEROUS: allow overwriting hand-written site files "
-                             "(no gadget marker)")
-
-    # config-driven defaults: CLI flag > config.json > hardcoded
-    from .config import cli_defaults
+    add_generate_arguments(sp_gen, timeout_default=resolved_timeout_monthly())
     sp_gen.set_defaults(**cli_defaults())
 
-    # ── deploy 子命令 (replay, no LLM) ──
     sp_dep = subparsers.add_parser(
         "deploy", help="Replay-deploy saved monthly reports to Hugo (no LLM re-run)")
     sp_dep.add_argument("--month", type=str, default=None,
                         help="Deploy a specific month (YYYY-MM); default: all pending")
-    sp_dep.add_argument("--output", type=str, default=None,
-                        help="Reports directory (default: outputs/reports/summarize/)")
-    sp_dep.add_argument("--hugo-site", type=str,
-                        default=str(Path(__file__).resolve().parent.parent / "website"),
-                        help="Hugo site root directory")
-    sp_dep.add_argument("--force", action="store_true",
-                        help="Redeploy already-deployed months (backs up first)")
-    sp_dep.add_argument("--overwrite-human", action="store_true",
-                        help="DANGEROUS: allow overwriting hand-written site files")
+    add_deploy_arguments(sp_dep)
     sp_dep.set_defaults(**cli_defaults())
 
     # ── list 子命令 ──

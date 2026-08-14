@@ -6,10 +6,52 @@ Reads/writes the ``research`` section of the repo-root ``config.json``
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any
 
 from common import config as gadget_config
+
+# Keep in sync with research.apis.semantic_scholar.DEFAULT_TOP_VENUES.
+DEFAULT_TOP_VENUES: list[str] = [
+    "icra", "iros", "rss", "corl",
+    "neurips", "nips", "icml", "iclr",
+    "cvpr", "iccv", "eccv",
+    "aaai", "ijcai",
+    "ral", "t-ro",
+    "science robotics",
+]
+
+DEFAULT_WEIGHTS: dict[str, float] = {
+    "h_index": 25,
+    "total_citations": 20,
+    "recent_citations": 20,
+    "top_venue_ratio": 20,
+    "career_stage": 15,
+}
+
+DEFAULT_TIER_CUTOFFS: dict[str, float] = {
+    "leader": 75,
+    "rising": 50,
+    "active": 30,
+}
+
+DEFAULT_STUDENT_THRESHOLD = 0.4
+
+DEFAULT_STUDENT_WEIGHTS: dict[str, float] = {
+    "first_author": 0.4,
+    "time_concentration": 0.25,
+    "frequency": 0.2,
+    "recency": 0.15,
+}
+
+DEFAULT_SCORING: dict[str, Any] = {
+    "top_venues": list(DEFAULT_TOP_VENUES),
+    "weights": dict(DEFAULT_WEIGHTS),
+    "tier_cutoffs": dict(DEFAULT_TIER_CUTOFFS),
+    "student_threshold": DEFAULT_STUDENT_THRESHOLD,
+    "student_weights": dict(DEFAULT_STUDENT_WEIGHTS),
+}
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "model": "sonnet",
@@ -18,6 +60,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_students": 10,
     "output_dir": "",  # Empty means use project default
     "semantic_scholar_api_key": "",
+    "scoring": copy.deepcopy(DEFAULT_SCORING),
 }
 
 # Back-compat aliases (path is the unified root file).
@@ -25,26 +68,77 @@ DEFAULT_CONFIG_PATH = gadget_config.DEFAULT_CONFIG_PATH
 DEFAULT_CONFIG_DIR = DEFAULT_CONFIG_PATH.parent
 
 
+def _merge_scoring(override: Any) -> dict[str, Any]:
+    """Deep-merge a partial ``scoring`` dict onto defaults. Missing keys stay default."""
+    merged = copy.deepcopy(DEFAULT_SCORING)
+    if not isinstance(override, dict):
+        return merged
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            nested = dict(merged[key])
+            nested.update(value)
+            merged[key] = nested
+        elif value is not None:
+            merged[key] = value
+    return merged
+
+
+def _fresh_defaults() -> dict[str, Any]:
+    config = dict(DEFAULT_CONFIG)
+    config["scoring"] = copy.deepcopy(DEFAULT_SCORING)
+    return config
+
+
+def _overlay_research(config: dict[str, Any], stored: dict[str, Any]) -> None:
+    scoring_in = stored.get("scoring")
+    for key, value in stored.items():
+        if key == "scoring":
+            continue
+        config[key] = value
+    config["scoring"] = _merge_scoring(scoring_in)
+
+
+def _apply_top_venues(scoring: dict[str, Any]) -> None:
+    venues = scoring.get("top_venues")
+    if not isinstance(venues, (list, tuple, set)):
+        return
+    from research.apis.semantic_scholar import set_top_venues
+    set_top_venues(venues)
+
+
 def load_config(config_path: Path | None = None) -> dict[str, Any]:
     """Load research section from disk, falling back to defaults.
 
     If *config_path* is given (tests), read that file's ``research`` section,
     or treat a flat dict as the section itself.
+    Applies ``research.scoring.top_venues`` via ``set_top_venues``.
     """
-    config = dict(DEFAULT_CONFIG)
+    config = _fresh_defaults()
     if config_path is not None:
         import json
         if config_path.exists():
             with open(config_path, encoding="utf-8") as f:
                 stored = json.load(f)
             if isinstance(stored.get("research"), dict):
-                config.update(stored["research"])
+                _overlay_research(config, stored["research"])
             elif isinstance(stored, dict):
-                config.update(stored)
+                _overlay_research(config, stored)
+        _apply_top_venues(config["scoring"])
         return config
 
-    config.update(gadget_config.load_section("research"))
+    _overlay_research(config, gadget_config.load_section("research"))
+    _apply_top_venues(config["scoring"])
     return config
+
+
+def scoring_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return merged ``research.scoring`` (defaults filled in)."""
+    if config is None:
+        config = load_config()
+    scoring = config.get("scoring")
+    if isinstance(scoring, dict):
+        return scoring
+    return copy.deepcopy(DEFAULT_SCORING)
 
 
 def save_config(config: dict[str, Any], config_path: Path | None = None) -> None:
@@ -114,6 +208,16 @@ def show_config(config: dict[str, Any]) -> None:
         if val == "" or val is None:
             val = "(默认)" if key == "output_dir" else "(未设置)"
         print(f"  {label}: {val}")
+    scoring = config.get("scoring") if isinstance(config.get("scoring"), dict) else {}
+    cutoffs = scoring.get("tier_cutoffs") if isinstance(scoring.get("tier_cutoffs"), dict) else {}
+    print(f"  评分权重: {scoring.get('weights', '(默认)')}")
+    print(
+        f"  档位阈值: leader={cutoffs.get('leader', 75)} "
+        f"rising={cutoffs.get('rising', 50)} active={cutoffs.get('active', 30)}"
+    )
+    print(f"  学生阈值: {scoring.get('student_threshold', 0.4)}")
+    venues = scoring.get("top_venues") or []
+    print(f"  顶会数: {len(venues)}")
 
 
 def resolve_output_dir(config: dict[str, Any]) -> Path:

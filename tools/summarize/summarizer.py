@@ -16,9 +16,6 @@ from typing import Optional
 
 from common.llm import (
     LLMCallConfig,
-    call_llm,
-    ChunkTimeoutError,
-    chunk_text,
     timed_llm_call,
     load_chunk_cache as _load_chunk_cache,
     save_chunk_cache as _save_chunk_cache,
@@ -323,45 +320,6 @@ def _build_daily_config(conversations: list[dict], target_date: date,
         anthropic_tool_name="submit_report",
         thinking=_LOW_THINKING,
     )
-
-
-def summarize_with_anthropic(conversations: list[dict], target_date: date,
-                             prompt_prefix: str = SUMMARY_PROMPT,
-                             extra_context: str = "",
-                             timeout: int = 600) -> dict:
-    """使用 Anthropic Claude API 生成总结。"""
-    config = _build_daily_config(conversations, target_date, prompt_prefix, extra_context, timeout)
-    return call_llm("anthropic", config)
-
-
-def summarize_with_openai(conversations: list[dict], target_date: date,
-                          prompt_prefix: str = SUMMARY_PROMPT,
-                          extra_context: str = "",
-                          timeout: int = 600) -> dict:
-    """使用 OpenAI API 生成总结。"""
-    config = _build_daily_config(conversations, target_date, prompt_prefix, extra_context, timeout)
-    return call_llm("openai", config)
-
-
-def summarize_with_claude_cli(conversations: list[dict], target_date: date,
-                              prompt_prefix: str = SUMMARY_PROMPT,
-                              extra_context: str = "",
-                              timeout: int = 600) -> dict:
-    """使用 Claude Code CLI (claude --print) 生成总结。"""
-    config = _build_daily_config(conversations, target_date, prompt_prefix, extra_context, timeout)
-    return call_llm("claude_cli", config)
-
-
-def _call_single_summarize(api: str, conversations: list[dict], target_date: date,
-                           prompt_prefix: str = SUMMARY_PROMPT,
-                           extra_context: str = "",
-                           timeout: int = 600) -> dict:
-    """根据 api 参数调用对应的总结函数（单次调用）。"""
-    config = _build_daily_config(conversations, target_date, prompt_prefix, extra_context, timeout)
-    return call_llm(api, config)
-
-
-# ChunkTimeoutError → llm_backends.py (imported above and re-exported)
 
 
 # Known first-choice synonyms for the required `summary` field, tried in order.

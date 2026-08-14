@@ -451,12 +451,18 @@ def _install_claude_plugin(pid: str, ctx: Ctx) -> None:
         print(f"  [warn] claude not found; cannot install plugin {pid}")
         return
     try:
-        listed = subprocess.run([claude, "plugin", "list"], capture_output=True, text=True, timeout=60)
-        if pid in (listed.stdout or ""):
+        listed = subprocess.run(
+            [claude, "plugin", "list"], capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"  [warn] claude plugin list failed ({e}); continuing with install")
+    else:
+        if listed.returncode != 0:
+            err = (listed.stderr or listed.stdout or f"exit {listed.returncode}").strip()
+            print(f"  [warn] claude plugin list failed ({err}); continuing with install")
+        elif pid in (listed.stdout or ""):
             print(f"  [skip] plugin already installed: {pid}")
             return
-    except (OSError, subprocess.TimeoutExpired):
-        pass
     if ctx.dry_run:
         print(f"  [dry-run] would install claude plugin {pid} (after prompt)")
         return
@@ -650,6 +656,8 @@ def _verify_minimal(ctx: Ctx) -> bool:
 
 
 def step_verify(ctx: Ctx) -> bool:
+    # Merged report needs RequirementResult; subprocess `python -m summarize onboard`
+    # would match hub-and-spoke layering but drop extra checks from this report.
     try:
         from summarize.onboarding import (
             RequirementResult, check_auto_requirements, has_blocking_failures, print_report,

@@ -1,15 +1,15 @@
-"""ArXiv API client for searching papers and extracting full text."""
+"""ArXiv API client: shared Client, Result adapters, and full-text extraction."""
 
 from __future__ import annotations
 
 import logging
 import re
+import time
 import urllib.request
-from html.parser import HTMLParser
-from typing import Any
 
 import arxiv
 
+from common.html_text import html_to_text
 from research.apis.rate_limiter import arxiv_limiter
 from research.cache import DiskCache
 from research.models import Paper
@@ -17,6 +17,126 @@ from research.models import Paper
 logger = logging.getLogger(__name__)
 
 ARXIV_API_TTL = 7 * 24 * 3600  # 7 days
+
+# Conservative vs arxiv defaults (page_size=100, delay=3s, retries=3).
+_CLIENT_PAGE_SIZE = 100
+_CLIENT_DELAY_SECONDS = 5.0
+_CLIENT_NUM_RETRIES = 5
+
+_ARXIV_MAX_RETRIES = 3
+_ARXIV_BASE_DELAY = 10  # seconds; exponential backoff on HTTP 429/503
+
+_ARXIV_HTML_SKIP = {
+    "script", "style", "nav", "header", "footer", "figure", "figcaption",
+}
+
+
+def make_arxiv_client(
+    page_size: int = _CLIENT_PAGE_SIZE,
+    delay_seconds: float = _CLIENT_DELAY_SECONDS,
+    num_retries: int = _CLIENT_NUM_RETRIES,
+) -> arxiv.Client:
+    """Shared arXiv client (page_size 100, delay 5s, 5 retries)."""
+    return arxiv.Client(
+        page_size=page_size,
+        delay_seconds=delay_seconds,
+        num_retries=num_retries,
+    )
+
+
+def iter_arxiv_results(
+    client: arxiv.Client,
+    search: arxiv.Search,
+    *,
+    max_retries: int = _ARXIV_MAX_RETRIES,
+    base_delay: float = _ARXIV_BASE_DELAY,
+):
+    """Yield ``arxiv.Result`` rows with limiter + retry on HTTP 429/503.
+
+    On a mid-stream transient error the query is restarted (the arXiv client
+    cannot resume) and already-yielded rows are skipped.
+    """
+    emitted = 0
+    for attempt in range(max_retries):
+        arxiv_limiter.acquire()
+        try:
+            seen = 0
+            for result in client.results(search):
+                seen += 1
+                if seen <= emitted:
+                    continue
+                emitted += 1
+                yield result
+            return
+        except arxiv.HTTPError as e:
+            status = getattr(e, "status", 0)
+            if status in (429, 503) and attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    "arXiv HTTP %d, %d秒后重试 (第%d/%d次)...",
+                    status, delay, attempt + 1, max_retries,
+                )
+                time.sleep(delay)
+                continue
+            raise
+
+
+def arxiv_id_from_result(result: arxiv.Result) -> str:
+    """Normalize an arXiv id from ``Result.entry_id`` (keeps old ``cs/0112017`` ids)."""
+    entry_id = result.entry_id or ""
+    if "/abs/" in entry_id:
+        return entry_id.split("/abs/")[-1]
+    return entry_id.split("/")[-1]
+
+
+def _paper_from_arxiv_result(
+    result: arxiv.Result,
+    *,
+    author_limit: int | None = 10,
+) -> dict:
+    """Scout-shaped paper dict from an ``arxiv.Result``.
+
+    Profiler ``Paper`` objects go through ``paper_model_from_arxiv_result``.
+    """
+    arxiv_id = arxiv_id_from_result(result)
+    authors = [a.name for a in result.authors]
+    if author_limit is not None:
+        authors = authors[:author_limit]
+    published = ""
+    if result.published:
+        published = result.published.strftime("%Y-%m-%d")
+    return {
+        "paper_id": arxiv_id,
+        "arxiv_id": arxiv_id,
+        "source": "arxiv",
+        "title": (result.title or "").replace("\n", " ").strip(),
+        "authors": authors,
+        "abstract": (result.summary or "").replace("\n", " ").strip(),
+        "categories": list(result.categories or []),
+        "published": published,
+        "url": result.entry_id or "",
+        "pdf_url": result.pdf_url or "",
+        "comment": (result.comment or "").strip(),
+        "journal_ref": (result.journal_ref or "").strip(),
+        "venue": "",
+    }
+
+
+paper_from_arxiv_result = _paper_from_arxiv_result
+
+
+def paper_model_from_arxiv_result(result: arxiv.Result) -> Paper:
+    """Profiler ``Paper`` adapter (all authors; no scout-only fields)."""
+    d = _paper_from_arxiv_result(result, author_limit=None)
+    return Paper(
+        arxiv_id=d["arxiv_id"],
+        title=d["title"],
+        abstract=d["abstract"],
+        authors=d["authors"],
+        published=d["published"],
+        categories=d["categories"],
+        pdf_url=d["pdf_url"],
+    )
 
 
 def search_papers_by_author(
@@ -33,10 +153,9 @@ def search_papers_by_author(
             return [Paper.from_dict(p) for p in cached]
 
     logger.info(f"[ArXiv] 搜索作者: {author_name} (max={max_results})")
-    arxiv_limiter.acquire()
 
     query = f'au:"{author_name}"'
-    client = arxiv.Client(page_size=100, delay_seconds=3.0, num_retries=3)
+    client = make_arxiv_client()
     search = arxiv.Search(
         query=query,
         max_results=max_results,
@@ -47,17 +166,8 @@ def search_papers_by_author(
     papers = []
     truncated = False
     try:
-        for result in client.results(search):
-            paper = Paper(
-                arxiv_id=result.entry_id.split("/abs/")[-1] if "/abs/" in result.entry_id else result.entry_id.split("/")[-1],
-                title=result.title.replace("\n", " ").strip(),
-                abstract=result.summary.replace("\n", " ").strip(),
-                authors=[a.name for a in result.authors],
-                published=result.published.strftime("%Y-%m-%d") if result.published else "",
-                categories=[c for c in result.categories],
-                pdf_url=result.pdf_url or "",
-            )
-            papers.append(paper)
+        for result in iter_arxiv_results(client, search):
+            papers.append(paper_model_from_arxiv_result(result))
     except Exception as e:
         logger.error(f"[ArXiv] 搜索失败: {e}")
         if not papers:
@@ -74,42 +184,6 @@ def search_papers_by_author(
 
     logger.info(f"[ArXiv] 找到 {len(papers)} 篇论文: {author_name}")
     return papers
-
-
-class _ArxivHTMLTextExtractor(HTMLParser):
-    """Extract readable text from ArXiv HTML papers."""
-
-    SKIP_TAGS = {"script", "style", "nav", "header", "footer", "figure", "figcaption"}
-
-    def __init__(self):
-        super().__init__()
-        self._text_parts: list[str] = []
-        self._skip_depth = 0
-        self._in_article = False
-
-    def handle_starttag(self, tag, attrs):
-        attrs_dict = dict(attrs)
-        cls = attrs_dict.get("class", "")
-        # Focus on article content
-        if tag == "article" or "ltx_document" in cls or "ltx_page_main" in cls:
-            self._in_article = True
-        if tag in self.SKIP_TAGS:
-            self._skip_depth += 1
-
-    def handle_endtag(self, tag):
-        if tag in self.SKIP_TAGS and self._skip_depth > 0:
-            self._skip_depth -= 1
-        if tag in ("p", "div", "h1", "h2", "h3", "h4", "section", "li"):
-            self._text_parts.append("\n")
-
-    def handle_data(self, data):
-        if self._skip_depth == 0:
-            self._text_parts.append(data)
-
-    def get_text(self) -> str:
-        text = "".join(self._text_parts)
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        return text.strip()
 
 
 def download_fulltext(
@@ -171,10 +245,7 @@ def _download_html_text(arxiv_id: str) -> str:
                 charset = "utf-8"
             html_text = html_bytes.decode(charset, errors="replace")
 
-        # Parse HTML and extract text
-        extractor = _ArxivHTMLTextExtractor()
-        extractor.feed(html_text)
-        text = extractor.get_text()
+        text = html_to_text(html_text, skip_tags=_ARXIV_HTML_SKIP)
 
         logger.info(f"[HTML] 提取完成: {arxiv_id} ({len(text)} chars)")
         return text

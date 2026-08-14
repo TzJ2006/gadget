@@ -15,8 +15,13 @@ from .core import BaseBenchmark, fmt_flops, calculate_flops_gemm, RobustTimer, B
 from .detect import get_cpu_info, get_gpu_info, get_system_info
 from .cpu import CpuSingleCoreBenchmark, CpuAllCoresBenchmark
 from .gpu import GpuBenchmark
-from .report import BenchmarkReport, generate_report
-from .publish import stage_benchmark_report
+
+# report/publish pull plotly — load only when asked (so --info works without it)
+_LAZY_ATTRS = {
+    'BenchmarkReport': ('.report', 'BenchmarkReport'),
+    'generate_report': ('.report', 'generate_report'),
+    'stage_benchmark_report': ('.publish', 'stage_benchmark_report'),
+}
 
 __all__ = [
     # Core
@@ -34,10 +39,22 @@ __all__ = [
     'CpuAllCoresBenchmark',
     # GPU
     'GpuBenchmark',
-    # Report
+    # Report (lazy)
     'BenchmarkReport',
     'generate_report',
     'stage_benchmark_report',
 ]
+
+
+def __getattr__(name):
+    target = _LAZY_ATTRS.get(name)
+    if target is None:
+        raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+    module_name, attr = target
+    from importlib import import_module
+    value = getattr(import_module(module_name, __package__), attr)
+    globals()[name] = value
+    return value
+
 
 __version__ = '1.1.0'

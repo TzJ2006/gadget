@@ -6,7 +6,7 @@
 
 一次逻辑审计修复了以下问题（命令用法不变；本环境缺 `pandas`/`plotly`/`torch` 未能实跑，以下为代码层修复并通过编译/逻辑校验）：
 
-- **首次运行不再丢结果**：`BenchmarkResults.save()` 以追加模式写 CSV 前未创建目录，全新 checkout 下 `outputs/data/benchmark/` 不存在会 `FileNotFoundError`，跑完所有基准后整轮结果丢失。现先 `mkdir(parents=True)`。
+- **首次运行不再丢结果**：`BenchmarkResults.save()` 以追加模式写 CSV 前会 `mkdir(parents=True)`。CSV SoT 是 `tools/benchmark/benchmark_results.csv`。
 - **报告生成不再崩溃**：纯 GPU（无 CPU 行）或所有 GPU 行 dtype 均为 `N/A` 的 CSV，会让排行榜 `pd.concat([])` 抛 `ValueError`。现对空排行榜加守卫（与既有 GPU 分支一致）。
 - **投稿队列不再丢失**：`ingest_submissions.py` 每次只处理前 `max_pending` 行却清空整个 pending 文件，超额投稿被静默删除。现只删除已处理的行，保留其余（并兼容 ingest 期间的并发追加）。
 - **记录数显示更正**：保存后「Total records in file」不再把刚写入的行重复计数。
@@ -16,11 +16,14 @@
 ### 安装依赖
 
 ```bash
+# From gadget repo root (plotly needed for --report / --report-only / --deploy)
+pip install -e ".[benchmark]"
+
 cd tools/benchmark
-pip install -r requirements.txt
+# Or: pip install -r requirements.txt
 ```
 
-核心依赖：`torch`、`numpy`、`pandas`、`plotly`、`tqdm`。
+核心依赖：`torch`、`numpy`、`pandas`、`plotly`、`tqdm`。`--report` / `--report-only` / `--deploy` 需要 `plotly`，由 `pip install -e ".[benchmark]"` 安装。`--info` 不需要。
 
 可选依赖：
 - `threadpoolctl` — 精确控制 BLAS 线程数（影响 CPU 全核测试准确性）
@@ -32,7 +35,7 @@ pip install -r requirements.txt
 python -m benchmark.cli --info
 ```
 
-这条命令会打印检测到的 CPU、GPU 和软件版本信息，不会运行任何基准测试。如果能看到你的硬件信息，说明环境配置正确。
+这条命令会打印检测到的 CPU、GPU 和软件版本信息，不写 CSV、也不跑基准。`--info` 不需要 `plotly`。HTML 报告（`--report` / `--report-only` / `--deploy`）才需要，通过 `pip install -e ".[benchmark]"` 安装。
 
 ## 2. 运行第一次基准测试
 
@@ -102,6 +105,8 @@ GPU 测试会在每次迭代后显式调用 `torch.cuda.synchronize()` 或 `torc
 
 ## 4. 生成 HTML 报告
 
+`--report` / `--report-only` / `--deploy` 需要 `plotly`（`pip install -e ".[benchmark]"`）。
+
 ```bash
 # 运行测试 + 生成报告
 python -m benchmark.cli --report
@@ -114,10 +119,9 @@ python -m benchmark.cli --report-only
 - 硬件性能排行榜（Leaderboard）
 - 不同硬件的对比柱状图
 - 各精度的性能对比
-- 历史趋势折线图
 
 默认输出路径：
-- CSV: `outputs/data/benchmark/results.csv`（相对于 gadget 项目根目录）
+- CSV: `tools/benchmark/benchmark_results.csv`（CLI / ingest / CI 的单一 SoT）
 - HTML: `outputs/reports/benchmark/report.html`
 
 ### 自定义输出路径
@@ -178,7 +182,7 @@ GPU 矩阵大小会根据显存自动调整，但可以手动覆盖。
 
 ## 7. 部署到网站
 
-如果你配置了 Hugo 网站（`gadget/website/`），可以直接部署报告：
+如果你配置了 Hugo 网站（`tools/website/`），可以直接部署报告：
 
 ```bash
 # 运行测试 + 生成报告 + 部署到 Hugo

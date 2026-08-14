@@ -12,13 +12,13 @@ from common.io import atomic_write
 from common.hugo import run_hugo_update
 from common.site_staging import resolve_site_content_dir, write_site_content
 
-from scout.config import (
+from research.scout.config import (
     PROJECTS_DIR,
     TOP_PAPERS_IN_REPORT,
     resolve_param,
     get_logger,
 )
-from scout.search import paper_id as _paper_id, paper_url as _paper_url
+from research.scout.search import paper_id as _paper_id, paper_url as _paper_url
 
 logger = get_logger()
 

@@ -10,6 +10,10 @@ The script is designed for pre-build use in website/update.sh:
   - backfill missing counterparts,
   - detect which side changed since the last successful sync,
   - avoid en<->zh translation ping-pong via a local state file.
+
+Pipeline-generated pages (bugJournal daily/weekly/monthly, research/,
+benchmark.md pair, and any file stamped gadget_generated) are skipped by
+default so src-hash markers stay intact. Pass --include-generated to override.
 """
 
 from __future__ import annotations
@@ -20,23 +24,27 @@ import logging
 import sys
 import time
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 SITE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = SITE_ROOT.parent.parent
+if str(SITE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SITE_ROOT))
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from common.engine import TranslationEngine, create_engine, DEFAULT_TRANSLATION_MODEL
 from common.io import atomic_write, content_hash
 from common.translation import (
-    LANG_NAMES,
     detect_language,
     split_frontmatter,
     translate_markdown_document,
 )
+from common.website_backup import classify_content, classify_file
+from generated_paths import GENERATED_CONTENT_DIRS, GENERATED_CONTENT_FILES
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +101,14 @@ def parse_args() -> argparse.Namespace:
         help="File or directory to exclude from translation scanning.",
     )
     parser.add_argument(
+        "--include-generated",
+        action="store_true",
+        help=(
+            "Translate pipeline-generated pages (daily/weekly/monthly/research/"
+            "benchmark and gadget_generated files). Skipped by default."
+        ),
+    )
+    parser.add_argument(
         "--state-file",
         default=str(STATE_FILE),
         help=f"Path to the translation state file (default: {STATE_FILE.name})",
@@ -136,6 +152,28 @@ def is_excluded(path: Path, excluded: list[Path]) -> bool:
     return any(path == item or item in path.parents for item in excluded)
 
 
+def generated_exclude_paths(*roots: Path) -> list[Path]:
+    """Resolve GENERATED_CONTENT_DIRS/FILES against content/ and scan roots."""
+    bases = [SITE_ROOT / "content", *roots]
+    seen: set[Path] = set()
+    items: list[Path] = []
+    for base in bases:
+        for rel in (*GENERATED_CONTENT_DIRS, *GENERATED_CONTENT_FILES):
+            path = (base / rel).resolve()
+            if path not in seen:
+                seen.add(path)
+                items.append(path)
+    return items
+
+
+def is_generated_page(path: Path | None = None, content: str | None = None) -> bool:
+    if content is not None:
+        return classify_content(content) == "generated"
+    if path is None:
+        return False
+    return classify_file(path) == "generated"
+
+
 def read_file_info(path: Path) -> FileInfo | None:
     if not path.exists() or not path.is_file():
         return None
@@ -152,7 +190,12 @@ def read_file_info(path: Path) -> FileInfo | None:
     )
 
 
-def collect_pairs(root: Path, excluded: list[Path]) -> tuple[dict[str, PairInfo], list[str]]:
+def collect_pairs(
+    root: Path,
+    excluded: list[Path],
+    include_generated: bool = False,
+    recursive: bool = True,
+) -> tuple[dict[str, PairInfo], list[str]]:
     warnings: list[str] = []
     pairs: dict[str, PairInfo] = {}
 
@@ -160,12 +203,28 @@ def collect_pairs(root: Path, excluded: list[Path]) -> tuple[dict[str, PairInfo]
         warnings.append(f"[skip] root not found: {root}")
         return pairs, warnings
 
-    for path in sorted(root.rglob("*.md")):
+    if root.is_file():
+        if not root.name.endswith(".md"):
+            warnings.append(f"[skip] not a markdown file: {root}")
+            return pairs, warnings
+        scan_paths = [root]
+    elif recursive:
+        scan_paths = sorted(root.rglob("*.md"))
+    else:
+        scan_paths = sorted(root.glob("*.md"))
+
+    for path in scan_paths:
         resolved = path.resolve()
         if is_excluded(resolved, excluded):
             continue
         if path.name.endswith(".en.md"):
             warnings.append(f"[skip] unsupported legacy filename, leaving untouched: {path}")
+            continue
+
+        info = read_file_info(resolved)
+        if info is None:
+            continue
+        if not include_generated and is_generated_page(content=info.content):
             continue
 
         en_path = canonical_en_path(resolved)
@@ -182,9 +241,6 @@ def collect_pairs(root: Path, excluded: list[Path]) -> tuple[dict[str, PairInfo]
             )
             pairs[key] = pair
 
-        info = read_file_info(resolved)
-        if info is None:
-            continue
         if resolved == zh_path:
             pair.zh_file = info
         else:
@@ -352,23 +408,40 @@ def translate_document(
     return translate_markdown_document(content, source_lang, target_lang, engine=engine)
 
 
-def main() -> int:
-    args = parse_args()
+def run(
+    *,
+    roots: list[Path],
+    excluded: list[Path],
+    state_path: Path,
+    model: str,
+    force_full: bool,
+    dry_run: bool,
+    verbose: bool = False,
+    include_generated: bool = False,
+    recursive: bool = True,
+    pair_predicate: Callable[[PairInfo], bool] | None = None,
+    only_target_lang: str | None = None,
+) -> int:
+    """Scan roots and incrementally sync en/zh pairs. Returns a process exit code."""
     logging.basicConfig(
-        level=logging.INFO if args.verbose else logging.WARNING,
+        level=logging.INFO if verbose else logging.WARNING,
         format="%(message)s",
     )
 
-    roots = [Path(item).resolve() for item in args.root]
-    excluded = [Path(item).resolve() for item in args.exclude]
-    state_path = Path(args.state_file).resolve()
+    roots = [Path(item).resolve() for item in roots]
+    excluded = [Path(item).resolve() for item in excluded]
+    if not include_generated:
+        excluded.extend(generated_exclude_paths(*roots))
+    state_path = Path(state_path).resolve()
     state = load_state(state_path)
     state_pairs: dict[str, Any] = dict(state.get("pairs", {}))
 
     pair_map: dict[str, PairInfo] = {}
     scan_warnings: list[str] = []
     for root in roots:
-        pairs, warnings = collect_pairs(root, excluded)
+        pairs, warnings = collect_pairs(
+            root, excluded, include_generated=include_generated, recursive=recursive,
+        )
         pair_map.update(pairs)
         scan_warnings.extend(warnings)
 
@@ -379,15 +452,26 @@ def main() -> int:
     bootstrap_updates: dict[str, Any] = {}
 
     for pair_key, pair in sorted(pair_map.items()):
-        op, bootstrap, warnings = plan_pair(pair, state_pairs.get(pair_key), args.full)
+        if pair_predicate is not None and not pair_predicate(pair):
+            continue
+        op, bootstrap, warnings = plan_pair(pair, state_pairs.get(pair_key), force_full)
         for warning in warnings:
             print(warning)
         if bootstrap is not None:
             bootstrap_updates[pair_key] = bootstrap
-        if op is not None:
-            operations.append(op)
+        if op is None:
+            continue
+        if only_target_lang and op.target_lang != only_target_lang:
+            continue
+        if not include_generated and (
+            is_generated_page(content=op.source_content)
+            or is_generated_page(path=op.target_path)
+            or is_generated_page(path=op.canonical_source_path)
+        ):
+            continue
+        operations.append(op)
 
-    if args.dry_run:
+    if dry_run:
         print(f"[dry-run] scanned {len(pair_map)} pairs")
         for op in operations:
             print(
@@ -409,10 +493,10 @@ def main() -> int:
         return 0
 
     try:
-        engine = create_engine(args.model)
+        engine = create_engine(model)
         engine.load()
     except Exception as exc:
-        print(f'[warn] could not load translation model "{args.model}": {exc}')
+        print(f'[warn] could not load translation model "{model}": {exc}')
         print('[warn] continuing without translation updates')
         if bootstrap_updates:
             state_pairs.update(bootstrap_updates)
@@ -430,6 +514,13 @@ def main() -> int:
                 f"{op.source_path.name} ({op.source_lang}) -> {op.target_path.name} ({op.target_lang})",
             )
             try:
+                if not include_generated and (
+                    is_generated_page(path=op.target_path)
+                    or is_generated_page(path=op.canonical_source_path)
+                ):
+                    print(f"  [skip] generated page, not rewriting: {op.target_path}")
+                    continue
+
                 if op.canonical_source_path != op.source_path:
                     atomic_write(op.canonical_source_path, op.source_content)
                     print(f"  [ok] canonical source updated: {op.canonical_source_path}")
@@ -469,6 +560,24 @@ def main() -> int:
         f"bootstrapped={len(bootstrap_updates)} total_pairs={len(pair_map)}",
     )
     return 0
+
+
+def main() -> int:
+    args = parse_args()
+    logging.basicConfig(
+        level=logging.INFO if args.verbose else logging.WARNING,
+        format="%(message)s",
+    )
+    return run(
+        roots=[Path(item).resolve() for item in args.root],
+        excluded=[Path(item).resolve() for item in args.exclude],
+        state_path=Path(args.state_file).resolve(),
+        model=args.model,
+        force_full=args.full,
+        dry_run=args.dry_run,
+        verbose=args.verbose,
+        include_generated=args.include_generated,
+    )
 
 
 if __name__ == "__main__":

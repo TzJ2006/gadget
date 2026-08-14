@@ -4,6 +4,7 @@ Run: python -m pytest scripts/tests/test_onboard.py -q
 """
 
 import json
+import subprocess
 
 import onboard
 
@@ -109,3 +110,76 @@ def test_research_config_merges_into_root(monkeypatch):
     assert root["research"]["model"] == "opus"            # sheet value wins
     assert root["research"]["max_students"] == 10         # preserved from current
     assert "output_dir" not in root["research"]           # empty value dropped
+
+
+# --- claude plugin list except-path -----------------------------------------
+
+
+def _plugin_ctx():
+    return onboard.Ctx(dry_run=False, assume_yes=True, sheet={})
+
+
+def test_install_claude_plugin_list_oserror_warns_and_continues(monkeypatch, capsys):
+    installs = []
+    monkeypatch.setattr(onboard, "_which", lambda name: "/bin/claude")
+
+    def fake_run(cmd, **kwargs):
+        raise OSError("claude vanished")
+
+    monkeypatch.setattr(onboard.subprocess, "run", fake_run)
+    monkeypatch.setattr(onboard, "_run", lambda cmd, **kw: installs.append(cmd) or True)
+
+    onboard._install_claude_plugin("ponytail@claude-plugins-official", _plugin_ctx())
+    out = capsys.readouterr().out
+    assert "[warn]" in out and "plugin list failed" in out
+    assert "continuing with install" in out
+    assert installs == [["/bin/claude", "plugin", "install", "ponytail@claude-plugins-official"]]
+
+
+def test_install_claude_plugin_list_timeout_warns_and_continues(monkeypatch, capsys):
+    installs = []
+    monkeypatch.setattr(onboard, "_which", lambda name: "/bin/claude")
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 60)
+
+    monkeypatch.setattr(onboard.subprocess, "run", fake_run)
+    monkeypatch.setattr(onboard, "_run", lambda cmd, **kw: installs.append(cmd) or True)
+
+    onboard._install_claude_plugin("foo@bar", _plugin_ctx())
+    out = capsys.readouterr().out
+    assert "[warn]" in out and "plugin list failed" in out
+    assert installs
+
+
+def test_install_claude_plugin_list_nonzero_warns_and_continues(monkeypatch, capsys):
+    installs = []
+    monkeypatch.setattr(onboard, "_which", lambda name: "/bin/claude")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="plugin list exploded")
+
+    monkeypatch.setattr(onboard.subprocess, "run", fake_run)
+    monkeypatch.setattr(onboard, "_run", lambda cmd, **kw: installs.append(cmd) or True)
+
+    onboard._install_claude_plugin("foo@bar", _plugin_ctx())
+    out = capsys.readouterr().out
+    assert "[warn]" in out and "plugin list failed" in out
+    assert "plugin list exploded" in out
+    assert installs
+
+
+def test_install_claude_plugin_skips_when_already_listed(monkeypatch, capsys):
+    installs = []
+    monkeypatch.setattr(onboard, "_which", lambda name: "/bin/claude")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="foo@bar\nother@x\n", stderr="")
+
+    monkeypatch.setattr(onboard.subprocess, "run", fake_run)
+    monkeypatch.setattr(onboard, "_run", lambda cmd, **kw: installs.append(cmd) or True)
+
+    onboard._install_claude_plugin("foo@bar", _plugin_ctx())
+    out = capsys.readouterr().out
+    assert "[skip] plugin already installed: foo@bar" in out
+    assert installs == []

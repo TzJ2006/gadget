@@ -11,7 +11,7 @@ try:
 except ImportError:
     HAS_TQDM = False
 
-from .core import BaseBenchmark, calculate_flops_gemm
+from .core import calculate_flops_gemm, fmt_flops
 
 
 def calculate_matrix_size_from_memory(memory_gb: float) -> int:
@@ -75,10 +75,18 @@ class GpuBenchmark:
         ('BF16', 'bfloat16'),
     ]
 
-    def __init__(self, matrix_size: int = None, iterations: int = None, duration: float = None):
+    def __init__(self, matrix_size: int = None, iterations: int = None,
+                 duration: float = None, timeout: float = None):
         self.matrix_size = matrix_size or self.MATRIX_SIZE
         self.iterations = iterations or self.ITERATIONS
         self.duration = duration
+        # Safety cap per precision: at least 60s, or 2x --duration if longer.
+        if timeout is not None:
+            self.timeout = timeout
+        elif duration is not None:
+            self.timeout = max(60.0, duration * 2)
+        else:
+            self.timeout = 60.0
 
         # Detect available backends
         self.backends = self._detect_backends()
@@ -205,33 +213,45 @@ class GpuBenchmark:
         """Create random tensors for matrix multiplication."""
         import torch
 
-        # Create tensors with appropriate initialization
-        # Note: dtype.is_floating_point returns True for BF16
+        # Note: dtype.is_floating_point returns True for BF16.
+        # The else branch is kept for planned integer dtypes.
         if dtype.is_floating_point:
             try:
                 a = torch.randn(n, n, dtype=dtype, device=device_obj)
                 b = torch.randn(n, n, dtype=dtype, device=device_obj)
-            except Exception:
+            except (RuntimeError, TypeError):
                 # Fallback to float32 then convert
                 a = torch.randn(n, n, dtype=torch.float32, device=device_obj).to(dtype)
                 b = torch.randn(n, n, dtype=torch.float32, device=device_obj).to(dtype)
         else:
-            # For non-floating point types (like FP8 which is technically floating)
-            # FP8 tensors need special handling
             try:
                 a = torch.randn(n, n, dtype=dtype, device=device_obj)
                 b = torch.randn(n, n, dtype=dtype, device=device_obj)
-            except Exception:
-                # Fallback: create float32 and convert
+            except (RuntimeError, TypeError):
                 a = torch.randn(n, n, dtype=torch.float32, device=device_obj)
                 b = torch.randn(n, n, dtype=torch.float32, device=device_obj)
                 try:
                     a = a.to(dtype)
                     b = b.to(dtype)
-                except:
-                    pass  # Keep as float32 if conversion fails
+                except (RuntimeError, TypeError) as e:
+                    raise RuntimeError(f'dtype conversion to {dtype} failed: {e}') from e
 
         return a, b
+
+    def _error_result(self, device: Dict[str, Any], dtype_name: str,
+                      matrix_size: int, error: str,
+                      flops_formatted: str = 'N/A (error)') -> Dict[str, Any]:
+        return {
+            'name': f"{device['backend']}:{device['index']}",
+            'type': 'gpu',
+            'backend': device['backend'],
+            'dtype': dtype_name,
+            'device_model': device['name'],
+            'matrix_size': matrix_size,
+            'error': error,
+            'flops_per_sec': 0,
+            'flops_formatted': flops_formatted,
+        }
 
     def _synchronize(self, device_obj):
         """Synchronize device operations."""
@@ -274,8 +294,14 @@ class GpuBenchmark:
         # Use device-specific matrix size
         matrix_size = device.get('matrix_size', self.matrix_size)
 
+        def err(msg, fmt='N/A (error)'):
+            return self._error_result(device, dtype_name, matrix_size, msg, fmt)
+
         # Create tensors (reuse to reduce overhead) - pre-generate before timing
-        a, b = self._create_tensors(matrix_size, dtype, device_obj)
+        try:
+            a, b = self._create_tensors(matrix_size, dtype, device_obj)
+        except (RuntimeError, TypeError) as e:
+            return err(f'dtype conversion failed: {str(e)[:80]}')
 
         # Test matmul support - more comprehensive test
         try:
@@ -286,32 +312,12 @@ class GpuBenchmark:
             for _ in range(3):
                 _ = a @ b
                 self._synchronize(device_obj)
-        except (RuntimeError, Exception) as e:
+        except Exception as e:
             error_msg = str(e)
-            # Check for common CUDA errors
             if 'no kernel image' in error_msg or 'no kernel' in error_msg:
-                return {
-                    'name': f"{backend}:{device_index}",
-                    'type': 'gpu',
-                    'backend': backend,
-                    'dtype': dtype_name,
-                    'device_model': device['name'],
-                    'matrix_size': matrix_size,
-                    'error': 'dtype not supported on this GPU (upgrade PyTorch)',
-                    'flops_per_sec': 0,
-                    'flops_formatted': 'N/A (not supported)',
-                }
-            return {
-                'name': f"{backend}:{device_index}",
-                'type': 'gpu',
-                'backend': backend,
-                'dtype': dtype_name,
-                'device_model': device['name'],
-                'matrix_size': matrix_size,
-                'error': error_msg[:100],
-                'flops_per_sec': 0,
-                'flops_formatted': 'N/A (error)',
-            }
+                return err('dtype not supported on this GPU (upgrade PyTorch)',
+                           'N/A (not supported)')
+            return err(error_msg[:100])
 
         # Warmup with error handling
         try:
@@ -319,17 +325,7 @@ class GpuBenchmark:
                 _ = a @ b
                 self._synchronize(device_obj)
         except Exception as e:
-            return {
-                'name': f"{backend}:{device_index}",
-                'type': 'gpu',
-                'backend': backend,
-                'dtype': dtype_name,
-                'device_model': device['name'],
-                'matrix_size': matrix_size,
-                'error': f'warmup failed: {str(e)[:50]}...',
-                'flops_per_sec': 0,
-                'flops_formatted': 'N/A (error)',
-            }
+            return err(f'warmup failed: {str(e)[:50]}...')
 
         # Determine number of iterations
         if self.duration is not None:
@@ -344,21 +340,11 @@ class GpuBenchmark:
                 avg_time = sum(calib_times) / len(calib_times)
                 measure_iters = max(1, int(self.duration / avg_time))
             except Exception as e:
-                return {
-                    'name': f"{backend}:{device_index}",
-                    'type': 'gpu',
-                    'backend': backend,
-                    'dtype': dtype_name,
-                    'device_model': device['name'],
-                    'matrix_size': matrix_size,
-                    'error': f'calibration failed: {str(e)[:50]}...',
-                    'flops_per_sec': 0,
-                    'flops_formatted': 'N/A (error)',
-                }
+                return err(f'calibration failed: {str(e)[:50]}...')
 
         # Measurement with error handling and timeout
         times = []
-        timeout_seconds = 60  # 1 minute timeout per precision
+        timeout_seconds = self.timeout
         start_time = time.perf_counter()
 
         try:
@@ -369,18 +355,9 @@ class GpuBenchmark:
                     # Timeout reached, use collected data
                     if times:
                         break
-                    else:
-                        return {
-                            'name': f"{backend}:{device_index}",
-                            'type': 'gpu',
-                            'backend': backend,
-                            'dtype': dtype_name,
-                            'device_model': device['name'],
-                            'matrix_size': matrix_size,
-                            'error': f'timeout after {timeout_seconds}s (precision too slow)',
-                            'flops_per_sec': 0,
-                            'flops_formatted': 'N/A (timeout)',
-                        }
+                    return err(
+                        f'timeout after {timeout_seconds}s (precision too slow)',
+                        'N/A (timeout)')
 
                 iter_start = time.perf_counter()
                 _ = a @ b
@@ -393,17 +370,7 @@ class GpuBenchmark:
                     progress_bar.n = progress
                     progress_bar.refresh()
         except Exception as e:
-            return {
-                'name': f"{backend}:{device_index}",
-                'type': 'gpu',
-                'backend': backend,
-                'dtype': dtype_name,
-                'device_model': device['name'],
-                'matrix_size': matrix_size,
-                'error': f'benchmark failed: {str(e)[:50]}...',
-                'flops_per_sec': 0,
-                'flops_formatted': 'N/A (error)',
-            }
+            return err(f'benchmark failed: {str(e)[:50]}...')
 
         # Calculate median
         import numpy as np
@@ -434,7 +401,7 @@ class GpuBenchmark:
                 'max': float(np.max(times)),
             },
             'flops_per_sec': flops_per_sec,
-            'flops_formatted': self._format_flops(flops_per_sec),
+            'flops_formatted': fmt_flops(flops_per_sec),
         }
 
         # Add timeout warning if applicable
@@ -442,14 +409,6 @@ class GpuBenchmark:
             result['timeout'] = f'hit {timeout_seconds}s timeout (used {actual_iters}/{measure_iters} iters)'
 
         return result
-
-    def _format_flops(self, flops: float) -> str:
-        """Format FLOPS to appropriate unit."""
-        for unit, threshold in [('PFLOPS', 1e15), ('TFLOPS', 1e12),
-                                 ('GFLOPS', 1e9), ('MFLOPS', 1e6)]:
-            if flops >= threshold:
-                return f"{flops / threshold:,.2f} {unit}/s"
-        return f"{flops:,.2f} FLOPS/s"
 
     def run_all(self) -> List[Dict[str, Any]]:
         """
@@ -508,7 +467,7 @@ class GpuBenchmark:
 
 
 def run_all_gpu_benchmarks(matrix_size: int = None, iterations: int = None,
-                           duration: float = None) -> list:
+                           duration: float = None, timeout: float = None) -> list:
     """
     Run all GPU benchmarks and return results.
 
@@ -516,9 +475,12 @@ def run_all_gpu_benchmarks(matrix_size: int = None, iterations: int = None,
         matrix_size: Size of matrices for GEMM benchmark
         iterations: Number of iterations (not used, kept for compatibility)
         duration: Target duration per benchmark in seconds
+        timeout: Per-precision safety cap in seconds. Defaults to
+            max(60, duration * 2) when duration is set, else 60.
 
     Returns:
         List of benchmark result dictionaries.
     """
-    bench = GpuBenchmark(matrix_size=matrix_size, iterations=iterations, duration=duration)
+    bench = GpuBenchmark(matrix_size=matrix_size, iterations=iterations,
+                         duration=duration, timeout=timeout)
     return bench.run_all()

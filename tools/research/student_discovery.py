@@ -14,7 +14,7 @@ def score_student_candidates(
     coauthor_data: list[dict[str, Any]],
     max_candidates: int = 10,
     weights: dict[str, float] | None = None,
-    threshold: float = 0.4,
+    threshold: float | None = None,
 ) -> list[StudentCandidate]:
     """Score co-authors on likelihood of being students.
 
@@ -23,7 +23,27 @@ def score_student_candidates(
     - Collaboration concentrated in 3-7 year window (PhD period)
     - Minimum 2 co-authored papers
     - Collaboration span suggests mentorship timeline
+
+    ``threshold`` and ``weights`` default to ``research.scoring.student_threshold``
+    (0.4) and ``research.scoring.student_weights`` when omitted.
     """
+    from research.config import (
+        DEFAULT_STUDENT_THRESHOLD,
+        DEFAULT_STUDENT_WEIGHTS,
+        scoring_config,
+    )
+
+    scoring = scoring_config()
+    if threshold is None:
+        raw = scoring.get("student_threshold", DEFAULT_STUDENT_THRESHOLD)
+        threshold = float(raw) if raw is not None else DEFAULT_STUDENT_THRESHOLD
+    w = dict(DEFAULT_STUDENT_WEIGHTS)
+    cfg_w = scoring.get("student_weights")
+    if isinstance(cfg_w, dict):
+        w.update(cfg_w)
+    if weights:
+        w.update(weights)
+
     candidates = []
 
     for ca in coauthor_data:
@@ -35,12 +55,6 @@ def score_student_candidates(
         span = ca.get("collab_span", 0)
         start = ca.get("collab_start", 0)
         end = ca.get("collab_end", 0)
-
-        # Score component weights (configurable)
-        w = {"first_author": 0.40, "time_concentration": 0.25,
-             "frequency": 0.20, "recency": 0.15}
-        if weights:
-            w.update(weights)
 
         # 1. First-author signal
         if total > 0 and first_with_last > 0:

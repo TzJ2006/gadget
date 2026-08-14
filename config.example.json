@@ -14,7 +14,11 @@
     "logs_dir": "",
     "reports_dir": "",
     "rclone_remote": "gdrive:gadget/summarize",
-    "rclone_path": ""
+    "rclone_path": "",
+    "chunk_chars": 150000,
+    "timeout_daily": 600,
+    "timeout_weekly": 900,
+    "timeout_monthly": 1800
   },
   "research": {
     "model": "sonnet",
@@ -22,7 +26,46 @@
     "default_depth": 1,
     "max_students": 10,
     "output_dir": "",
-    "semantic_scholar_api_key": ""
+    "semantic_scholar_api_key": "",
+    "scoring": {
+      "top_venues": [
+        "icra",
+        "iros",
+        "rss",
+        "corl",
+        "neurips",
+        "nips",
+        "icml",
+        "iclr",
+        "cvpr",
+        "iccv",
+        "eccv",
+        "aaai",
+        "ijcai",
+        "ral",
+        "t-ro",
+        "science robotics"
+      ],
+      "weights": {
+        "h_index": 25,
+        "total_citations": 20,
+        "recent_citations": 20,
+        "top_venue_ratio": 20,
+        "career_stage": 15
+      },
+      "tier_cutoffs": {
+        "leader": 75,
+        "rising": 50,
+        "active": 30
+      },
+      "student_threshold": 0.4,
+      "student_weights": {
+        "first_author": 0.4,
+        "time_concentration": 0.25,
+        "frequency": 0.2,
+        "recency": 0.15
+      }
+    }
   },
   "research_scout": {
     "default_api": "ollama",
@@ -43,5 +86,9 @@
     "models": [
       "tencent/Hy-MT2-1.8B"
     ]
+  },
+  "translation": {
+    "review_model": "qwen3.6",
+    "review": true
   }
 }

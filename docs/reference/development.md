@@ -19,29 +19,29 @@ first for the layering rules.
 Localized to **`common/engine.py`**: add a `TranslationEngine` subclass
 (template: the 4 existing classes — implement `load()`,
 `generate_batch(prompts, *, max_new_tokens=4096)`, `unload()`), add the name to
-`_TRANSLATION_BACKENDS` (`:724`), and add one `elif` in `create_engine()`'s
-explicit-branch block (`:753-761`). Consumers call `create_engine()`
+`_TRANSLATION_BACKENDS` (`:797`), and add one `elif` in `create_engine()`'s
+explicit-branch block (`:826-834`). Consumers call `create_engine()`
 generically, so **no tool code changes**.
 
-- For auto-selection: add an availability probe (pattern `_vllm_available` / `_llamacpp_available` / `_ollama_available`) + a branch in the auto chain (`:762-778`).
-- For a **server-side** backend (no in-process GPU): add it to the `isinstance(eng, OllamaEngine)` VRAM-eviction gate at `:782` so it doesn't needlessly evict the Ollama chat model.
-- **Loud failure**: an explicit `GADGET_TRANSLATION_BACKEND` value outside `_TRANSLATION_BACKENDS` raises `ValueError` before dispatch (`:735-738`); empty/unset still auto-selects.
-- **Silent failure**: a name that IS in `_TRANSLATION_BACKENDS` but has no `elif` branch passes validation and falls into the auto-select chain, whose final else (`:776-778`) returns `TransformersEngine` — your new backend is silently never used.
+- For auto-selection: add an availability probe (pattern `_vllm_available` / `_llamacpp_available` / `_ollama_available`) + a branch in the auto chain (`:835-860`).
+- For a **server-side** backend (no in-process GPU): add it to the `isinstance(eng, OllamaEngine)` VRAM-eviction gate at `:864` so it doesn't needlessly evict the Ollama chat model.
+- **Loud failure**: an explicit `GADGET_TRANSLATION_BACKEND` value outside `_TRANSLATION_BACKENDS` raises `ValueError` before dispatch (`:808-811`); empty/unset still auto-selects.
+- **Silent failure**: a name that IS in `_TRANSLATION_BACKENDS` but has no `elif` branch passes validation and falls into the auto-select chain, whose final else (`:858-860`) returns `TransformersEngine` — your new backend is silently never used.
 
 ### 2. Add an LLM chat backend
 
 **`common/llm.py`** has **two** dispatch sites — edit **both**:
-`call_llm_raw` (`:167`, dispatch `:179-186`, raw-text tier) and `call_llm`
-(`:350`, dispatch `:353-360`, JSON tier), **plus** add the name to
-`LLM_BACKENDS` (`:55`). Add an `elif` + a `_raw_<x>()` and a
+`call_llm_raw` (`:188`, dispatch `:200-208`, raw-text tier) and `call_llm`
+(`:371`, dispatch `:374-382`, JSON tier), **plus** add the name to
+`LLM_BACKENDS` (`:58`). Default is `DEFAULT_BACKEND` (`:53`) = `GADGET_LLM_BACKEND` or `"ollama"`. Add an `elif` + a `_raw_<x>()` and a
 `call_<x>(config)` impl (optionally a model-name map alongside `ANTHROPIC_MODELS`/`OPENAI_MODELS`) — ~5 edits.
 
 Then add the name to the **9 argparse `choices=[...]` lists** gating `--api`:
-`summarize/cli.py:47,68,123`; `research/scout/cli.py:850,856,889,909,923`;
-`research/cli.py:157`.
+`summarize/cli.py:47,68,126`; `research/scout/cli.py:857,863,896,916,930`;
+`research/cli.py:163`.
 
 - **Do not touch**: `research/llm.py` and `research/scout/evaluate.py` — they only delegate to `common.llm.call_llm_raw`.
-- **Loud failure**: miss a dispatch `elif` (or misspell a backend anywhere — env, config `default_api`, `backend=` param) and the call raises `ValueError: Unknown LLM backend ...` naming `LLM_BACKENDS` (`:187`, `:361`) — the old silent `else → claude_cli` fallthrough is gone. Missing a `choices=` list is also loud (argparse hard-errors).
+- **Loud failure**: miss a dispatch `elif` (or misspell a backend anywhere — env, config `default_api`, `backend=` param) and the call raises `ValueError: Unknown LLM backend ...` naming `LLM_BACKENDS` (`:208`, `:382`) — the old silent `else → claude_cli` fallthrough is gone. Missing a `choices=` list is also loud (argparse hard-errors).
 - **Residual quiet path**: config-file `default_api` values bypass argparse `choices` validation (they enter via `set_defaults`), so a bad config value only surfaces at the first LLM call — not at parse time — and the error names the value, not the config file it came from.
 
 ### 3. Add a summarize daily report field
@@ -49,29 +49,31 @@ Then add the name to the **9 argparse `choices=[...]` lists** gating `--api`:
 Four anchors that must stay in sync by hand:
 
 - `summarizer.py` — add to `SUMMARY_PROMPT` JSON + Requirements (`:39`, what ollama/openai/claude_cli obey) **and** `_daily_tool_schema()` properties/`required` (`:251`, what the anthropic backend obeys) **and** `CHUNK_MERGE_PROMPT` (`:165`, so days > 150K chars don't drop it during hierarchical merge). If overview-shaped, also `_OVERVIEW_FLAT_BLOCK`/`_REQ` (`:120-126`).
-- `formatter.py` — render it in `generate_markdown()` (`:100`); if it's a level/importance list, add its key to `_sort_report_by_importance()` (`:34-35`).
+- `formatter.py` — render it in `generate_markdown()` (`:127`); if it's a level/importance list, add its key to `_sort_report_by_importance()` (`:58`).
 - **Silent failures**: prompt-but-not-schema ⇒ field omitted on the anthropic path only (output differs by `--api`); schema-but-not-`generate_markdown` ⇒ field in JSON but never rendered; miss the sort key ⇒ unsorted; miss `CHUNK_MERGE_PROMPT` ⇒ dropped only on large days (passes small-day tests).
 - **Cross-period**: adding to daily does **not** propagate to weekly/monthly — those have their own copy-pasted schemas/renderers (`weekly_summary.py`, `monthly_summary.py`) and strip fields in `format_reports_for_llm`. You must repeat the change there.
 
 ### 4. Add a config key
 
-**summarize** (`config.py`) — three mechanisms depending on the key's job:
+**summarize** (`config.py`) — three mechanisms depending on the key's job. The
+file is always repo-root `config.json` (or `GADGET_CONFIG`); there is no
+`SUMMARIZE_CONFIG` and no `~/.config/summarize`.
 
 - CLI-default behavior → add to `_CLI_DEFAULTS_MAP` (`:84`, config-key → argparse dest), consumed by `cli_defaults()` (`:92`).
-- Env-bridged knob (for `common/`) → add to `_ENV_FROM_CONFIG` (`:100`, config-key → env var), applied by `apply_env_from_config()` (`:110`).
-- Output dir → just call `_resolve_output_dir(cli, env, config_key, default)` (`:53`) — no registry.
+- Env-bridged knob (for `common/`) → add to `_ENV_FROM_CONFIG` (`:112`, config-key → env var), applied by `apply_env_from_config()` (`:122`).
+- Output dir → just call `_resolve_output_dir(cli, env, config_key, default)` (`:39`) — no registry.
 
-**research** (two files) — profiler keys in `config.py` `DEFAULT_CONFIG` (`:13`) at `~/.config/research/`; scout keys via `scout/config.py` `resolve_param` (`:86`) at `~/.config/research_scout/`.
+**research** (two files, one JSON) — profiler keys in `config.py` `DEFAULT_CONFIG` (`:14`) under the `research` section of repo-root `config.json`; scout keys via `scout/config.py` `resolve_param` (`:86`) under `research_scout` in the **same** file (merged — scout wins). Override path with `GADGET_CONFIG`. `~/.config/research` / `~/.config/research_scout` are not read.
 
-- **Silent failures**: `_CLI_DEFAULTS_MAP` entry with no matching argparse dest ⇒ config silently ignored; `_ENV_FROM_CONFIG` uses `setdefault` so an already-exported env var overrides config; editing a non-active summarize config file (`~/.config` when a repo-local one exists, or either when the `SUMMARIZE_CONFIG` env var points elsewhere) does nothing; a scout key **must** be named `default_<param>` or `resolve_param` silently returns the hardcoded default; a key in the wrong research file (profiler vs scout) silently no-ops (except `default_api`, which `cmd_profile` cross-reads).
+- **Silent failures**: `_CLI_DEFAULTS_MAP` entry with no matching argparse dest ⇒ config silently ignored; `_ENV_FROM_CONFIG` uses `setdefault` so an already-exported env var overrides config; editing a file that is not the active path (`GADGET_CONFIG` pointing elsewhere, or a leftover `~/.config/...` that is no longer read) does nothing; a scout key **must** be named `default_<param>` or `resolve_param` silently returns the hardcoded default; a key in the wrong research **section** (profiler vs scout) silently no-ops (except `default_api`, which `cmd_profile` cross-reads).
 
 ### 5. Add a whole new tool
 
-- `pyproject.toml` — add an extra under `[project.optional-dependencies]` (`:8-16`); register the package in **both** `[tool.setuptools]` `package-dir` (`:19`) and `packages` (`:20`); add the extra to `all` (`:16`) if it should install with `.[all]`.
+- `pyproject.toml` — add an extra under `[project.optional-dependencies]` (`:8-16`); register the package in **both** `[tool.setuptools]` `package-dir` (`:19`) and `packages` (`:20`); add the extra to `all` (`:16`) **only if** it should install with `.[all]`. `translator` is omitted from `all` on purpose — install `pip install -e ".[translator]"` separately.
 - Add `tools/<x>/__main__.py` exposing `main()` so `python -m <x>` works (pattern: existing tools' `__main__.py`).
 - Add `tools/<x>/requirements.txt`, `CLAUDE.md`, `AGENTS.md`.
 - Obey the two import rules above.
-- **Silent failure**: omit the extra from `all` ⇒ `pip install -e ".[all]"` silently skips your deps (imports only work if the deps happen to be present).
+- **Silent failure**: omit the extra from `all` ⇒ `pip install -e ".[all]"` silently skips your deps (imports only work if the deps happen to be present). Same for `translator` by design: `.[all]` does not install Gradio/GGUF.
 
 ---
 

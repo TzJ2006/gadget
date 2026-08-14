@@ -5,12 +5,11 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from common.bilingual import write_bilingual
 from common.io import atomic_write as _atomic_write
+from common.llm import DEFAULT_BACKEND
 from common.paths import REPORTS_DIR
-from common.site_staging import resolve_site_content_dir, write_site_content
 
-from .config import _resolve_output_dir
+from .period_report import generate_period_hugo_post
 
 _DEFAULT_REPORTS_DIR = REPORTS_DIR / "summarize"
 
@@ -337,47 +336,25 @@ def generate_markdown(report: dict, target_date: date,
 
 
 def generate_hugo_post(markdown_body: str, target_date: date, hugo_site: Path,
-                       api: str = "claude_cli", pbar=None,
+                       api: str = DEFAULT_BACKEND, pbar=None,
                        chart_path: Optional[Path] = None,
                        engine=None, force: bool = False,
                        overwrite_human: bool = False) -> Path:
     """将日报渲染为 Hugo bugJournal 格式并写入站点 content 目录（双语）。"""
-    from common.site_staging import copy_site_static
-
-    summary = "Daily AI conversation summary"
-    for line in markdown_body.splitlines():
-        if line.startswith("> "):
-            summary = line[2:].strip()
-            break
-    summary = summary.replace("\\", "\\\\").replace('"', '\\"')
-
-    frontmatter = f"""---
-title: "Bug Journal {target_date.isoformat()}"
-date: {target_date.isoformat()}T00:00:00-05:00
-keywords:
-- Bug Journal
-summary: "{summary}"
-draft: false
----
-
-"""
-    resolve_site_content_dir(hugo_site, "bugJournal", "daily")
-
-    if chart_path and chart_path.exists():
-        dest = copy_site_static(
-            hugo_site, chart_path,
-            Path("images") / "daily" / chart_path.name, force=force)
-        print(f"[ok] Chart copied to Hugo: {dest}")
-
-    rel = Path("bugJournal") / "daily" / f"{target_date.isoformat()}.md"
-    en_path, zh_path = write_bilingual(hugo_site, rel, frontmatter + markdown_body,
-                                       engine=engine, pbar=pbar, force=force,
-                                       overwrite_human=overwrite_human)
-
-    print(f"[ok] Hugo post generated: {en_path}")
-    if zh_path:
-        print(f"[ok] Hugo post (translated): {zh_path}")
-    return en_path
+    return generate_period_hugo_post(
+        markdown_body, hugo_site,
+        title=f"Bug Journal {target_date.isoformat()}",
+        post_date=target_date,
+        hour=0, minute=0, second=0,
+        keywords=["Bug Journal"],
+        fallback_summary="Daily AI conversation summary",
+        content_parts=("bugJournal", "daily"),
+        filename=f"{target_date.isoformat()}.md",
+        chart_path=chart_path,
+        chart_image_subdir="daily",
+        api=api, force=force, overwrite_human=overwrite_human,
+        engine=engine, pbar=pbar,
+    )
 
 
 def save_report(report: dict, markdown: str, target_date: date, output_dir: Path):
