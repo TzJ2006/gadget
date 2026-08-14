@@ -1,7 +1,2 @@
-# GUI
-gradio>=4.0.0
-
-# Translation engine + model are reused from common/ — install the GGUF backend:
-#   pip install -e ".[translator]"   (pulls gradio + llama-cpp-python + huggingface-hub)
-# Rich-file OCR (.pdf/.docx/images) is delegated to marker-pdf in the separate
-# `deepseek-ocr` conda env via subprocess — NOT installed here on purpose.
+# Dependencies live in pyproject.toml extras (source of truth).
+# From repo root: pip install -e ".[translator]"

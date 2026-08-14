@@ -11,9 +11,9 @@ from common.json_utils import (
     parse_json_response as _parse_json_response,
     try_repair_result as _try_repair_result,
 )
-from common.llm import call_llm_raw
+from research.llm import call_llm
 
-from scout.config import (
+from research.scout.config import (
     EVAL_CACHE_DIR,
     MAX_HIGH_RELEVANCE,
     TOP_PAPERS_IN_REPORT,
@@ -22,13 +22,13 @@ from scout.config import (
     resolve_param,
     get_logger,
 )
-from scout.prompts import (
+from research.scout.prompts import (
     SCREENING_PROMPT,
     DEEP_EVAL_PROMPT,
     DIRECTION_SUGGESTION_PROMPT,
     language_instruction,
 )
-from scout.search import paper_id as _paper_id
+from research.scout.search import paper_id as _paper_id
 
 logger = get_logger()
 
@@ -54,9 +54,9 @@ def _as_num(x) -> float:
 
 
 def call_scout_llm(api: str, prompt: str, timeout: int = 600) -> dict:
-    """Call LLM and return parsed JSON dict (uses common/ unified backend)."""
+    """Call LLM and return parsed JSON dict (via research.llm.call_llm)."""
     try:
-        raw = call_llm_raw(prompt, backend=api, model="sonnet", timeout=timeout)
+        raw = call_llm(prompt, backend=api, model="sonnet", timeout=timeout)
     except Exception as e:
         logger.error("LLM call failed: %s", e)
         return {"parse_error": True, "raw_response": str(e)}
@@ -71,7 +71,7 @@ def call_scout_llm(api: str, prompt: str, timeout: int = 600) -> dict:
 
 def _screening_cache_key(project: dict, papers: list[dict],
                          language: str = DEFAULT_LANGUAGE,
-                         api: str = "claude_cli") -> str:
+                         api: str = "ollama") -> str:
     """Stage 1 screening cache key: project context + paper IDs + abstracts[:200]."""
     content = json.dumps({
         "stage": "screening",
@@ -88,7 +88,7 @@ def _screening_cache_key(project: dict, papers: list[dict],
 
 def _deep_eval_cache_key(project: dict, papers: list[dict],
                          language: str = DEFAULT_LANGUAGE,
-                         api: str = "claude_cli",
+                         api: str = "ollama",
                          current_methods: str = "") -> str:
     """Stage 2 deep evaluation cache key."""
     content = json.dumps({
@@ -190,7 +190,7 @@ def _format_papers_for_deep_eval(papers: list[dict]) -> str:
 # ─── Three-stage evaluation ─────────────────────────────────────────
 
 def _screen_papers(project: dict, papers: list[dict],
-                   api: str = "claude_cli",
+                   api: str = "ollama",
                    timeout: int = 600,
                    language: str = DEFAULT_LANGUAGE) -> list[dict]:
     """Stage 1: Quick screening of all papers."""
@@ -294,14 +294,14 @@ def _screen_papers_chunked(project: dict, papers: list[dict],
 
 
 def _deep_evaluate_papers(project: dict, papers: list[dict],
-                          api: str = "claude_cli",
+                          api: str = "ollama",
                           timeout: int = 600,
                           language: str = DEFAULT_LANGUAGE) -> list[dict]:
     """Stage 2: Deep analysis of high-relevance papers."""
     if not papers:
         return []
 
-    from scout.project import extract_current_methods
+    from research.scout.project import extract_current_methods
     current_methods = extract_current_methods(project["id"])
     papers_text = _format_papers_for_deep_eval(papers)
 
@@ -344,7 +344,7 @@ def _deep_evaluate_papers(project: dict, papers: list[dict],
     return merged
 
 
-def analyze_citations(paper: dict, api: str = "claude_cli",
+def analyze_citations(paper: dict, api: str = "ollama",
                       timeout: int = 600,
                       cache_obj=None, api_key: str = "") -> dict:
     """Stage 3: Citation impact analysis."""
@@ -416,7 +416,7 @@ def analyze_citations(paper: dict, api: str = "claude_cli",
 
 
 def evaluate_papers_for_project(project: dict, papers: list[dict],
-                                api: str = "claude_cli",
+                                api: str = "ollama",
                                 timeout: int = 600,
                                 use_cache: bool = True,
                                 language: str = DEFAULT_LANGUAGE) -> dict:
@@ -476,7 +476,7 @@ def evaluate_papers_for_project(project: dict, papers: list[dict],
     # Stage 2: Deep analysis
     current_methods = ""
     if high_papers:
-        from scout.project import extract_current_methods
+        from research.scout.project import extract_current_methods
         current_methods = extract_current_methods(project["id"])
     deep_key = _deep_eval_cache_key(project, high_papers, language, api, current_methods)
     evaluated_papers = None
@@ -505,7 +505,7 @@ def evaluate_papers_for_project(project: dict, papers: list[dict],
 
 
 def suggest_directions(project: dict, top_papers: list[dict],
-                       api: str = "claude_cli",
+                       api: str = "ollama",
                        timeout: int = 600,
                        language: str = DEFAULT_LANGUAGE) -> list[dict]:
     """Generate research direction suggestions based on high-scoring papers."""

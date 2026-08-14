@@ -6,14 +6,9 @@ Each test verifies:
 3. Failure modes produce expected behavior (not silent corruption)
 """
 
-import sys
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
-# Allow imports from research/
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 # ─── Fixtures: sample data at each stage boundary ────────────────────
@@ -156,16 +151,16 @@ class TestStage0OutputContract:
 class TestStage1MergeLogic:
     """Verify Stage 1 screening merge handles match/mismatch correctly.
 
-    These exercise the real ``scout.evaluate._screen_papers`` with the LLM
+    These exercise the real ``research.scout.evaluate._screen_papers`` with the LLM
     backend (``call_scout_llm``) mocked, rather than re-implementing the merge
     inline — so the assertions actually pin down production behavior.
     """
 
     def test_successful_merge(self, sample_project, sample_papers_stage0, sample_screening_response):
         """When LLM returns correct paper_ids, all fields merge correctly."""
-        from scout.evaluate import _screen_papers
+        from research.scout.evaluate import _screen_papers
 
-        with patch("scout.evaluate.call_scout_llm", return_value=sample_screening_response):
+        with patch("research.scout.evaluate.call_scout_llm", return_value=sample_screening_response):
             papers = _screen_papers(sample_project, [dict(p) for p in sample_papers_stage0])
 
         assert papers[0]["screening_relevance"] == "high"
@@ -176,9 +171,9 @@ class TestStage1MergeLogic:
 
     def test_empty_screenings_all_default_to_low(self, sample_project, sample_papers_stage0):
         """When LLM returns empty screenings list, all papers get default low."""
-        from scout.evaluate import _screen_papers
+        from research.scout.evaluate import _screen_papers
 
-        with patch("scout.evaluate.call_scout_llm", return_value={"screenings": []}):
+        with patch("research.scout.evaluate.call_scout_llm", return_value={"screenings": []}):
             papers = _screen_papers(sample_project, [dict(p) for p in sample_papers_stage0])
 
         for p in papers:
@@ -188,10 +183,10 @@ class TestStage1MergeLogic:
 
     def test_wrong_key_name_returns_empty(self, sample_project, sample_papers_stage0):
         """When LLM uses 'results' instead of 'screenings', all papers default to low."""
-        from scout.evaluate import _screen_papers
+        from research.scout.evaluate import _screen_papers
 
         wrong = {"results": [{"paper_id": "2605.13465v1", "screening_relevance": "high"}]}
-        with patch("scout.evaluate.call_scout_llm", return_value=wrong):
+        with patch("research.scout.evaluate.call_scout_llm", return_value=wrong):
             papers = _screen_papers(sample_project, [dict(p) for p in sample_papers_stage0])
 
         for p in papers:
@@ -200,7 +195,7 @@ class TestStage1MergeLogic:
 
     def test_partial_match(self, sample_project, sample_papers_stage0):
         """When LLM returns only some paper_ids, unmatched papers get defaults."""
-        from scout.evaluate import _screen_papers
+        from research.scout.evaluate import _screen_papers
 
         # Only first paper screened by the LLM
         response = {
@@ -208,7 +203,7 @@ class TestStage1MergeLogic:
                 {"paper_id": "2605.13465v1", "screening_relevance": "high", "motivation": "test"}
             ]
         }
-        with patch("scout.evaluate.call_scout_llm", return_value=response):
+        with patch("research.scout.evaluate.call_scout_llm", return_value=response):
             papers = _screen_papers(sample_project, [dict(p) for p in sample_papers_stage0])
 
         assert papers[0]["screening_relevance"] == "high"
@@ -222,18 +217,18 @@ class TestStage1MergeLogic:
 class TestStage2MergeLogic:
     """Verify Stage 2 deep eval merge handles match/mismatch correctly.
 
-    These exercise the real ``scout.evaluate._deep_evaluate_papers`` with the
+    These exercise the real ``research.scout.evaluate._deep_evaluate_papers`` with the
     LLM backend (``call_scout_llm``) and ``extract_current_methods`` mocked,
     rather than re-implementing the merge/score logic inline.
     """
 
     def test_successful_merge_with_scores(self, sample_project, sample_papers_stage0, sample_deep_eval_response):
         """When LLM returns correct paper_ids, scores compute correctly."""
-        from scout.evaluate import _deep_evaluate_papers
+        from research.scout.evaluate import _deep_evaluate_papers
 
         papers = [dict(p) for p in sample_papers_stage0[:1]]  # just first paper
-        with patch("scout.evaluate.call_scout_llm", return_value=sample_deep_eval_response), \
-                patch("scout.project.extract_current_methods", return_value=""):
+        with patch("research.scout.evaluate.call_scout_llm", return_value=sample_deep_eval_response), \
+                patch("research.scout.project.extract_current_methods", return_value=""):
             merged = _deep_evaluate_papers(sample_project, papers)
 
         assert merged[0]["composite_score"] == round(0.4*4 + 0.3*5 + 0.3*4, 2)
@@ -243,11 +238,11 @@ class TestStage2MergeLogic:
 
     def test_empty_evaluations_all_score_zero(self, sample_project, sample_papers_stage0):
         """When evaluations is empty, all papers get composite_score=0."""
-        from scout.evaluate import _deep_evaluate_papers
+        from research.scout.evaluate import _deep_evaluate_papers
 
         papers = [dict(p) for p in sample_papers_stage0]
-        with patch("scout.evaluate.call_scout_llm", return_value={"evaluations": []}), \
-                patch("scout.project.extract_current_methods", return_value=""):
+        with patch("research.scout.evaluate.call_scout_llm", return_value={"evaluations": []}), \
+                patch("research.scout.project.extract_current_methods", return_value=""):
             merged = _deep_evaluate_papers(sample_project, papers)
 
         for entry in merged:
@@ -257,12 +252,12 @@ class TestStage2MergeLogic:
 
     def test_wrong_key_name_returns_empty_evaluations(self, sample_project, sample_papers_stage0):
         """When LLM uses 'results' instead of 'evaluations', all scores are 0."""
-        from scout.evaluate import _deep_evaluate_papers
+        from research.scout.evaluate import _deep_evaluate_papers
 
         wrong = {"results": [{"paper_id": "2605.13465v1", "relevance": 5}]}
         papers = [dict(p) for p in sample_papers_stage0[:1]]
-        with patch("scout.evaluate.call_scout_llm", return_value=wrong), \
-                patch("scout.project.extract_current_methods", return_value=""):
+        with patch("research.scout.evaluate.call_scout_llm", return_value=wrong), \
+                patch("research.scout.project.extract_current_methods", return_value=""):
             merged = _deep_evaluate_papers(sample_project, papers)
 
         assert merged[0]["composite_score"] == 0.0
@@ -271,7 +266,7 @@ class TestStage2MergeLogic:
     def test_mismatched_paper_id_does_merge_via_version_strip(self, sample_project, sample_papers_stage0):
         """When LLM omits the version suffix, _lookup_by_id strips it and the
         merge SUCCEEDS — this is the documented _lookup_by_id fallback behavior."""
-        from scout.evaluate import _deep_evaluate_papers
+        from research.scout.evaluate import _deep_evaluate_papers
 
         # LLM returned ID without version suffix ("2605.13465" vs "2605.13465v1")
         response = {
@@ -280,8 +275,8 @@ class TestStage2MergeLogic:
             ]
         }
         papers = [dict(p) for p in sample_papers_stage0[:1]]
-        with patch("scout.evaluate.call_scout_llm", return_value=response), \
-                patch("scout.project.extract_current_methods", return_value=""):
+        with patch("research.scout.evaluate.call_scout_llm", return_value=response), \
+                patch("research.scout.project.extract_current_methods", return_value=""):
             merged = _deep_evaluate_papers(sample_project, papers)
 
         # _lookup_by_id strips "v1" so the eval matches → score reflects the eval
@@ -325,7 +320,7 @@ class TestStage3OutputContract:
 
     def test_empty_result_on_s2_failure(self, sample_papers_stage0):
         """When S2 cannot find the paper, analyze_citations returns {}."""
-        from scout.evaluate import analyze_citations
+        from research.scout.evaluate import analyze_citations
 
         # get_paper_by_id is imported inside analyze_citations from
         # research.apis.semantic_scholar — patch it there.
@@ -342,7 +337,7 @@ class TestStage1ToStage2Boundary:
 
     def test_high_papers_have_abstract(self, sample_papers_stage0, sample_screening_response):
         """Stage 2 requires abstract (full text, not truncated) on each paper."""
-        from scout.search import paper_id as _paper_id
+        from research.scout.search import paper_id as _paper_id
 
         screenings = sample_screening_response["screenings"]
         screen_by_id = {s["paper_id"]: s for s in screenings}
@@ -402,7 +397,7 @@ class TestFormattingContracts:
 
     def test_screening_format_truncates_abstract(self, sample_papers_stage0):
         """Stage 1 formatting truncates abstract to 1000 chars."""
-        from scout.evaluate import _format_papers_for_screening
+        from research.scout.evaluate import _format_papers_for_screening
 
         # Make a paper with a very long abstract
         papers = [dict(sample_papers_stage0[0])]
@@ -415,7 +410,7 @@ class TestFormattingContracts:
 
     def test_deep_eval_format_uses_full_abstract(self, sample_papers_stage0):
         """Stage 2 formatting uses full abstract without truncation."""
-        from scout.evaluate import _format_papers_for_deep_eval
+        from research.scout.evaluate import _format_papers_for_deep_eval
 
         papers = [dict(sample_papers_stage0[0])]
         papers[0]["abstract"] = "B" * 2000
@@ -425,7 +420,7 @@ class TestFormattingContracts:
 
     def test_screening_format_includes_paper_id(self, sample_papers_stage0):
         """Paper ID must appear in formatted text so LLM can reference it."""
-        from scout.evaluate import _format_papers_for_screening
+        from research.scout.evaluate import _format_papers_for_screening
 
         text = _format_papers_for_screening(sample_papers_stage0)
         for p in sample_papers_stage0:
@@ -433,7 +428,7 @@ class TestFormattingContracts:
 
     def test_deep_eval_format_includes_paper_id(self, sample_papers_stage0):
         """Paper ID must appear in formatted text so LLM can reference it."""
-        from scout.evaluate import _format_papers_for_deep_eval
+        from research.scout.evaluate import _format_papers_for_deep_eval
 
         text = _format_papers_for_deep_eval(sample_papers_stage0)
         for p in sample_papers_stage0:
@@ -452,7 +447,7 @@ class TestCacheQualityGate:
 
     def test_all_zero_scores_should_not_cache(self):
         """If all papers have composite_score=0, deep eval is not usable."""
-        from scout.evaluate import _deep_eval_is_usable
+        from research.scout.evaluate import _deep_eval_is_usable
 
         merged = [
             {"paper_id": "a", "composite_score": 0.0},
@@ -464,7 +459,7 @@ class TestCacheQualityGate:
 
     def test_partial_scores_should_cache(self):
         """If at least some papers have scores, deep eval is usable."""
-        from scout.evaluate import _deep_eval_is_usable
+        from research.scout.evaluate import _deep_eval_is_usable
 
         merged = [
             {"paper_id": "a", "composite_score": 4.3},
@@ -476,13 +471,13 @@ class TestCacheQualityGate:
 
     def test_empty_deep_eval_not_usable(self):
         """An empty evaluation list is never usable."""
-        from scout.evaluate import _deep_eval_is_usable
+        from research.scout.evaluate import _deep_eval_is_usable
 
         assert _deep_eval_is_usable([]) is False
 
     def test_empty_motivation_should_not_cache_screening(self):
         """If all papers are low + empty motivation/innovation, screening is not usable."""
-        from scout.evaluate import _screening_is_usable
+        from research.scout.evaluate import _screening_is_usable
 
         papers = [
             {"paper_id": "a", "screening_relevance": "low", "motivation": "", "innovation_point": ""},
@@ -493,7 +488,7 @@ class TestCacheQualityGate:
 
     def test_screening_with_high_or_motivation_should_cache(self):
         """Screening is usable if any paper is high OR has motivation/innovation."""
-        from scout.evaluate import _screening_is_usable
+        from research.scout.evaluate import _screening_is_usable
 
         with_high = [
             {"paper_id": "a", "screening_relevance": "high", "motivation": "", "innovation_point": ""},
@@ -555,22 +550,22 @@ class TestPaperIdVersionFallback:
     """Verify _lookup_by_id handles version suffix mismatch (LLM omits vN)."""
 
     def test_exact_match(self):
-        from scout.evaluate import _lookup_by_id
+        from research.scout.evaluate import _lookup_by_id
         mapping = {"2605.15195v1": {"relevance": "high"}}
         assert _lookup_by_id(mapping, "2605.15195v1") == {"relevance": "high"}
 
     def test_fallback_strips_version(self):
-        from scout.evaluate import _lookup_by_id
+        from research.scout.evaluate import _lookup_by_id
         mapping = {"2605.15195": {"relevance": "high"}}
         assert _lookup_by_id(mapping, "2605.15195v1") == {"relevance": "high"}
 
     def test_no_match_returns_empty(self):
-        from scout.evaluate import _lookup_by_id
+        from research.scout.evaluate import _lookup_by_id
         mapping = {"2605.99999": {"relevance": "high"}}
         assert _lookup_by_id(mapping, "2605.15195v1") == {}
 
     def test_exact_takes_priority_over_stripped(self):
-        from scout.evaluate import _lookup_by_id
+        from research.scout.evaluate import _lookup_by_id
         mapping = {
             "2605.15195v1": {"source": "exact"},
             "2605.15195": {"source": "stripped"},
@@ -578,6 +573,6 @@ class TestPaperIdVersionFallback:
         assert _lookup_by_id(mapping, "2605.15195v1") == {"source": "exact"}
 
     def test_non_versioned_id_still_works(self):
-        from scout.evaluate import _lookup_by_id
+        from research.scout.evaluate import _lookup_by_id
         mapping = {"10.1038/s41586": {"relevance": "high"}}
         assert _lookup_by_id(mapping, "10.1038/s41586") == {"relevance": "high"}

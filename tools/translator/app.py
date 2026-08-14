@@ -22,6 +22,7 @@ from translator.core import (
     count_chunks,
     count_tokens,
     file_to_markdown,
+    free_ollama_vram,
     get_engine,
     resolve_langs,
     translate_text,
@@ -156,8 +157,6 @@ def build_ui() -> gr.Blocks:
 def main() -> None:
     import atexit
 
-    from common.engine import _free_ollama_vram
-
     # ponytail: gradio's launch() health-check (httpx.get on 127.0.0.1) otherwise
     # follows HTTP(S)_PROXY and the proxy refuses localhost → WinError 10061.
     local = "127.0.0.1,localhost"
@@ -166,7 +165,7 @@ def main() -> None:
         os.environ[var] = f"{local},{existing}" if existing else local
     # On exit (Ctrl-C included) evict the OCR/translation models from Ollama's
     # VRAM; set GADGET_KEEP_OLLAMA=1 to keep them warm across restarts.
-    atexit.register(_free_ollama_vram)
+    atexit.register(free_ollama_vram)
     build_ui().launch()
 
 

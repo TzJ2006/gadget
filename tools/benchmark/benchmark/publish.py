@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from common.site_staging import copy_site_static, write_site_content
+
+
+def _hugo_date(report_path: Path) -> str:
+    """Hugo frontmatter date: report mtime in local time, else now."""
+    try:
+        dt = datetime.fromtimestamp(report_path.stat().st_mtime).astimezone()
+    except OSError:
+        dt = datetime.now().astimezone()
+    return dt.isoformat(timespec="seconds")
 
 
 def stage_benchmark_report(report_html: str | Path, hugo_site: Path) -> tuple[Path, Path]:
@@ -21,7 +31,7 @@ def stage_benchmark_report(report_html: str | Path, hugo_site: Path) -> tuple[Pa
 
     wrapper = f"""---
 title: "Benchmark"
-date: 2026-01-01T00:00:00-05:00
+date: {_hugo_date(report_path)}
 summary: "Cross-platform CPU/GPU benchmark leaderboard and historical report."
 draft: false
 ---

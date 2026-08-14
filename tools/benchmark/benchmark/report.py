@@ -8,15 +8,12 @@ The report automatically includes all historical data from the CSV file,
 making it "self-growing" - each time you benchmark new hardware,
 those results are added to the CSV and the report reflects all accumulated data.
 """
-import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 from plotly.offline import get_plotlyjs_version
 
 
@@ -28,12 +25,10 @@ class BenchmarkReport:
     - CSV files use append mode, accumulating results over time
     - Report generation reads ALL data from the CSV
     - Each hardware shows its best performance across all runs
-    - Historical trends show performance over time
 
     Features:
     - Leaderboards for CPU/GPU performance
     - Comparison charts (bar charts)
-    - Historical trend charts
     - Precision comparison charts
     - Run history tracking
     """
@@ -433,24 +428,6 @@ class BenchmarkReport:
 
         return fig
 
-    def create_trend_chart(self) -> go.Figure:
-        """Compatibility fallback: trend chart section is removed from report."""
-        fig = go.Figure()
-        fig.add_annotation(
-            text="Historical trend chart is disabled in this report version.",
-            xref="paper",
-            yref="paper",
-            x=0.5,
-            y=0.5,
-            showarrow=False,
-        )
-        fig.update_layout(
-            title="Historical Trends (Disabled)",
-            height=500,
-            template="plotly_dark",
-        )
-        return fig
-
     def _format_leaderboard_table(self, df: pd.DataFrame, title: str) -> str:
         """Format leaderboard DataFrame as HTML table."""
         if df.empty:
@@ -599,6 +576,7 @@ class BenchmarkReport:
 
         # Write to file
         output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(html, encoding='utf-8')
 
         print(f"✓ HTML report saved to: {output_path.absolute()}")

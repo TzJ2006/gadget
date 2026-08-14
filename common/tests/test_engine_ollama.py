@@ -104,8 +104,10 @@ def test_factory_selects_ollama_when_backend_env_set(monkeypatch):
     monkeypatch.setenv("GADGET_TRANSLATION_BACKEND", "ollama")
     monkeypatch.setenv("OLLAMA_TRANSLATION_MODEL", "hf.co/tencent/Hy-MT2-1.8B-GGUF")
     # Pretend the server is up with the model pulled, so load() passes offline.
-    monkeypatch.setattr(engine, "_ollama_tags",
-                        lambda host, timeout=3: ["hf.co/tencent/Hy-MT2-1.8B-GGUF:latest"])
+    monkeypatch.setattr(
+        "common.engine.ollama._ollama_tags",
+        lambda host, timeout=3: ["hf.co/tencent/Hy-MT2-1.8B-GGUF:latest"],
+    )
 
     proxy = engine.create_engine()
     assert isinstance(proxy._engine, engine.OllamaEngine)
@@ -117,8 +119,10 @@ def test_factory_auto_prefers_ollama_when_available(monkeypatch):
     monkeypatch.delenv("GADGET_TRANSLATION_BACKEND", raising=False)
     monkeypatch.delenv("GADGET_TRANSLATION_MODEL", raising=False)
     monkeypatch.setattr(engine, "_ollama_available", lambda model: True)
-    monkeypatch.setattr(engine, "_ollama_tags",
-                        lambda host, timeout=3: ["hf.co/tencent/Hy-MT2-1.8B-GGUF:latest"])
+    monkeypatch.setattr(
+        "common.engine.ollama._ollama_tags",
+        lambda host, timeout=3: ["hf.co/tencent/Hy-MT2-1.8B-GGUF:latest"],
+    )
 
     proxy = engine.create_engine()
     assert isinstance(proxy._engine, engine.OllamaEngine)
@@ -135,7 +139,7 @@ def test_factory_auto_skips_ollama_for_overridden_model(monkeypatch):
     monkeypatch.setattr(engine, "_vllm_available", lambda: False)
     monkeypatch.setattr(engine, "_llamacpp_available", lambda: True)
     monkeypatch.setattr(engine.LlamaCppEngine, "load", lambda self: None)
-    monkeypatch.setattr(engine, "_free_ollama_vram", lambda: None)
+    monkeypatch.setattr(engine, "free_ollama_vram", lambda: None)
 
     proxy = engine.create_engine()
     assert not isinstance(proxy._engine, engine.OllamaEngine)
@@ -149,7 +153,7 @@ def test_cache_keyed_by_backend(monkeypatch):
     engine._engine_cache.clear()
     monkeypatch.setattr(engine.OllamaEngine, "load", lambda self: None)
     monkeypatch.setattr(engine.LlamaCppEngine, "load", lambda self: None)
-    monkeypatch.setattr(engine, "_free_ollama_vram", lambda: None)
+    monkeypatch.setattr(engine, "free_ollama_vram", lambda: None)
 
     monkeypatch.setenv("GADGET_TRANSLATION_BACKEND", "ollama")
     a = engine.create_engine()._engine
@@ -163,13 +167,47 @@ def test_cache_keyed_by_backend(monkeypatch):
 
 
 def test_keep_ollama_skips_eviction(monkeypatch):
-    """GADGET_KEEP_OLLAMA short-circuits _free_ollama_vram before any network probe."""
+    """GADGET_KEEP_OLLAMA short-circuits free_ollama_vram before any network probe."""
     def boom(*a, **k):
         raise AssertionError("must not probe Ollama when GADGET_KEEP_OLLAMA is set")
 
     monkeypatch.setenv("GADGET_KEEP_OLLAMA", "1")
     monkeypatch.setattr("urllib.request.urlopen", boom)
-    engine._free_ollama_vram()  # returns early, no urlopen
+    engine._free_ollama_vram()  # underscore alias; returns early, no urlopen
+
+
+def test_public_ollama_helpers_alias_underscores():
+    assert engine.ollama_native_host is engine._ollama_native_host
+    assert engine.free_ollama_vram is engine._free_ollama_vram
+
+
+def test_ollama_native_host_defaults_to_ipv4(monkeypatch):
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    host = engine.ollama_native_host()
+    assert host == "http://127.0.0.1:11434"
+    assert "localhost" not in host
+
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1/")
+    assert engine.ollama_native_host() == "http://127.0.0.1:11434"
+
+
+def test_free_ollama_vram_uses_native_host(monkeypatch):
+    """Eviction must reuse ollama_native_host, not re-parse env URLs."""
+    import common.engine.ollama as ollama_mod
+
+    seen = []
+
+    def fake_urlopen(req, timeout=None):
+        seen.append(req if isinstance(req, str) else req.full_url)
+        raise OSError("offline")
+
+    monkeypatch.delenv("GADGET_KEEP_OLLAMA", raising=False)
+    monkeypatch.setattr(ollama_mod, "ollama_native_host", lambda: "http://probe.test:9")
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    ollama_mod.free_ollama_vram()
+    assert seen
+    assert all(str(u).startswith("http://probe.test:9") for u in seen)
 
 
 if __name__ == "__main__":

@@ -13,49 +13,47 @@
 """
 
 import argparse
-import hashlib
 import json
-import shutil
 import sys
 from collections import OrderedDict
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
-from common.bilingual import write_bilingual
-from common.io import atomic_write as _atomic_write
 from common.hugo import run_hugo_update
-from common.paths import REPORTS_DIR, CACHE_DIR
-from common.site_staging import resolve_site_content_dir, copy_site_static, write_site_content
-from common.llm import (
-    LLMCallConfig,
-    call_llm,
-    ChunkTimeoutError,
-    chunk_text,
-    timed_llm_call,
-    load_chunk_cache as _load_chunk_cache,
-    save_chunk_cache as _save_chunk_cache,
-    cleanup_chunk_cache as _cleanup_chunk_cache,
-    hierarchical_merge,
-)
-from common.json_utils import (
-    parse_json_response as _parse_json_response,
-    repair_json_with_llm as _repair_json_with_llm,
-    try_repair_result,
-)
+from common.io import atomic_write as _atomic_write
+from common.llm import LLMCallConfig
+from common.site_staging import resolve_site_content_dir
 
-from .config import _resolve_output_dir, _load_config, resolve_hugo_site
+from .config import cli_defaults
 from .monthly_summary import (
     format_reports_for_llm,
-    aggregate_token_usage,
     combine_usage_summaries,
     _has_usage_data,
-    _compute_source_hash,
+)
+from .period_report import (
+    DEFAULT_BACKEND,
+    DEFAULT_REPORTS_DIR as _DEFAULT_REPORTS_DIR,
+    TIMEOUT_WEEKLY,
+    _LOW_THINKING,
+    add_deploy_arguments,
+    add_generate_arguments,
+    call_period_summarize_chunked,
+    collect_usage_by_source,
+    generate_period_chart,
+    generate_period_hugo_post,
+    load_period_cache,
+    period_cache_dir,
+    require_hugo_site,
+    resolve_period_api,
+    resolve_reports_dir,
+    resolved_timeout_weekly,
+    run_cached_period_llm,
+    save_period_cache,
 )
 
 
-_DEFAULT_REPORTS_DIR = REPORTS_DIR / "summarize"
-_DEFAULT_CACHE_DIR = CACHE_DIR / "summarize" / "weekly"
+
 
 
 # ─── 1. 周解析与日报加载 ─────────────────────────────────────────────
@@ -318,10 +316,7 @@ def _weekly_tool_schema() -> list[dict]:
     }]
 
 
-_LOW_THINKING = {"type": "enabled", "budget_tokens": 1024}
-
-
-def _build_weekly_config(prompt_text: str, timeout: int = 900) -> LLMCallConfig:
+def _build_weekly_config(prompt_text: str, timeout: int = TIMEOUT_WEEKLY) -> LLMCallConfig:
     """构建周报专用的 LLMCallConfig。"""
     return LLMCallConfig(
         prompt=prompt_text,
@@ -332,82 +327,27 @@ def _build_weekly_config(prompt_text: str, timeout: int = 900) -> LLMCallConfig:
     )
 
 
-def _call_weekly_summarize(api: str, text: str, week_label: str,
-                           prompt: str = WEEKLY_SUMMARY_PROMPT,
-                           timeout: int = 900) -> dict:
-    """根据 api 参数调用周报 LLM。"""
-    full_prompt = prompt + text + f"\n\nTarget week: {week_label}"
-    config = _build_weekly_config(full_prompt, timeout)
-    return call_llm(api, config)
+def _weekly_report_groups(daily_reports: list[dict]) -> list[list[dict]]:
+    mid = len(daily_reports) // 2
+    return [daily_reports[:mid], daily_reports[mid:]]
 
 
 def _call_weekly_summarize_chunked(api: str, daily_reports: list[dict],
-                                   week_label: str, timeout: int = 900,
+                                   week_label: str, timeout: int = TIMEOUT_WEEKLY,
                                    chunk_cache_dir: Optional[Path] = None
                                    ) -> dict:
-    """分块调用 LLM 生成周报（当内容 >150K 字符时自动分组）。"""
-    full_text = format_reports_for_llm(daily_reports)
-    prompt_overhead = len(WEEKLY_SUMMARY_PROMPT) + 200
-
-    if len(full_text) + prompt_overhead <= 150000:
-        full_prompt = (WEEKLY_SUMMARY_PROMPT + full_text
-                       + f"\n\nTarget week: {week_label}")
-        config = _build_weekly_config(full_prompt, timeout)
-        return timed_llm_call(api, config, chunk_idx=1, total=1)
-
-    # 按前半周/后半周分组
-    mid = len(daily_reports) // 2
-    half_groups = [daily_reports[:mid], daily_reports[mid:]]
-    # 过滤空组
-    half_groups = [g for g in half_groups if g]
-
-    text_groups = [format_reports_for_llm(g) for g in half_groups]
-    text_chunks = chunk_text(text_groups, max_chars=150000 - prompt_overhead)
-
-    n = len(text_chunks)
-    print(f"[info] 日报总量 {len(full_text):,} 字符，分为 {n} 段进行总结 "
-          f"(每段时限 {timeout}s，总时限 ~{timeout * n}s)...")
-
-    global_hash = _compute_source_hash(daily_reports) if chunk_cache_dir else None
-
-    partial_summaries = []
-    cache_hits = 0
-    for i, chunk_texts in enumerate(text_chunks):
-        chunk_content = "\n".join(chunk_texts)
-
-        if chunk_cache_dir and global_hash:
-            c_hash = hashlib.sha256(
-                chunk_content.encode("utf-8")).hexdigest()[:16]
-            cached = _load_chunk_cache(chunk_cache_dir, c_hash, global_hash, n)
-            if cached is not None:
-                cache_hits += 1
-                print(f"[info] 第 {i+1}/{n} 段命中缓存 "
-                      f"({len(chunk_content):,} 字符)")
-                partial_summaries.append(cached)
-                continue
-
-        print(f"[info] 正在总结第 {i+1}/{n} 段 ({len(chunk_content):,} 字符)...")
-        full_prompt = (WEEKLY_SUMMARY_PROMPT + chunk_content
-                       + f"\n\nTarget week: {week_label}")
-        config = _build_weekly_config(full_prompt, timeout)
-        result = timed_llm_call(api, config, chunk_idx=i+1, total=n)
-        partial_summaries.append(result)
-
-        if chunk_cache_dir and global_hash:
-            _save_chunk_cache(chunk_cache_dir, c_hash, result, global_hash, n)
-
-    if cache_hits:
-        print(f"[info] chunk 缓存统计: {cache_hits}/{n} 命中, "
-              f"{n - cache_hits} 调用 API")
-
-    if len(partial_summaries) == 1:
-        return partial_summaries[0]
-
-    def _weekly_merge_config(prompt_text: str) -> LLMCallConfig:
-        return _build_weekly_config(prompt_text, timeout)
-
-    return hierarchical_merge(api, partial_summaries, WEEKLY_MERGE_PROMPT,
-                              _weekly_merge_config, timeout)
+    """分块调用 LLM 生成周报（当内容超过 chunk 上限时自动分组）。"""
+    return call_period_summarize_chunked(
+        api, daily_reports,
+        summary_prompt=WEEKLY_SUMMARY_PROMPT,
+        merge_prompt=WEEKLY_MERGE_PROMPT,
+        build_config=lambda prompt_text: _build_weekly_config(prompt_text, timeout),
+        timeout=timeout,
+        format_reports=format_reports_for_llm,
+        make_groups=_weekly_report_groups,
+        target_line=f"Target week: {week_label}",
+        chunk_cache_dir=chunk_cache_dir,
+    )
 
 
 # ─── 3. 图表生成 ────────────────────────────────────────────────────
@@ -415,24 +355,8 @@ def _call_weekly_summarize_chunked(api: str, daily_reports: list[dict],
 def _generate_chart(usage_by_source: dict,
                     iso_year: int, iso_week: int) -> Optional[Path]:
     """生成周报 usage 图表（单 PNG 三子图，按来源）。"""
-    from .charts import generate_daily_chart
     monday, _ = _week_date_range(iso_year, iso_week)
-
-    chart_input = {}
-    for source, summary in (usage_by_source or {}).items():
-        totals = summary.get("totals", {})
-        if not totals:
-            continue
-        chart_input[source] = {
-            "totals": totals,
-            "modelBreakdowns": [{"modelName": n, **v}
-                                for n, v in summary.get("model_breakdown", {}).items()],
-        }
-    if not chart_input:
-        return None
-    from common.paths import IMAGES_DIR
-    out = IMAGES_DIR / "summarize"
-    return generate_daily_chart(chart_input, monday, output_dir=out)
+    return generate_period_chart(usage_by_source, monday)
 
 
 # ─── 4. 输出渲染 ────────────────────────────────────────────────────
@@ -614,49 +538,25 @@ def generate_weekly_markdown(report: dict, iso_year: int, iso_week: int,
 def generate_weekly_hugo_post(markdown_body: str, iso_year: int,
                               iso_week: int, hugo_site: Path,
                               chart_path: Optional[Path] = None,
-                              api: str = "claude_cli",
+                              api: str = DEFAULT_BACKEND,
                               force: bool = False,
                               overwrite_human: bool = False) -> Path:
     """将周报渲染为 Hugo bugJournal 格式并写入 staging content 目录（双语）。"""
     week_label = _week_str(iso_year, iso_week)
-    monday, sunday = _week_date_range(iso_year, iso_week)
-
-    summary = f"{week_label} Weekly AI conversation summary"
-    for line in markdown_body.splitlines():
-        if line.startswith("> "):
-            summary = line[2:].strip()
-            break
-    summary = summary.replace('"', '\\"')
-
-    hugo_date = sunday.isoformat()
-
-    frontmatter = f"""---
-title: "Weekly Summary {week_label}"
-date: {hugo_date}T23:59:00-05:00
-keywords:
-- Bug Journal
-- Weekly Summary
-summary: "{summary}"
-draft: false
----
-
-"""
-    resolve_site_content_dir(hugo_site, "bugJournal", "weekly")
-
-    if chart_path and chart_path.exists():
-        dest = copy_site_static(
-            hugo_site, chart_path,
-            Path("images") / "weekly" / chart_path.name, force=force)
-        print(f"[ok] Chart copied to Hugo: {dest}")
-
-    rel = Path("bugJournal") / "weekly" / f"{week_label}-weekly.md"
-    en_path, zh_path = write_bilingual(hugo_site, rel, frontmatter + markdown_body,
-                                       force=force, overwrite_human=overwrite_human)
-
-    print(f"[ok] Hugo weekly post generated: {en_path}")
-    if zh_path:
-        print(f"[ok] Hugo weekly post (translated): {zh_path}")
-    return en_path
+    _, sunday = _week_date_range(iso_year, iso_week)
+    return generate_period_hugo_post(
+        markdown_body, hugo_site,
+        title=f"Weekly Summary {week_label}",
+        post_date=sunday,
+        hour=23, minute=59, second=0,
+        keywords=["Bug Journal", "Weekly Summary"],
+        fallback_summary=f"{week_label} Weekly AI conversation summary",
+        content_parts=("bugJournal", "weekly"),
+        filename=f"{week_label}-weekly.md",
+        chart_path=chart_path,
+        chart_image_subdir="weekly",
+        api=api, force=force, overwrite_human=overwrite_human,
+    )
 
 
 def save_weekly_report(report: dict, markdown: str, iso_year: int,
@@ -683,43 +583,22 @@ def save_weekly_report(report: dict, markdown: str, iso_year: int,
 # ─── 5. 缓存 ────────────────────────────────────────────────────────
 
 def _cache_dir(reports_dir: Path) -> Path:
-    return _DEFAULT_CACHE_DIR
+    return period_cache_dir("weekly")
 
 
 def _load_weekly_cache(reports_dir: Path, iso_year: int, iso_week: int,
                        source_hash: str) -> Optional[dict]:
     """加载周报缓存。返回 None 表示未命中。"""
-    week_label = _week_str(iso_year, iso_week)
-    cache_file = _cache_dir(reports_dir) / f"{week_label}.json"
-    if not cache_file.exists():
-        return None
-    try:
-        with open(cache_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    if data.get("_cache_meta", {}).get("source_hash") != source_hash:
-        return None
-
-    data.pop("_cache_meta", None)
-    print(f"[info] 命中周报缓存 ({cache_file.name})")
-    return data
+    return load_period_cache(
+        _cache_dir(reports_dir), _week_str(iso_year, iso_week), source_hash)
 
 
 def _save_weekly_cache(reports_dir: Path, iso_year: int, iso_week: int,
                        result: dict, source_hash: str) -> None:
     """保存周报缓存（附带源哈希用于失效检测）。"""
-    week_label = _week_str(iso_year, iso_week)
-    cache = {**result, "_cache_meta": {
-        "source_hash": source_hash,
-        "cached_at": datetime.now().isoformat(),
-    }}
-    try:
-        _atomic_write(_cache_dir(reports_dir) / f"{week_label}.json",
-                      json.dumps(cache, ensure_ascii=False, indent=2))
-    except OSError as e:
-        print(f"[warn] 周报缓存写入失败: {e}")
+    save_period_cache(
+        _cache_dir(reports_dir), _week_str(iso_year, iso_week),
+        result, source_hash)
 
 
 # ─── 6. CLI 命令 ────────────────────────────────────────────────────
@@ -732,15 +611,8 @@ def cmd_generate(args):
     print(f"[info] 目标周: {week_label} ({monday.isoformat()} ~ "
           f"{sunday.isoformat()})")
 
-    # 解析 API: CLI > config default_api > ollama
-    cfg = _load_config()
-    api = getattr(args, "api", None) or cfg.get("default_api") or "ollama"
-
-    # 解析输出目录
-    reports_dir = _resolve_output_dir(getattr(args, "output", None),
-                                      "SUMMARIZE_REPORTS_DIR",
-                                      "reports_dir",
-                                      _DEFAULT_REPORTS_DIR)
+    api = resolve_period_api(args)
+    reports_dir = resolve_reports_dir(args)
 
     # 检查已有输出
     force = getattr(args, "force", False)
@@ -774,47 +646,19 @@ def cmd_generate(args):
         sys.exit(0)
     print(f"[info] 加载了 {len(daily_reports)} 份日报")
 
-    # 缓存检查
-    source_hash = _compute_source_hash(daily_reports)
-    llm_result = None
+    timeout = getattr(args, "timeout", TIMEOUT_WEEKLY)
+    llm_result = run_cached_period_llm(
+        cache_dir=_cache_dir(reports_dir),
+        label=week_label,
+        daily_reports=daily_reports,
+        no_cache=no_cache,
+        force=force,
+        call_llm_fn=lambda chunk_dir: _call_weekly_summarize_chunked(
+            api, daily_reports, week_label, timeout=timeout,
+            chunk_cache_dir=chunk_dir),
+    )
 
-    if not no_cache and not force:
-        llm_result = _load_weekly_cache(reports_dir, iso_year, iso_week,
-                                        source_hash)
-
-    # LLM 调用
-    timeout = getattr(args, "timeout", 900)
-    chunk_cache_dir = _cache_dir(reports_dir) / "chunks" / week_label
-
-    if llm_result is None:
-        if not no_cache:
-            chunk_cache_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            llm_result = _call_weekly_summarize_chunked(
-                api, daily_reports, week_label, timeout=timeout,
-                chunk_cache_dir=chunk_cache_dir if not no_cache else None)
-        except ChunkTimeoutError as e:
-            print(f"[error] {e}")
-            sys.exit(1)
-
-        # 保存全局缓存
-        _save_weekly_cache(reports_dir, iso_year, iso_week, llm_result,
-                           source_hash)
-
-        # 全局缓存成功后，清理 chunk 缓存
-        _cleanup_chunk_cache(chunk_cache_dir)
-
-    # 机械聚合（按来源）
-    sources = set()
-    for r in daily_reports:
-        sources.update((r.get("token_usage_by_source") or {}).keys())
-        if r.get("token_usage"):
-            sources.add("claude_code")
-        if r.get("codex_token_usage"):
-            sources.add("codex")
-    usage_by_source = {
-        s: aggregate_token_usage(daily_reports, source=s) for s in sorted(sources)}
+    usage_by_source = collect_usage_by_source(daily_reports)
     token_usage = usage_by_source.get("claude_code", {})
     codex_token_usage = usage_by_source.get("codex", {})
     combined_token_usage = combine_usage_summaries(*usage_by_source.values())
@@ -847,10 +691,7 @@ def cmd_generate(args):
 
     # Hugo 部署
     if getattr(args, "deploy", False):
-        hugo_site = resolve_hugo_site(getattr(args, "hugo_site", None))
-        if not hugo_site.exists():
-            print(f"[error] Hugo 站点目录不存在: {hugo_site}")
-            sys.exit(1)
+        hugo_site = require_hugo_site(args)
 
         generate_weekly_hugo_post(markdown, iso_year, iso_week,
                                   hugo_site, api=args.api, force=force,
@@ -865,13 +706,8 @@ def cmd_deploy(args):
 
     已部署状态 = Hugo 内容目录中同名文件存在；--force 重新部署（覆盖前自动
     备份到 outputs/backups/website-force/）。"""
-    reports_dir = _resolve_output_dir(getattr(args, "output", None),
-                                      "SUMMARIZE_REPORTS_DIR",
-                                      "reports_dir", _DEFAULT_REPORTS_DIR)
-    hugo_site = resolve_hugo_site(getattr(args, "hugo_site", None))
-    if not hugo_site.exists():
-        print(f"[error] Hugo 站点目录不存在: {hugo_site}")
-        sys.exit(1)
+    reports_dir = resolve_reports_dir(args)
+    hugo_site = require_hugo_site(args)
 
     if getattr(args, "week", None):
         iso_year, iso_week = _parse_week(args.week)
@@ -914,10 +750,7 @@ def cmd_deploy(args):
 
 def cmd_list(args):
     """列出所有可用周及其日报数量。"""
-    reports_dir = _resolve_output_dir(getattr(args, "output", None),
-                                      "SUMMARIZE_REPORTS_DIR",
-                                      "reports_dir",
-                                      _DEFAULT_REPORTS_DIR)
+    reports_dir = resolve_reports_dir(args)
 
     if not reports_dir.exists():
         print(f"[warn] 报告目录不存在: {reports_dir}")
@@ -967,47 +800,14 @@ def main():
     sp_gen = subparsers.add_parser("generate", help="生成周报")
     sp_gen.add_argument("--week", type=str, default=None,
                         help="目标周 (YYYY-WNN)，默认上一周")
-    sp_gen.add_argument("--api", type=str,
-                        choices=["anthropic", "openai", "ollama", "claude_cli"],
-                        default=None,
-                        help="使用的 API (默认: config default_api，否则 ollama)")
-    sp_gen.add_argument("--output", type=str, default=None,
-                        help="报告目录 (默认 outputs/reports/summarize/)")
-    sp_gen.add_argument("--deploy", action="store_true",
-                        help="同时部署到 Hugo 站点")
-    sp_gen.add_argument("--hugo-site", type=str,
-                        default=str(Path(__file__).resolve().parent.parent
-                                    / "website"),
-                        help="Hugo 站点根目录")
-    sp_gen.add_argument("--timeout", type=int, default=900,
-                        help="LLM 调用时限秒数 (默认 900)")
-    sp_gen.add_argument("--no-cache", action="store_true",
-                        help="忽略 LLM 缓存，强制重新调用 API")
-    sp_gen.add_argument("--force", action="store_true",
-                        help="忽略已有输出，强制重新生成")
-
-    sp_gen.add_argument("--overwrite-human", action="store_true",
-                        help="危险：允许覆盖无 gadget 标记的手写站点文件")
-
-    # config-driven defaults: CLI flag > config.json > hardcoded
-    from .config import cli_defaults
+    add_generate_arguments(sp_gen, timeout_default=resolved_timeout_weekly())
     sp_gen.set_defaults(**cli_defaults())
 
-    # ── deploy 子命令（回放部署，不调用 LLM）──
     sp_dep = subparsers.add_parser(
         "deploy", help="从已保存周报回放部署到 Hugo（不重跑 LLM）")
     sp_dep.add_argument("--week", type=str, default=None,
                         help="只部署指定周 (YYYY-WNN)，默认全部未部署周报")
-    sp_dep.add_argument("--output", type=str, default=None,
-                        help="报告目录 (默认 outputs/reports/summarize/)")
-    sp_dep.add_argument("--hugo-site", type=str,
-                        default=str(Path(__file__).resolve().parent.parent
-                                    / "website"),
-                        help="Hugo 站点根目录")
-    sp_dep.add_argument("--force", action="store_true",
-                        help="重新部署已部署的周报（覆盖前自动备份）")
-    sp_dep.add_argument("--overwrite-human", action="store_true",
-                        help="危险：允许覆盖无 gadget 标记的手写站点文件")
+    add_deploy_arguments(sp_dep)
     sp_dep.set_defaults(**cli_defaults())
 
     # ── list 子命令 ──

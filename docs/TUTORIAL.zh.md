@@ -107,7 +107,7 @@ pip install -r tools/<tool>/requirements.txt
 
 ```bash
 pip install -e .              # 仅安装 common/ 与工具包骨架
-pip install -e ".[all]"       # 安装全部工具依赖（= summarize + research + benchmark + website）
+pip install -e ".[all]"       # summarize + research + benchmark + website（不含 translator）
 ```
 
 `pyproject.toml` 中可选依赖 extras 一览：
@@ -121,7 +121,7 @@ pip install -e ".[all]"       # 安装全部工具依赖（= summarize + researc
 | `translation` | torch + transformers（`TransformersEngine`，Windows 回退；默认后端是 Ollama，无额外依赖） |
 | `translation-gguf` | llama-cpp-python + huggingface-hub（`LlamaCppEngine`，低内存 GGUF，无 PyTorch） |
 | `translator` | gradio + translation-gguf（Gradio 文档翻译器） |
-| `all` | summarize + research + benchmark + website |
+| `all` | summarize + research + benchmark + website（**不含** `translator`） |
 
 按需安装单个 extra，例如：
 
@@ -132,7 +132,7 @@ pip install -e ".[translation-gguf]"   # 低内存 GGUF 后端
 pip install -e ".[translator]"         # Gradio 翻译器
 ```
 
-> `build/` 与 `gadget.egg-info/` 是 editable install 的生成物——已 gitignore，不要提交。
+> `build/` 与 `gadget.egg-info/` 是 editable install 的生成物——已 gitignore，不要提交。项目许可为 GPL-3（见仓库根 `LICENSE`）。
 
 #### 翻译后端（本地推理）
 
@@ -200,7 +200,7 @@ python scripts/sync.py bootstrap --remote gdrive:gadget  # 新设备一键初始
 #### 选项
 
 - `--dry-run` — 预览，不实际传输；可放在子命令前后任意位置（例如 `python scripts/sync.py --dry-run push` 或 `push --dry-run` 均可）。
-- `--category <name>` — 只同步某一类。可用类目：`summarize`、`website`、`research`、`test`、`backups`（顶层另有特殊类目 `dag`，见下）。`push`/`pull`/`status` 均支持。
+- `--category <name>` — 只同步某一类。可用类目：`summarize`、`website`、`research`、`benchmark`、`backups`（`test` 是 `benchmark` 的旧名别名；顶层另有特殊类目 `dag`，见下）。`push`/`pull`/`status` 均支持。
 - `--include-config` — `push` 时同时把配置文件备份到远端（供其他设备 bootstrap）。
 - `--include-tokens` — `push` / `bootstrap` 时包含 `tokens/` 目录（含 API 密钥）。
 
@@ -221,7 +221,7 @@ python scripts/sync.py pull --dry-run                   # 预览 pull
 | `summarize` | `outputs/logs/summarize`、`outputs/reports/summarize`、`outputs/images/summarize` |
 | `website` | `tools/website/content/bugJournal/{daily,weekly,monthly}`、`tools/website/content/research`、`tools/website/static/images/{weekly,monthly}`、`tools/website/static/benchmark-report`、`tools/website/content/{leetcode,posts}` 及若干松散文件（About.pdf、Resume.md/pdf、Random.md、benchmark.md/zh.md） |
 | `research` | `outputs/cache/research-scout`、`tools/research/projects`、`outputs/reports/research-scout`、`outputs/logs/research-scout`、`outputs/{reports,data}/research-profiler` |
-| `test` | `outputs/data/benchmark`（含 `results.csv`） |
+| `benchmark` | `outputs/data/benchmark`（含 `results.csv`）；`--category test` 为旧名别名 |
 | `backups` | `outputs/backups/website-force`、`outputs/backups/summarize`（覆盖前自动备份） |
 
 #### 首次配置（`config --init`）
@@ -365,7 +365,7 @@ install:
   enabled: true
   ai_companion: true                    # npx tsx ../ai-companion/scripts/install.ts . --enforce（skills/hooks/harness，claude+codex）
   claude_plugins: []                    # RISKY（提示确认）：`claude plugin install <id>` 列表
-  pip_extras: [all]                     # summarize/research/benchmark/website/translator/all 的子集；默认 [all]
+  pip_extras: [all]                     # 要安装的 extras；默认 [all] = summarize+research+benchmark+website，不含 translator
   global_npm: []                        # RISKY（提示确认）：额外 `npm i -g` 包
 ```
 

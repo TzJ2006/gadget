@@ -31,15 +31,18 @@
                 {{- $label_text -}}
             </a>
             {{- end }}
+
+            {{- $lsenabled := (or (not site.Params.disableThemeToggle) (and (not site.Params.disableLangToggle) (hugo.IsMultilingual))) }}
+            {{- if $lsenabled }}
             <div class="logo-switches">
                 {{- if (not site.Params.disableThemeToggle) }}
-                <button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme">
-                    <svg id="moon" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                <button id="theme-toggle" class="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme">
+                    <svg class="moon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
                         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                         stroke-linejoin="round">
                         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
                     </svg>
-                    <svg id="sun" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                    <svg class="sun" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
                         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                         stroke-linejoin="round">
                         <circle cx="12" cy="12" r="5"></circle>
@@ -54,24 +57,39 @@
                     </svg>
                 </button>
                 {{- end }}
-
+                
                 {{- if (not site.Params.disableLangToggle) }}
-                    {{- $separator := or $label_text (not site.Params.disableThemeToggle) }}
-                    {{- if $separator }}<span class="lang-sep">|</span>{{ end }}
-                    <button id="lang-toggle" accesskey="l" title="(Alt + L)" aria-label="Toggle language"
-                        data-current-lang="{{ .Lang }}"
-                        data-translation-url="{{ with (index .Translations 0) }}{{ .Permalink }}{{ end }}">
-                        {{- if eq .Lang "en" }}中文{{- else }}EN{{- end }}
-                    </button>
+                    {{- $lang := .Lang}}
+                    {{- with site.Home.Translations }}
+                    {{- $separator := or $label_text (not site.Params.disableThemeToggle)}}
+                    {{- if $separator }}<span class="nav-sep">|</span>{{ end }}
+                    <ul class="lang-menu">
+                        {{- range . -}}
+                        {{- if ne $lang .Lang }}
+                        <li>
+                            <a href="{{- .Permalink -}}" title="{{ .Language.Params.languageAltTitle | default (.Language.LanguageName | emojify) | default (.Lang | title) }}"
+                                aria-label="{{ .Language.LanguageName | default (.Lang | title) }}">
+                                {{- if (and site.Params.displayFullLangName (.Language.LanguageName)) }}
+                                {{- .Language.LanguageName | emojify -}}
+                                {{- else }}
+                                {{- .Lang | title -}}
+                                {{- end -}}
+                            </a>
+                        </li>
+                        {{- end -}}
+                        {{- end}}
+                    </ul>
+                    {{- end }}
                 {{- end }}
             </div>
+            {{- end }}
         </div>
         {{- $currentPage := . }}
         <ul id="menu" class="menu">
             {{- range site.Menus.main }}
             {{- if not .Parent }}
             {{- $menu_item_url := (cond (strings.HasSuffix .URL "/") .URL (printf "%s/" .URL) ) | absLangURL }}
-            {{- $page_url := $currentPage.Permalink | absLangURL }}
+            {{- $page_url:= $currentPage.Permalink | absLangURL }}
             {{- $is_search := eq (site.GetPage .KeyName).Layout `search` }}
             {{- $is_active := or (eq $menu_item_url $page_url) (and .HasChildren (hasPrefix $page_url $menu_item_url)) }}
             <li class="{{ if .HasChildren }}has-submenu{{ end }}">

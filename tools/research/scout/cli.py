@@ -9,12 +9,11 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from common.io import atomic_write
 from common.json_utils import try_repair_result as _try_repair_result
 from common.hugo import run_hugo_update
 from common.site_staging import resolve_site_content_dir
 
-from scout.config import (
+from research.scout.config import (
     PROJECTS_DIR,
     CACHE_DIR,
     REPORTS_DIR,
@@ -32,7 +31,7 @@ from scout.config import (
     get_logger,
     _SCOUT_CONFIG_PATH,
 )
-from scout.project import (
+from research.scout.project import (
     create_project,
     create_project_from_overview,
     create_project_from_query,
@@ -40,7 +39,7 @@ from scout.project import (
     save_project,
     load_all_projects,
 )
-from scout.search import (
+from research.scout.search import (
     paper_id as _paper_id,
     paper_url as _paper_url,
     search_arxiv,
@@ -51,13 +50,13 @@ from scout.search import (
     save_search_cache,
     load_known_paper_ids,
 )
-from scout.evaluate import (
+from research.scout.evaluate import (
     call_scout_llm,
     evaluate_papers_for_project,
     suggest_directions,
     analyze_citations,
 )
-from scout.report import (
+from research.scout.report import (
     generate_daily_report,
     generate_report_markdown,
     save_report,
@@ -284,7 +283,7 @@ def run_evaluation_pipeline(
     # Stage 4+5: Insight analysis + OpenReview reviews (opt-in)
     writing_guide = {}
     if insight and high_papers:
-        from scout.insight import run_insight_analysis
+        from research.scout.insight import run_insight_analysis
         _, writing_guide = run_insight_analysis(
             high_papers, pj,
             api=api, timeout=timeout, language=language,
@@ -418,7 +417,7 @@ def cmd_report(args):
 
 def cmd_ask(args):
     """Natural language search: parse intent -> create project -> search -> evaluate -> report."""
-    from scout.ask import parse_ask_intent, route_search
+    from research.scout.ask import parse_ask_intent, route_search
 
     query = " ".join(args.query)
     if not query.strip():
@@ -487,79 +486,10 @@ def cmd_ask(args):
 
 
 def cmd_profile(args):
-    """Analyze researcher: delegates to modular profiler package."""
-    from research.analysis import run_analysis as _run_analysis
-    from common.cache import DiskCache as _DiskCache
-    from research.config import load_config as _load_profiler_config, resolve_profiler_paths
+    """Analyze researcher: delegates to the shared profiler entry."""
+    from research.analysis import run_profiler
 
-    cfg = _load_profiler_config()
-
-    from research.analysis import _parse_batch_line
-
-    names = list(args.names) if args.names else []
-    batch_hints: dict[str, tuple[str, str]] = {}
-    if args.from_file:
-        fpath = Path(args.from_file)
-        if not fpath.exists():
-            logger.error("文件不存在: %s", fpath)
-            sys.exit(1)
-        for line in fpath.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                parsed_name, ph, aid = _parse_batch_line(line)
-                names.append(parsed_name)
-                if ph or aid:
-                    batch_hints[parsed_name] = (ph, aid)
-
-    if not names:
-        logger.error("请提供研究者姓名或使用 --from-file")
-        sys.exit(1)
-
-    mode = args.mode or cfg.get("default_mode", "fast")
-    depth = args.depth if args.depth is not None else cfg.get("default_depth", 0)
-    max_students = args.max_students or cfg.get("max_students", 10)
-    model = args.model or cfg.get("model", "sonnet")
-    no_cache = getattr(args, "no_cache", False)
-
-    backend = args.api or load_scout_config().get("default_api", "ollama")
-
-    profiler_paths = resolve_profiler_paths(cfg)
-    cache = None if no_cache else _DiskCache(profiler_paths["cache"])
-    s2_key = cfg.get("semantic_scholar_api_key", "")
-
-    homepage_url = getattr(args, "homepage", "") or ""
-    affiliation = getattr(args, "affiliation", "") or ""
-    paper_hint = getattr(args, "paper", "") or ""
-    author_id_hint = getattr(args, "author_id", "") or ""
-
-    profiles = _run_analysis(
-        seed_names=names,
-        mode=mode,
-        depth=depth,
-        max_students=max_students,
-        model=model,
-        cache=cache,
-        no_cache=no_cache,
-        profiles_dir=str(profiler_paths["profiles"]),
-        reports_dir=str(profiler_paths["reports"]),
-        s2_api_key=s2_key,
-        backend=backend,
-        homepage_url=homepage_url,
-        affiliation=affiliation,
-        paper_hint=paper_hint,
-        author_id_hint=author_id_hint,
-        hints=batch_hints if batch_hints else None,
-    )
-
-    if getattr(args, "deploy", False) and profiles:
-        from research.output import deploy_to_hugo
-        hugo_site = get_hugo_site(args)
-        if hugo_site.exists():
-            for p in profiles:
-                deploy_to_hugo(p, hugo_site)
-            run_hugo_update(hugo_site)
-        else:
-            logger.warning("Hugo 站点不存在: %s，跳过部署", hugo_site)
+    run_profiler(args)
 
 
 def cmd_citations(args):
@@ -764,7 +694,7 @@ def _config_show():
 
     print()
     print("当前生效路径:")
-    from scout.config import REPORTS_DIR, CACHE_DIR, LOGS_DIR, DEFAULT_HUGO_SITE
+    from research.scout.config import REPORTS_DIR, CACHE_DIR, LOGS_DIR, DEFAULT_HUGO_SITE
     print(f"  projects_dir: {PROJECTS_DIR}")
     print(f"  reports_dir:  {REPORTS_DIR}")
     print(f"  cache_dir:    {CACHE_DIR}")
@@ -786,7 +716,7 @@ def _config_show():
 def _config_init():
     """Interactive config creation → research_scout section of root config.json."""
     from common.config import load_section, resolve_config_path
-    from scout.config import save_scout_config
+    from research.scout.config import save_scout_config
 
     path = resolve_config_path()
     print(f"配置文件路径: {path}  (section: research_scout)")
@@ -810,7 +740,7 @@ def _config_init():
     else:
         cfg["default_language"] = DEFAULT_LANGUAGE
 
-    from scout.config import DEFAULT_HUGO_SITE
+    from research.scout.config import DEFAULT_HUGO_SITE
     hugo = input(f"Hugo 站点路径 (留空使用 {DEFAULT_HUGO_SITE}): ").strip()
     if hugo:
         cfg["hugo_site"] = hugo

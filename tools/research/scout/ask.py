@@ -8,14 +8,14 @@ from datetime import date
 
 from common.json_utils import try_repair_result as _try_repair_result
 
-from scout.config import (
+from research.scout.config import (
     DEFAULT_LOOKBACK_DAYS,
     MAX_PAPERS_PER_PROJECT,
     get_logger,
 )
-from scout.evaluate import call_scout_llm
-from scout.prompts import ASK_INTENT_PROMPT
-from scout.search import (
+from research.scout.evaluate import call_scout_llm
+from research.scout.prompts import ASK_INTENT_PROMPT
+from research.scout.search import (
     paper_id as _paper_id,
     search_arxiv_conference,
     search_arxiv_author,

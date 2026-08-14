@@ -8,9 +8,9 @@ import socket
 import urllib.parse
 import urllib.request
 import urllib.error
-from html.parser import HTMLParser
 from typing import Any
 
+from common.html_text import HTMLTextExtractor
 from research.apis.rate_limiter import web_limiter
 from research.cache import DiskCache
 from research.llm import call_llm, parse_json_response
@@ -104,66 +104,16 @@ def _decode_response(raw: bytes, resp) -> str:
     return raw.decode("latin-1", errors="replace")
 
 
-class _HomepageTextExtractor(HTMLParser):
-    """Extract readable text and links from HTML pages.
+_HOMEPAGE_SKIP_TAGS = {
+    "script", "style", "nav", "header", "footer", "svg", "noscript",
+}
 
-    Strips scripts/styles/nav, extracts body text + link hrefs.
-    Follows the pattern of _ArxivHTMLTextExtractor in arxiv_client.py.
-    """
 
-    SKIP_TAGS = {"script", "style", "nav", "header", "footer", "svg", "noscript"}
+class _HomepageTextExtractor(HTMLTextExtractor):
+    """Homepage text plus http(s) link extraction (shared stripper)."""
 
-    # Hitting one of these clears the skip stack: an unclosed <nav>/<header>
-    # earlier in the document must not swallow the entire body. Only true
-    # document landmarks qualify — <article> is excluded because it legitimately
-    # nests inside <footer>/<nav>, where clearing would leak boilerplate text.
-    RECOVERY_TAGS = {"body", "main"}
-
-    def __init__(self):
-        super().__init__()
-        self._text_parts: list[str] = []
-        self._links: list[str] = []
-        # Stack of open skip tags — a properly-closed </footer> pops only its
-        # own region, so a nested <article> inside it stays skipped.
-        self._skip_stack: list[str] = []
-
-    def handle_starttag(self, tag, attrs):
-        if tag in self.RECOVERY_TAGS:
-            # Recover from an unbalanced skip tag (e.g. <nav> with no </nav>).
-            self._skip_stack.clear()
-        if tag in self.SKIP_TAGS:
-            self._skip_stack.append(tag)
-            return
-        if self._skip_stack:
-            return
-        attrs_dict = dict(attrs)
-        if tag == "a":
-            href = attrs_dict.get("href", "")
-            if href and href.startswith("http"):
-                self._links.append(href)
-
-    def handle_endtag(self, tag):
-        if tag in self.SKIP_TAGS and tag in self._skip_stack:
-            # Pop the most recent matching skip region.
-            for i in range(len(self._skip_stack) - 1, -1, -1):
-                if self._skip_stack[i] == tag:
-                    del self._skip_stack[i]
-                    break
-        if tag in ("p", "div", "h1", "h2", "h3", "h4", "h5", "li", "tr", "br", "section"):
-            self._text_parts.append("\n")
-
-    def handle_data(self, data):
-        if not self._skip_stack:
-            self._text_parts.append(data)
-
-    def get_text(self) -> str:
-        import re
-        text = "".join(self._text_parts)
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        return text.strip()
-
-    def get_links(self) -> list[str]:
-        return self._links
+    def __init__(self) -> None:
+        super().__init__(skip_tags=_HOMEPAGE_SKIP_TAGS, collect_links=True)
 
 
 def fetch_homepage(

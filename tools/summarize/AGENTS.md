@@ -20,7 +20,6 @@ LLM backend via `--api`: `ollama` (default) / `claude_cli` / `anthropic` / `open
 ## Quirks
 
 - `tests/test_daily_e2e.py` needs a live Ollama + translation model + local device logs — it auto-skips otherwise. Run with `eval "$(bash scripts/serve_local_llm.sh env)"` first.
-- `llm_backends.py` is a re-export shim for `common/`; `tests/test_imports.py` parametrically enforces that contract — keep it green after refactors.
 - `auto` unloads resident Ollama models when the pipeline completes; set `GADGET_KEEP_OLLAMA=1` to keep them warm (e.g. back-to-back cron runs).
 - Keep JSON field names stable (`token_usage`, `conversation_summaries`, `device_name`, `_finalized`) — merge and renderers parse them across devices.
 - Exported logs and reports go to `outputs/{logs,reports,cache}/` and may contain sensitive conversation content — never commit them.

@@ -178,43 +178,6 @@ def discover_sources() -> list:
     return sorted(agents) if agents else list(_DEFAULT_SOURCES)
 
 
-def fetch_ccusage(target_date: date) -> Optional[dict]:
-    """[deprecated] 调用 ccusage daily --json，直接返回原始 JSON 输出。
-
-    已被 fetch_ccusage_full() 取代。仅 cmd_legacy 兜底仍使用。
-
-    返回 ccusage 原生格式（camelCase），不做转换：
-    {
-        "daily": [{"date": "...", "totalTokens": ..., "modelBreakdowns": [...], ...}],
-        "totals": {"totalTokens": ..., ...}
-    }
-    """
-    _ensure_ccusage_global()
-    date_str = target_date.isoformat()
-    cmd = _ccusage_cmd(["claude", "daily", "--since", date_str,
-                        "--until", date_str, "--json", "--breakdown"])
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
-                                shell=(sys.platform == "win32"))
-    except (subprocess.TimeoutExpired, OSError):
-        print("[warn] ccusage 不可用，跳过 token 统计")
-        return None
-    if result.returncode != 0:
-        print(f"[warn] ccusage 执行失败 (exit {result.returncode})，跳过 token 统计")
-        return None
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        print("[warn] ccusage 输出解析失败，跳过 token 统计")
-        return None
-    if isinstance(data, list):
-        data = {"daily": data, "totals": {}}
-    if not data.get("daily"):
-        print(f"[info] ccusage: {target_date.isoformat()} 无 token 用量数据")
-        return None
-    return _normalize_usage(data, "claude")
-
-
 def fetch_source_usage(source: str) -> Optional[dict]:
     """Fetch one source's full history via `ccusage <source> daily --json --breakdown`.
 
@@ -297,19 +260,6 @@ def save_usage_file(usage_data: dict, source_label: str, logs_dir: Path) -> Path
         "source": source_label,
         "usage": usage_data,
     }
-    _atomic_write(out_path, json.dumps(envelope, ensure_ascii=False, indent=2))
-    return out_path
-
-
-def save_ccusage_file(data: dict, logs_dir: Path) -> Path:
-    """保存 ccusage 全量数据到 ccusage_<device>.json。"""
-    device_name = _get_device_name()
-    envelope = {
-        "device_name": device_name,
-        "updated_at": datetime.now().isoformat(),
-        "ccusage": data,
-    }
-    out_path = logs_dir / f"ccusage_{device_name}.json"
     _atomic_write(out_path, json.dumps(envelope, ensure_ascii=False, indent=2))
     return out_path
 
@@ -420,35 +370,3 @@ def _merge_token_usages(device_usages: list[dict]) -> dict:
         "modelBreakdowns": list(model_agg.values()),
         "per_device": per_device,
     }
-
-
-def _extract_text_content(content) -> str:
-    """从 Claude Code 的 content 字段提取纯文本。"""
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict):
-                if block.get("type") == "text":
-                    parts.append(block.get("text", ""))
-                elif block.get("type") == "tool_use":
-                    # 简要记录工具调用
-                    name = block.get("name", "unknown")
-                    inp = block.get("input", {})
-                    # 截断过长的输入
-                    inp_str = json.dumps(inp, ensure_ascii=False)
-                    if len(inp_str) > 300:
-                        inp_str = inp_str[:300] + "..."
-                    parts.append(f"[Tool: {name}] {inp_str}")
-                elif block.get("type") == "tool_result":
-                    # 截断过长的工具结果
-                    result_content = block.get("content", "")
-                    result_str = _extract_text_content(result_content)
-                    if len(result_str) > 500:
-                        result_str = result_str[:500] + "..."
-                    parts.append(f"[ToolResult] {result_str}")
-        return "\n".join(parts).strip()
-    return ""

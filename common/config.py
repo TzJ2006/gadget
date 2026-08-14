@@ -108,8 +108,3 @@ def update_section(section: str, data: dict[str, Any], *, replace: bool = False)
         base.update(data)
         root[section] = base
     return save_root_config(root)
-
-
-def config_path() -> Path:
-    """Alias for :func:`resolve_config_path` (display / existence checks)."""
-    return resolve_config_path()

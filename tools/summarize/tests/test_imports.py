@@ -56,21 +56,6 @@ WEEKLY_SYMBOLS = [
     "save_weekly_report",
 ]
 
-LLM_BACKENDS_SYMBOLS = [
-    "LLMCallConfig",
-    "call_llm",
-    "parse_json_response",
-    "repair_json_with_llm",
-    "try_repair_result",
-    "ChunkTimeoutError",
-    "chunk_text",
-    "timed_llm_call",
-    "load_chunk_cache",
-    "save_chunk_cache",
-    "cleanup_chunk_cache",
-    "hierarchical_merge",
-]
-
 
 @pytest.mark.parametrize("symbol", DAILY_SUMMARY_SYMBOLS)
 def test_daily_summary_exports(symbol):
@@ -98,10 +83,3 @@ def test_weekly_exports(symbol):
     """mcp_server depends on these from weekly_summary."""
     mod = importlib.import_module("summarize.weekly_summary")
     assert hasattr(mod, symbol), f"weekly_summary missing: {symbol}"
-
-
-@pytest.mark.parametrize("symbol", LLM_BACKENDS_SYMBOLS)
-def test_llm_backends_exports(symbol):
-    """monthly/weekly depend on these from llm_backends."""
-    mod = importlib.import_module("summarize.llm_backends")
-    assert hasattr(mod, symbol), f"llm_backends missing: {symbol}"

@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import detect, cpu, gpu, core, report
+from . import detect, cpu, gpu, core
 from common.hugo import run_hugo_update
 from common.paths import GADGET_ROOT, TOOLS_DIR
 
@@ -142,7 +142,7 @@ The HTML report automatically includes all hardware ever benchmarked!
         '--matrix-size',
         type=int,
         default=None,
-        help='Matrix size for GEMM benchmarks (default: 4096 GPU, 8192/4096 CPU)'
+        help='GEMM matrix size N for CPU BLAS and GPU. Default: CPU 2048/4096; CUDA/XPU auto from VRAM; MPS 8192'
     )
     parser.add_argument(
         '--iterations',
@@ -274,6 +274,46 @@ def print_summary(all_results: list, system_info: dict):
     print("\n" + "=" * 60 + "\n")
 
 
+def generate_html_report(csv_path: str, output_path: str) -> None:
+    """Generate HTML report; plotly is imported only here."""
+    from .report import generate_report
+    generate_report(csv_path, output_path)
+
+
+def run_cpu_benchmarks(duration: float = None, matrix_size: int = None) -> list:
+    """Run CPU benches, passing --matrix-size into BLAS constructors."""
+    benches = [
+        ("Single-core (scalar operations)", cpu.CpuSingleCoreBenchmark()),
+        ("Single-core BLAS (matrix multiplication)",
+         cpu.CpuSingleCoreBLASBenchmark(matrix_size=matrix_size)),
+        ("All-cores BLAS (matrix multiplication)",
+         cpu.CpuAllCoresBenchmark(matrix_size=matrix_size)),
+    ]
+    results = []
+    print("Running CPU benchmarks...")
+    for i, (name, bench) in enumerate(benches, 1):
+        if duration:
+            bench.timer.target_duration = duration
+        print(f"  [{i}/{len(benches)}] {name}...")
+        result = bench.benchmark()
+        results.append(result)
+        print(f"       Result: {result['flops_formatted']}")
+    print("✓ CPU benchmarks complete.\n")
+    return results
+
+
+def run_gpu_benchmarks(matrix_size: int = None, iterations: int = None,
+                       duration: float = None) -> list:
+    """Run GPU benches; a CLI --matrix-size overrides CUDA/XPU VRAM sizing."""
+    bench = gpu.GpuBenchmark(
+        matrix_size=matrix_size, iterations=iterations, duration=duration
+    )
+    if matrix_size is not None:
+        for device in bench.devices:
+            device['matrix_size'] = matrix_size
+    return bench.run_all()
+
+
 def deploy_report(report_path: str, hugo_site: str, verbose: bool = False) -> bool:
     """Publish the benchmark report to Hugo staging and deploy the website."""
     report_file = Path(report_path)
@@ -316,7 +356,7 @@ def main():
 
         print(f"Generating HTML report from: {csv_path}")
         try:
-            report.generate_report(str(csv_path), args.report_output)
+            generate_html_report(str(csv_path), args.report_output)
             print("\n✓ Report generation complete!")
             if args.deploy:
                 deploy_report(args.report_output, args.hugo_site, args.verbose)
@@ -352,12 +392,15 @@ def main():
     try:
         # CPU benchmarks
         if not args.gpu_only:
-            cpu_results = cpu.run_all_cpu_benchmarks(duration=args.duration)
+            cpu_results = run_cpu_benchmarks(
+                duration=args.duration,
+                matrix_size=args.matrix_size,
+            )
             all_results.extend(cpu_results)
 
         # GPU benchmarks
         if not args.cpu_only:
-            gpu_results = gpu.run_all_gpu_benchmarks(
+            gpu_results = run_gpu_benchmarks(
                 matrix_size=args.matrix_size,
                 iterations=args.iterations,
                 duration=args.duration
@@ -368,9 +411,11 @@ def main():
         if not args.quiet:
             print_summary(all_results, system_info)
 
-        # Save results
+        # Save results (skip failed dtypes / zero-FLOPS rows)
         if not args.no_save:
             for result in all_results:
+                if 'error' in result or not result.get('flops_per_sec'):
+                    continue
                 results_manager.add(result, system_info)
             results_manager.save()
 
@@ -378,7 +423,7 @@ def main():
         if args.report and not args.no_save:
             print("\nGenerating HTML report...")
             try:
-                report.generate_report(args.output, args.report_output)
+                generate_html_report(args.output, args.report_output)
             except FileNotFoundError:
                 print(f"Warning: CSV file not found, skipping report generation")
             except Exception as e:
@@ -437,7 +482,7 @@ def main():
                     print("Warning: deploy requested but no report exists and --no-save prevents regenerating it.")
                 else:
                     print("\nGenerating HTML report for deploy...")
-                    report.generate_report(args.output, args.report_output)
+                    generate_html_report(args.output, args.report_output)
             deploy_report(args.report_output, args.hugo_site, args.verbose)
 
     except KeyboardInterrupt:

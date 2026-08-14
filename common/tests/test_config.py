@@ -1,6 +1,8 @@
 """Tests for common.config — unified repo-root config.json."""
 
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -60,3 +62,47 @@ def test_cache_invalidates_on_clear(_isolate_config):
     assert gadget_config.load_section("summarize")["device_name"] == "first"
     gadget_config.clear_cache()
     assert gadget_config.load_section("summarize")["device_name"] == "second"
+
+
+def test_no_config_path_alias():
+    assert not hasattr(gadget_config, "config_path")
+
+
+def test_from_common_import_config_skips_engines():
+    """Package import of config must not load llm/engine/translation/hugo."""
+    script = """\
+import sys
+from common import config
+from common.config import resolve_config_path, load_section
+heavy = {"common.llm", "common.engine", "common.translation", "common.hugo"}
+loaded = sorted(heavy & set(sys.modules))
+assert not loaded, loaded
+assert callable(config.resolve_config_path)
+assert callable(resolve_config_path)
+assert callable(load_section)
+assert not hasattr(config, "config_path")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_from_common_import_submodules():
+    """Lazy package init still allows ``from common import llm|engine|translation``."""
+    script = """\
+from common import llm, engine, translation
+assert hasattr(llm, "call_llm")
+assert hasattr(engine, "create_engine")
+assert hasattr(engine, "shutdown_engines")
+assert hasattr(translation, "translate_body")
+assert hasattr(translation, "resolve_review_model")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout

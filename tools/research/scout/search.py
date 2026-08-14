@@ -14,7 +14,7 @@ from pathlib import Path
 
 from common.io import atomic_write
 
-from scout.config import (
+from research.scout.config import (
     PAPERS_CACHE_DIR,
     BIORXIV_MAX_PAGES,
     get_logger,
@@ -22,52 +22,18 @@ from scout.config import (
 
 logger = get_logger()
 
-# ─── arXiv retry helper ────────────────────────────────────────────
-
-_ARXIV_MAX_RETRIES = 3
-_ARXIV_BASE_DELAY = 10  # seconds (arXiv rate limit is strict)
-
+# ─── arXiv client (shared with research.apis.arxiv_client) ──────────
 
 def _make_arxiv_client():
     """Create an arXiv client with conservative rate limiting."""
-    import arxiv
-    return arxiv.Client(
-        page_size=100,
-        delay_seconds=5,    # default is 3; be nicer to arXiv
-        num_retries=5,      # default is 3; more patience
-    )
+    from research.apis.arxiv_client import make_arxiv_client
+    return make_arxiv_client()
 
 
 def _arxiv_results_with_retry(client, search):
-    """Iterate arXiv results with retry on transient HTTP errors (429, 503).
-
-    Yields results one by one. On transient error, waits with exponential
-    backoff and retries the entire query (arXiv client doesn't support resume).
-    """
-    import arxiv as _arxiv
-
-    emitted = 0  # results already yielded — skip them when restarting after a retry
-    for attempt in range(_ARXIV_MAX_RETRIES):
-        try:
-            seen = 0
-            for result in client.results(search):
-                seen += 1
-                if seen <= emitted:
-                    continue  # already yielded before the mid-stream error
-                emitted += 1
-                yield result
-            return  # success — exhausted all results
-        except _arxiv.HTTPError as e:
-            status = getattr(e, "status", 0)
-            if status in (429, 503) and attempt < _ARXIV_MAX_RETRIES - 1:
-                delay = _ARXIV_BASE_DELAY * (2 ** attempt)
-                logger.warning("arXiv HTTP %d, %d秒后重试 (第%d/%d次)...",
-                               status, delay, attempt + 1, _ARXIV_MAX_RETRIES)
-                time.sleep(delay)
-                continue
-            raise  # non-retryable or exhausted retries
-        except Exception:
-            raise
+    """Iterate arXiv results with retry on transient HTTP errors (429, 503)."""
+    from research.apis.arxiv_client import iter_arxiv_results
+    yield from iter_arxiv_results(client, search)
 
 
 # ─── Venue detection ────────────────────────────────────────────────
@@ -248,6 +214,10 @@ def search_arxiv(project: dict, lookback_days: int = 7,
     """
     try:
         import arxiv
+        from research.apis.arxiv_client import (
+            arxiv_id_from_result,
+            _paper_from_arxiv_result,
+        )
     except ImportError:
         logger.error("请安装 arxiv: pip install arxiv")
         import sys; sys.exit(1)
@@ -277,7 +247,7 @@ def search_arxiv(project: dict, lookback_days: int = 7,
             if submitted < cutoff:
                 continue
 
-            arxiv_id = result.entry_id.split("/")[-1]
+            arxiv_id = arxiv_id_from_result(result)
 
             if known_ids and arxiv_id in known_ids:
                 consecutive_known += 1
@@ -289,20 +259,7 @@ def search_arxiv(project: dict, lookback_days: int = 7,
 
             consecutive_known = 0
 
-            paper = {
-                "paper_id": arxiv_id,
-                "arxiv_id": arxiv_id,
-                "source": "arxiv",
-                "title": result.title.replace("\n", " ").strip(),
-                "authors": [a.name for a in result.authors[:10]],
-                "abstract": result.summary.replace("\n", " ").strip(),
-                "categories": result.categories,
-                "published": submitted.isoformat(),
-                "url": result.entry_id,
-                "pdf_url": result.pdf_url,
-                "comment": (result.comment or "").strip(),
-                "journal_ref": (result.journal_ref or "").strip(),
-            }
+            paper = _paper_from_arxiv_result(result)
             paper["venue"] = _extract_venue(paper)
             papers.append(paper)
     except Exception as e:
@@ -358,6 +315,7 @@ def search_arxiv_conference(conference: str, project: dict | None = None,
     """Search papers from a specific conference via arXiv full-text + comment filter."""
     try:
         import arxiv
+        from research.apis.arxiv_client import _paper_from_arxiv_result
     except ImportError:
         logger.error("请安装 arxiv: pip install arxiv")
         import sys; sys.exit(1)
@@ -391,21 +349,7 @@ def search_arxiv_conference(conference: str, project: dict | None = None,
                     and not _conference_matches(conf_lower, journal_ref)):
                 continue
 
-            arxiv_id = result.entry_id.split("/")[-1]
-            paper = {
-                "paper_id": arxiv_id,
-                "arxiv_id": arxiv_id,
-                "source": "arxiv",
-                "title": result.title.replace("\n", " ").strip(),
-                "authors": [a.name for a in result.authors[:10]],
-                "abstract": result.summary.replace("\n", " ").strip(),
-                "categories": result.categories,
-                "published": result.published.date().isoformat(),
-                "url": result.entry_id,
-                "pdf_url": result.pdf_url,
-                "comment": comment,
-                "journal_ref": journal_ref,
-            }
+            paper = _paper_from_arxiv_result(result)
             paper["venue"] = _extract_venue(paper) or conference
             papers.append(paper)
 
@@ -424,6 +368,7 @@ def search_arxiv_author(author: str, project: dict | None = None,
     """Search papers by a specific author via arXiv au: query."""
     try:
         import arxiv
+        from research.apis.arxiv_client import _paper_from_arxiv_result
     except ImportError:
         logger.error("请安装 arxiv: pip install arxiv")
         import sys; sys.exit(1)
@@ -458,21 +403,7 @@ def search_arxiv_author(author: str, project: dict | None = None,
             if cutoff and pub_date < cutoff:
                 continue
 
-            arxiv_id = result.entry_id.split("/")[-1]
-            paper = {
-                "paper_id": arxiv_id,
-                "arxiv_id": arxiv_id,
-                "source": "arxiv",
-                "title": result.title.replace("\n", " ").strip(),
-                "authors": [a.name for a in result.authors[:10]],
-                "abstract": result.summary.replace("\n", " ").strip(),
-                "categories": result.categories,
-                "published": pub_date.isoformat(),
-                "url": result.entry_id,
-                "pdf_url": result.pdf_url,
-                "comment": (result.comment or "").strip(),
-                "journal_ref": (result.journal_ref or "").strip(),
-            }
+            paper = _paper_from_arxiv_result(result)
             paper["venue"] = _extract_venue(paper)
             papers.append(paper)
 
@@ -483,22 +414,6 @@ def search_arxiv_author(author: str, project: dict | None = None,
 
     logger.info("找到 %d 篇论文 (作者: %s)", len(papers), author)
     return papers
-
-
-def search_all_projects(projects: list[dict], lookback_days: int = 7,
-                        max_results: int = 50) -> dict[str, list[dict]]:
-    """Search all projects, return {project_id: [papers]}."""
-    from scout.project import save_project
-    results = {}
-    for pj in projects:
-        if pj.get("status") != "active":
-            continue
-        known_ids = load_known_paper_ids(pj["id"])
-        papers = search_arxiv(pj, lookback_days, max_results, known_ids=known_ids)
-        results[pj["id"]] = papers or []  # search_arxiv may return None on failure
-        pj["last_searched"] = date.today().isoformat()
-        save_project(pj)
-    return results
 
 
 # ─── bioRxiv search ─────────────────────────────────────────────────

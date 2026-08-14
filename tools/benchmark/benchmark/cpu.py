@@ -3,8 +3,11 @@ CPU benchmarking - single-core and all-cores FLOPS measurement.
 """
 import math
 import multiprocessing
-import numpy as np
+import os
+from contextlib import contextmanager, nullcontext
 from typing import Dict, Any
+
+import numpy as np
 
 try:
     from threadpoolctl import threadpool_limits
@@ -12,13 +15,10 @@ try:
 except ImportError:
     HAS_THREADPOOLCTL = False
 
-try:
-    from tqdm import tqdm
-    HAS_TQDM = True
-except ImportError:
-    HAS_TQDM = False
-
 from .core import BaseBenchmark, calculate_flops_scalar, calculate_flops_gemm
+
+
+_BLAS_THREAD_WARNED = False
 
 
 # Scalar loop for single-core benchmark
@@ -28,6 +28,38 @@ def _cpu_loop(n: int) -> float:
     for i in range(n):
         s += math.sqrt(i)
     return s
+
+
+@contextmanager
+def _env_thread_limit(n: int):
+    """Best-effort BLAS thread cap via env vars when threadpoolctl is missing."""
+    keys = ('OMP_NUM_THREADS', 'MKL_NUM_THREADS')
+    saved = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ[k] = str(n)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _blas_limits(num_threads: int):
+    """Limit BLAS threads for one GEMM; warn once if falling back to env vars."""
+    global _BLAS_THREAD_WARNED
+    if HAS_THREADPOOLCTL:
+        return threadpool_limits(limits=num_threads)
+    if num_threads == 1:
+        if not _BLAS_THREAD_WARNED:
+            print("Warning: threadpoolctl is not installed; "
+                  "setting OMP_NUM_THREADS/MKL_NUM_THREADS=1 for single-core BLAS. "
+                  "Install threadpoolctl for precise BLAS thread control.")
+            _BLAS_THREAD_WARNED = True
+        return _env_thread_limit(1)
+    return nullcontext()
 
 
 class CpuSingleCoreBenchmark(BaseBenchmark):
@@ -61,30 +93,25 @@ class CpuSingleCoreBenchmark(BaseBenchmark):
         return calculate_flops_scalar(self.iterations * iterations)
 
 
-class CpuAllCoresBenchmark(BaseBenchmark):
-    """
-    All-cores CPU benchmark using NumPy BLAS GEMM.
+class _CpuBlasBenchmark(BaseBenchmark):
+    """NumPy BLAS GEMM with a configurable thread limit."""
 
-    This leverages optimized BLAS libraries (OpenBLAS, MKL, Accelerate)
-    for multi-threaded matrix multiplication.
-    """
-
-    # Default matrix size for GEMM
-    MATRIX_SIZE = 4096
-
-    def __init__(self, matrix_size: int = None, num_threads: int = None,
+    def __init__(self, matrix_size: int, num_threads: int,
+                 name: str, type_key: str,
                  warmup_iters: int = 3, measure_iters: int = 5):
         super().__init__(warmup_iters, measure_iters)
-        self.matrix_size = matrix_size or self.MATRIX_SIZE
-        self.num_threads = num_threads or multiprocessing.cpu_count()
+        self.matrix_size = matrix_size
+        self.num_threads = num_threads
+        self._name = name
+        self._type_key = type_key
         # Pre-generate matrices to exclude generation time from measurement
         self.A = np.random.random((self.matrix_size, self.matrix_size)).astype(np.float32)
         self.B = np.random.random((self.matrix_size, self.matrix_size)).astype(np.float32)
 
     def get_info(self) -> Dict[str, Any]:
         return {
-            'name': f'CPU All-Cores ({self.num_threads} threads)',
-            'type': 'cpu_all_cores',
+            'name': self._name,
+            'type': self._type_key,
             'backend': 'cpu',
             'dtype': 'float32',
             'matrix_size': self.matrix_size,
@@ -92,18 +119,37 @@ class CpuAllCoresBenchmark(BaseBenchmark):
         }
 
     def run_iteration(self) -> None:
-        # Limit BLAS threads if threadpoolctl is available
-        if HAS_THREADPOOLCTL:
-            with threadpool_limits(limits=self.num_threads):
-                np.dot(self.A, self.B)
-        else:
+        with _blas_limits(self.num_threads):
             np.dot(self.A, self.B)
 
     def get_flops(self, iterations: int) -> int:
         return calculate_flops_gemm(self.matrix_size, iterations)
 
 
-class CpuSingleCoreBLASBenchmark(BaseBenchmark):
+class CpuAllCoresBenchmark(_CpuBlasBenchmark):
+    """
+    All-cores CPU benchmark using NumPy BLAS GEMM.
+
+    This leverages optimized BLAS libraries (OpenBLAS, MKL, Accelerate)
+    for multi-threaded matrix multiplication.
+    """
+
+    MATRIX_SIZE = 4096
+
+    def __init__(self, matrix_size: int = None, num_threads: int = None,
+                 warmup_iters: int = 3, measure_iters: int = 5):
+        threads = num_threads or multiprocessing.cpu_count()
+        super().__init__(
+            matrix_size=matrix_size or self.MATRIX_SIZE,
+            num_threads=threads,
+            name=f'CPU All-Cores ({threads} threads)',
+            type_key='cpu_all_cores',
+            warmup_iters=warmup_iters,
+            measure_iters=measure_iters,
+        )
+
+
+class CpuSingleCoreBLASBenchmark(_CpuBlasBenchmark):
     """
     Single-core CPU benchmark using NumPy BLAS with thread limit.
 
@@ -114,32 +160,14 @@ class CpuSingleCoreBLASBenchmark(BaseBenchmark):
 
     def __init__(self, matrix_size: int = None, warmup_iters: int = 3,
                  measure_iters: int = 5):
-        super().__init__(warmup_iters, measure_iters)
-        self.matrix_size = matrix_size or self.MATRIX_SIZE
-        # Pre-generate matrices to exclude generation time from measurement
-        self.A = np.random.random((self.matrix_size, self.matrix_size)).astype(np.float32)
-        self.B = np.random.random((self.matrix_size, self.matrix_size)).astype(np.float32)
-
-    def get_info(self) -> Dict[str, Any]:
-        return {
-            'name': 'CPU Single-Core BLAS',
-            'type': 'cpu_single_core_blas',
-            'backend': 'cpu',
-            'dtype': 'float32',
-            'matrix_size': self.matrix_size,
-            'iterations': self.timer.measure_iters,
-        }
-
-    def run_iteration(self) -> None:
-        # Limit to 1 BLAS thread
-        if HAS_THREADPOOLCTL:
-            with threadpool_limits(limits=1):
-                np.dot(self.A, self.B)
-        else:
-            np.dot(self.A, self.B)
-
-    def get_flops(self, iterations: int) -> int:
-        return calculate_flops_gemm(self.matrix_size, iterations)
+        super().__init__(
+            matrix_size=matrix_size or self.MATRIX_SIZE,
+            num_threads=1,
+            name='CPU Single-Core BLAS',
+            type_key='cpu_single_core_blas',
+            warmup_iters=warmup_iters,
+            measure_iters=measure_iters,
+        )
 
 
 def run_all_cpu_benchmarks(duration: float = None, show_progress: bool = True) -> list:
@@ -148,7 +176,7 @@ def run_all_cpu_benchmarks(duration: float = None, show_progress: bool = True) -
 
     Args:
         duration: Target duration per benchmark in seconds
-        show_progress: Whether to show progress bars
+        show_progress: Unused; kept for compatibility.
 
     Returns:
         List of benchmark result dictionaries.
@@ -167,17 +195,10 @@ def run_all_cpu_benchmarks(duration: float = None, show_progress: bool = True) -
         if duration:
             bench.timer.target_duration = duration
 
-        if show_progress and HAS_TQDM and duration:
-            # Show progress bar for duration-based benchmarks
-            print(f"  [{i}/3] {name}...")
-            result = bench.benchmark()
-            results.append(result)
-            print(f"       Result: {result['flops_formatted']}")
-        else:
-            print(f"  [{i}/3] {name}...")
-            result = bench.benchmark()
-            results.append(result)
-            print(f"       Result: {result['flops_formatted']}")
+        print(f"  [{i}/3] {name}...")
+        result = bench.benchmark()
+        results.append(result)
+        print(f"       Result: {result['flops_formatted']}")
 
     print("✓ CPU benchmarks complete.\n")
 

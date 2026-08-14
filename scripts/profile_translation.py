@@ -14,15 +14,19 @@ from common.translation import build_translation_prompt, split_frontmatter, prot
 
 # --- GPU monitoring thread ---
 class GPUMonitor:
+    MAX_FAILURES = 5
+
     def __init__(self, interval=0.2):
         self.interval = interval
         self.running = False
         self.samples = []
         self._thread = None
+        self._failures = 0
 
     def start(self):
         self.running = True
         self.samples = []
+        self._failures = 0
         self._thread = threading.Thread(target=self._poll, daemon=True)
         self._thread.start()
 
@@ -40,14 +44,20 @@ class GPUMonitor:
                     text=True
                 ).strip()
                 parts = out.split(", ")
+                if len(parts) < 4:
+                    raise ValueError(f"unexpected nvidia-smi output: {out!r}")
                 self.samples.append({
                     "gpu_util": float(parts[0]),
                     "mem_util": float(parts[1]),
                     "power_draw": float(parts[2]),
                     "power_limit": float(parts[3]),
                 })
-            except Exception:
-                pass
+                self._failures = 0
+            except (OSError, subprocess.CalledProcessError, ValueError):
+                self._failures += 1
+                if self._failures >= self.MAX_FAILURES:
+                    self.running = False
+                    return
             time.sleep(self.interval)
 
     def summary(self):

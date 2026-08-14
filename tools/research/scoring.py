@@ -13,20 +13,19 @@ def compute_tier_score(
 ) -> float:
     """Compute a 0-100 score based on weighted bibliometric dimensions.
 
-    Default weights (override via `weights` dict):
+    Default weights (override via `weights` dict or ``research.scoring.weights``):
         h_index:         25%
         total_citations:  20%
         recent_citations: 20%
         top_venue_ratio:  20%
         career_stage:     15%
     """
-    w = {
-        "h_index": 25,
-        "total_citations": 20,
-        "recent_citations": 20,
-        "top_venue_ratio": 20,
-        "career_stage": 15,
-    }
+    from research.config import DEFAULT_WEIGHTS, scoring_config
+
+    w = dict(DEFAULT_WEIGHTS)
+    cfg_w = scoring_config().get("weights")
+    if isinstance(cfg_w, dict):
+        w.update(cfg_w)
     if weights:
         w.update(weights)
 
@@ -101,9 +100,15 @@ def classify_tier(
 
     Default thresholds: ESTABLISHED_LEADER >= 75, RISING_STAR >= 50,
     ACTIVE_RESEARCHER >= 30, EARLY_CAREER < 30.
-    Override via `thresholds` dict with keys: leader, rising, active.
+    Override via `thresholds` dict or ``research.scoring.tier_cutoffs``
+    with keys: leader, rising, active.
     """
-    t = {"leader": 75, "rising": 50, "active": 30}
+    from research.config import DEFAULT_TIER_CUTOFFS, scoring_config
+
+    t = dict(DEFAULT_TIER_CUTOFFS)
+    cfg_t = scoring_config().get("tier_cutoffs")
+    if isinstance(cfg_t, dict):
+        t.update(cfg_t)
     if thresholds:
         t.update(thresholds)
 

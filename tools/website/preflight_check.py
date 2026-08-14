@@ -37,22 +37,22 @@ from typing import Any
 
 SITE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = SITE_ROOT.parent.parent
+if str(SITE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SITE_ROOT))
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from common.translation import detect_language
+from generated_paths import GENERATED_CONTENT_DIRS, GENERATED_CONTENT_FILES
 
 STALE_LINK_PATTERN = re.compile(r"\.\./\.\./static")
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?\n)---\s*\n?(.*)$", re.DOTALL)
 MIN_BODY_LENGTH = 100
 
-# Pipeline-managed content (deploy pipelines write these with complete bilingual
-# pairs + gadget markers via common.bilingual/site_staging) — preflight trusts
-# them and only checks hand-written content. Auto-"fixing" a generated file
-# would desync it from its src-hash marker and cause churn on the next deploy.
-GENERATED_CONTENT_DIRS = ("bugJournal/daily", "bugJournal/weekly",
-                          "bugJournal/monthly", "research")
-GENERATED_CONTENT_FILES = ("benchmark.md", "benchmark.zh.md")
+# Pipeline-managed content lists live in generated_paths.py (shared with
+# translate_site_batch). Preflight trusts those paths and only checks
+# hand-written content — auto-"fixing" a generated file would desync it
+# from its src-hash marker and cause churn on the next deploy.
 
 
 @dataclass

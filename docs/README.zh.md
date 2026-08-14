@@ -38,7 +38,7 @@ gadget/
 │   ├── website/        # Hugo 博客（增量媒体压缩 + 自动构建发布）
 │   └── translator/     # Gradio 文档翻译器
 ├── common/             # 共享基础设施包（LLM / 缓存 / IO / 翻译 / Hugo）——被所有工具依赖
-├── scripts/            # 运维 + 维护脚本（sync.py、onboard.py、profile_translation.py、内容语言审计…）
+├── scripts/            # 运维 + 维护脚本（sync.py、onboard.py、language.py、profile_translation.py、…）
 ├── docs/               # 设计文档、ECL 计划（docs/ecl/）、审计报告、历史归档（docs/archive/）
 ├── outputs/            # 所有生成产物（gitignore，可自动重建）
 ├── AGENTS.md           # 所有 AI agent 的工作流协议（动手前先读）
@@ -168,9 +168,11 @@ python -m translator             # 启动 Gradio GUI（浏览器打开）
 
 ### scripts/ — 运维与维护脚本
 
-- `sync.py` — 集中式 rclone 数据同步（push / pull / status / bootstrap / config，覆盖 summarize / website / research / test / backups 各类目；另含特殊 `dag` 类目用于生成 + 部署 DAG 站）。运行 `python scripts/sync.py`，配置为仓库根 `config.json` 的 `sync` 段（可用 `GADGET_CONFIG` 覆盖路径）。
+- `sync.py` — 集中式 rclone 数据同步（push / pull / status / bootstrap / config，覆盖 summarize / website / research / benchmark / backups 各类目；另含特殊 `dag` 类目用于生成 + 部署 DAG 站）。运行 `python scripts/sync.py`，配置为仓库根 `config.json` 的 `sync` 段（可用 `GADGET_CONFIG` 覆盖路径）。
 - `onboard.py` — 仓库级一次性机器 onboarding：填一张 YAML sheet（`tokens/onboard.yaml`），跑一次脚本，自动完成 SSH 配置、Claude/Codex CLI 安装与鉴权、pip extras 与 ai-companion 安装、各工具 config、rclone bootstrap。
-- 其余：`audit_content_languages.py`（审计/修复双语 Hugo 内容）、`fix_report_languages.py`、`profile_translation.py`（翻译引擎 GPU profiler）。
+- `smoke.sh` — 只读冒烟：对各工具跑 `--help` / `--info` / import（不调 LLM、不联网、不写盘）。运行 `bash scripts/smoke.sh`。
+- `serve_local_llm.sh` — 创建 summarize 用的 Ollama 变体并打印环境变量（`eval "$(bash scripts/serve_local_llm.sh env)"`）。持久配置写在仓库根 `config.json` 的 `summarize` 段（可用 `GADGET_CONFIG` 覆盖路径）。
+- 其余：`language.py`（Hugo 双语审计 + summarize 报告重命名）、`profile_translation.py`（翻译引擎 GPU profiler）。
 
 ### AI Companion — 独立仓库
 
@@ -206,7 +208,7 @@ Hugo 站点内容直接写入 `tools/website/content|static`（已无单独的 `
 - Python 3.10+（推荐 conda 环境 `AI`，`conda activate AI`）
 - Node.js 18+（仅独立仓库 `../ai-companion/` 需要）
 - 各工具的具体依赖见对应目录的 `requirements.txt`
-- common 包 + 全部工具依赖：`pip install -e ".[all]"`
+- common 包 + summarize / research / benchmark / website extras：`pip install -e ".[all]"`（`all` **不含** `translator`；需另装 `pip install -e ".[translator]"`）
 - 网站/翻译使用本地推理引擎（默认 Ollama；Linux 兜底 vLLM，Windows 兜底 transformers），模型 `tencent/Hy-MT2-1.8B` 首次运行自动下载
 
 ## 注意事项
@@ -219,3 +221,4 @@ Hugo 站点内容直接写入 `tools/website/content|static`（已无单独的 `
 - 跨设备数据同步使用 `python scripts/sync.py push/pull`（需配置 rclone）
 - 永远不要 `git add` 自动生成内容、rclone 同步的数据、构建产物（`build/`、`gadget.egg-info/`）或 `tools/website/` 下的部署/主题仓库
 - 各工具配置统一在仓库根 `config.json`（已 gitignore；从 `config.example.json` 复制）。可用 `GADGET_CONFIG` 覆盖路径。
+- 许可协议为 GPL-3（见仓库根 `LICENSE`）。

@@ -1,7 +1,8 @@
 """Unit tests for translator.core — mocks the heavy bits (model inference,
 marker subprocess) and exercises the real routing / language logic.
 
-Run from repo root:  python -m pytest translator/tests/test_core.py
+Run from repo root:  python -m pytest tools/translator/tests/test_core.py
+Or:  cd tools && python -m pytest translator/tests
 """
 
 import subprocess
@@ -288,10 +289,50 @@ def test_count_tokens_uses_engine_tokenizer():
     assert core.count_tokens(eng, "one two three") == 3
 
 
+def test_count_tokens_uses_llama_tokenize():
+    class LLM:
+        def tokenize(self, raw):
+            return list(raw)[:5]
+
+    eng = FakeEngine()
+    eng._llm = LLM()
+    assert core.count_tokens(eng, "hello") == 5
+
+
 def test_count_tokens_falls_back_to_char_estimate():
     eng = FakeEngine()  # no _tokenizer, no _llm
     assert core.count_tokens(eng, "") == 0
     assert core.count_tokens(eng, "a" * 40) == 10  # ~4 chars/token
+
+
+def test_count_tokens_tokenizer_error_falls_back(caplog):
+    class Tok:
+        def encode(self, text):
+            raise ValueError("bad tok")
+
+    eng = FakeEngine()
+    eng._tokenizer = Tok()
+    with caplog.at_level("DEBUG", logger="translator.core"):
+        assert core.count_tokens(eng, "a" * 40) == 10
+    assert "bad tok" in caplog.text
+
+
+def test_count_tokens_llama_tokenize_error_falls_back(caplog):
+    class LLM:
+        def tokenize(self, raw):
+            raise RuntimeError("tokenize boom")
+
+    eng = FakeEngine()
+    eng._llm = LLM()
+    with caplog.at_level("DEBUG", logger="translator.core"):
+        assert core.count_tokens(eng, "a" * 40) == 10
+    assert "tokenize boom" in caplog.text
+
+
+def test_ollama_helpers_imported_under_public_names():
+    """B19 public names, with alias fallback to the current _-prefixed helpers."""
+    assert callable(core.ollama_native_host)
+    assert callable(core.free_ollama_vram)
 
 
 def test_count_chunks_matches_translate_body_steps():

@@ -9,6 +9,7 @@ import urllib.request
 import urllib.parse
 import json
 import time
+from collections.abc import Iterable
 from typing import Any
 
 from research.apis.rate_limiter import s2_limiter
@@ -22,7 +23,8 @@ S2_TTL = 7 * 24 * 3600  # 7 days
 _MAX_S2_RETRIES = 5
 
 # Default venues considered "top" for robotics/ML.
-# Override via config: load_config().get("top_venues", DEFAULT_TOP_VENUES)
+# Override via research.scoring.top_venues in config.json (applied by
+# research.config.load_config -> set_top_venues).
 DEFAULT_TOP_VENUES = {
     "icra", "iros", "rss", "corl",
     "neurips", "nips", "icml", "iclr",
@@ -36,10 +38,10 @@ DEFAULT_TOP_VENUES = {
 TOP_VENUES = set(DEFAULT_TOP_VENUES)
 
 
-def set_top_venues(venues: set[str]) -> None:
+def set_top_venues(venues: Iterable[str]) -> None:
     """Override the set of venues considered 'top' (e.g., from config)."""
     global TOP_VENUES
-    TOP_VENUES = {v.lower() for v in venues}
+    TOP_VENUES = {str(v).lower() for v in venues}
 
 
 class S2RateLimitError(Exception):

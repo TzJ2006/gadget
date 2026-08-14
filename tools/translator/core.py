@@ -15,7 +15,9 @@ env (see docs/ecl/translator-gui.yaml, DEC-003b).
 from __future__ import annotations
 
 import glob
+import logging
 import os
+import re
 import subprocess
 import tempfile
 import zipfile
@@ -30,6 +32,16 @@ from common.translation import (
     split_large_text,
     translate_body,
 )
+
+try:
+    from common.engine import free_ollama_vram, ollama_native_host
+except ImportError:
+    from common.engine import (
+        _free_ollama_vram as free_ollama_vram,
+        _ollama_native_host as ollama_native_host,
+    )
+
+logger = logging.getLogger(__name__)
 
 TEXT_EXTS = {".txt", ".md", ".markdown"}
 
@@ -103,14 +115,14 @@ def count_tokens(engine: TranslationEngine, text: str) -> int:
     if tok is not None:
         try:
             return len(tok.encode(text))
-        except Exception:  # noqa: BLE001 — tokenizer quirks must not break the UI
-            pass
+        except (TypeError, ValueError, AttributeError, UnicodeError, RuntimeError, OSError) as e:
+            logger.debug("count_tokens: tokenizer.encode failed (%s); trying next fallback", e)
     llm = getattr(engine, "_llm", None)
     if llm is not None and hasattr(llm, "tokenize"):
         try:
             return len(llm.tokenize(text.encode("utf-8")))
-        except Exception:  # noqa: BLE001
-            pass
+        except (TypeError, ValueError, AttributeError, UnicodeError, RuntimeError, OSError) as e:
+            logger.debug("count_tokens: llama tokenize failed (%s); using char estimate", e)
     return max(1, len(text) // 4)  # ponytail: ~4 chars/token when no tokenizer is reachable
 
 
@@ -182,10 +194,8 @@ def _ollama_pull(model: str) -> None:
     import urllib.error
     import urllib.request
 
-    from common.engine import _ollama_native_host
-
     req = urllib.request.Request(
-        _ollama_native_host() + "/api/pull",
+        ollama_native_host() + "/api/pull",
         data=json.dumps({"model": model, "stream": False}).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
@@ -200,7 +210,13 @@ def _ollama_pull(model: str) -> None:
 
 # Unlimited-OCR emits grounding lines: `<label> [x1, y1, x2, y2]<content>`
 # (labels seen: title, text, table, figure), sometimes preceded by preamble chatter.
-_GROUNDING_LINE = __import__("re").compile(r"^\s*(\w+)?\s*\[[\d,\s]+\](.*)$")
+_GROUNDING_LINE = re.compile(r"^\s*(\w+)?\s*\[[\d,\s]+\](.*)$")
+
+
+def _junk(s: str) -> bool:
+    # marker-only lines the model emits for figures/empty regions:
+    # "[NO TEXT]", "[Non-Text]", ...
+    return not s or (s.startswith("[") and s.endswith("]"))
 
 
 def _grounding_to_markdown(raw: str) -> str:
@@ -212,11 +228,6 @@ def _grounding_to_markdown(raw: str) -> str:
     blocks: list[str] = []
     for line in raw.splitlines():
         m = _GROUNDING_LINE.match(line)
-        def _junk(s: str) -> bool:
-            # marker-only lines the model emits for figures/empty regions:
-            # "[NO TEXT]", "[Non-Text]", ...
-            return not s or (s.startswith("[") and s.endswith("]"))
-
         if m:
             label, content = (m.group(1) or "").lower(), m.group(2).strip()
             if not _junk(content):
@@ -239,8 +250,6 @@ def ocr_via_ollama(path: str, *, model: str = OLLAMA_OCR_MODEL,
     import urllib.error
     import urllib.request
 
-    from common.engine import _ollama_native_host
-
     name = os.path.basename(path)
     payload = {
         "model": model,
@@ -255,7 +264,7 @@ def ocr_via_ollama(path: str, *, model: str = OLLAMA_OCR_MODEL,
     text = ""
     for attempt in range(3):  # the quant occasionally emits immediate EOS → retry
         req = urllib.request.Request(
-            _ollama_native_host() + "/api/generate",
+            ollama_native_host() + "/api/generate",
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
         )

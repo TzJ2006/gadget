@@ -1,15 +1,15 @@
 # Research Toolkit — Code Summary
 
-> 6,100 行 Python 代码 | 17 个文件 | 2 个独立工具共用 1 套基础设施
+> Scout 在 `research.scout` 包（`tools/research/scout/`）；Profiler 在同目录模块化包；共享 `common/` 与 `apis/`。依赖以仓库根 `pip install -e ".[research]"` 为准。
 
 ## 1. 整体功能
 
-这是一个学术研究辅助工具包，提供两大核心功能：
+学术研究辅助工具包，两大块共用同一套 CLI 后端开关（`--api`：`ollama` 默认 / `claude_cli` / `anthropic` / `openai`）：
 
-- **Research Scout** (`research_scout.py`, 2934 行) — 论文发现与评估。从 arXiv / bioRxiv / PubMed 搜索论文，经三阶段 LLM 管线（筛选 → 深度分析 → 引用影响）生成研究报告，可部署到 Hugo 博客。
-- **Researcher Profiler** (模块化包, ~1660 行) — 学术研究者画像。聚合 ArXiv + Semantic Scholar 数据，运行 LLM 轨迹分析、层级打分、师生关系推断，输出 JSON profile + Markdown 报告。
+- **Research Scout**（`research.scout`）— 论文发现与评估。从 arXiv / bioRxiv / PubMed 搜索，经三阶段 LLM 管线（筛选 → 深度分析 → 引用影响）生成研究报告，可选 `--insight`（全文 + OpenReview），可部署到 Hugo。推荐入口：`python -m research.scout`。`research_scout.py` 只是弃用 shim（转发到 `research.scout`，发 `DeprecationWarning`），不是 2934 行单文件实现。
+- **Researcher Profiler** — 学术研究者画像。聚合 ArXiv + Semantic Scholar，LLM 轨迹分析、层级打分、师生关系推断，输出 JSON profile + Markdown。入口：`python -m research`，或 `python -m research.scout profile`。
 
-两者共享 `common/` 包（LLM 调用、磁盘缓存、路径管理、JSON 修复、Hugo 部署）和相同的 CLI 模式（`--api` 三后端切换）。
+配置在**仓库根** `config.json` 的 `research_scout`（Scout）与 `research`（Profiler）段，可用 `GADGET_CONFIG` 覆盖路径。没有 `~/.config/research` / `~/.config/research_scout` 回退。
 
 ---
 
@@ -19,40 +19,53 @@
 
 | 文件 | 职责 |
 |------|------|
-| `research_scout.py` | Research Scout 单文件脚本（搜索、评估、报告、部署） |
-| `cli.py` → `analysis.py` | Researcher Profiler 入口 → BFS 分析编排器 |
-| `__main__.py` | `python -m research` 的入口点，调用 `cli.main()` |
+| `scout/`（安装名 `research.scout`） | Scout：搜索、评估、报告、洞察、ask、CLI |
+| `research_scout.py` | 弃用兼容 shim：re-export + `main()` |
+| `scout/__main__.py` | `python -m research.scout` |
+| `cli.py` → `analysis.py` | Profiler 入口 → BFS 分析编排器 |
+| `__main__.py` | `python -m research` → `cli.main()` |
 
-### Research Scout (`research_scout.py`)
+### Research Scout (`research.scout`)
 
 ```
 arXiv / bioRxiv / PubMed
     │
     ▼
-Stage 1: _screen_papers()          ← 全部论文：motivation, innovation_point, paper_type
+Stage 1: scout.evaluate._screen_papers()     ← 全部论文：motivation, innovation_point, paper_type
     │    分类 "high" / "low"
     │
     ├── Low  → 折叠进报告（文献阅读记录）
     │
-    └── High（上限 20 篇）
+    └── High（上限 20 篇，溢出降入 low）
          │
          ▼
-Stage 2: _deep_evaluate_papers()   ← 读取 overview.md，3 条 highlights，relevance/novelty/inspiration 评分
-         │    composite = 0.4R + 0.3I + 0.3N
+Stage 2: scout.evaluate._deep_evaluate_papers()  ← overview.md / current methods，3 条 highlights，
+         │    relevance/novelty/inspiration；composite = 0.4R + 0.3I + 0.3N
          │
          ▼
-Stage 3: _analyze_citations()      ← 前 5 篇：S2 正向/反向引用 + LLM 影响力分析
+Stage 3: scout.evaluate.analyze_citations()  ← 前 N 篇：S2 正向/反向引用 + LLM 影响力
          │
          ▼
-suggest_directions() + append_literature_note() + deploy_to_hugo()
+suggest_directions() + append_literature_note() + deploy
+         │
+         [可选 --insight]
+         Stage 4: scout.insight 全文洞察
+         Stage 5: OpenReview 审稿共识 + 写作指南
 ```
 
-**关键函数：**
-- `build_arxiv_query()` — 从项目关键词+分类构建查询
-- `search_arxiv()` — arXiv 搜索 + 去重 + 连续已知论文早停（5 篇）
-- `evaluate_papers_for_project()` → 返回 `{"high_relevance": [...], "low_relevance": [...], "screening_stats": {...}}`
-- `_resolve_param()` — 配置优先级：CLI > project.json > config.json > 默认值
-- `create_project_from_overview()` — 从现有 overview.md 反向用 LLM 提取项目信息
+**分包：**
+
+| 模块 | 职责 |
+|------|------|
+| `scout/cli.py` | argparse：`init/ask/list/search/report/profile/citations/deploy/config` |
+| `scout/search.py` | `build_arxiv_query` / `search_arxiv` / conference / author / bioRxiv / PubMed；搜索缓存；429/503 重试时跳过已产出结果 |
+| `scout/evaluate.py` | `call_scout_llm` → `common.llm.call_llm_raw`；三阶段评估；`evaluate_papers_for_project` → `{"high_relevance","low_relevance","screening_stats"}` |
+| `scout/report.py` | Markdown 周报、Hugo post、`append_literature_note` |
+| `scout/insight.py` | Stage 4/5：全文下载、洞察缓存键含全文哈希、OpenReview |
+| `scout/ask.py` | 自然语言意图解析 → 路由搜索 |
+| `scout/project.py` | 项目 CRUD；`create_project_from_overview` |
+| `scout/config.py` | 读根 `config.json`：`research_scout` 为主、`research` 补缺；`resolve_param`：CLI > project.json > config > 默认；路径来自 `common.paths` |
+| `scout/prompts.py` | Scout 用 prompt 模板 |
 
 ### Researcher Profiler
 
@@ -61,131 +74,111 @@ cli.py
   └→ analysis.py::run_analysis()        ← BFS 递归入口
        └→ analyze_researcher()           ← 6 步管线/每位研究者
             1. ArXiv 论文获取
-            2. Semantic Scholar 指标（3 层解析：直接 ID → 论文反查 → 名字搜索）
+            2. Semantic Scholar 指标（直接 ID → 论文反查 → 名字搜索）
             3. LLM 奖项识别（Best Paper / Spotlight / Oral）
             4. 全文下载（详细模式：HTML 优先 → PDF 回退）
-            5. LLM 轨迹分析（研究主题、突破、方法论演进）
-            6. 层级打分（加权公式 → 四档分类）
-       └→ discover_students()            ← 4 阶段师生推断
-            1. 主页提取（homepage_discovery.py）
+            5. LLM 轨迹分析
+            6. 层级打分
+       └→ discover_students()            ← 师生推断
+            1. 主页提取（homepage_discovery.py，含 SSRF）
             2. 共著分析（student_discovery.py）
             3. 合并去重（homepage 优先）
             4. LLM 补充研究方向
 ```
 
-**核心子模块：**
-
-| 文件 | 行数 | 职责 |
-|------|------|------|
-| `analysis.py` | 618 | BFS 编排器，论文选择/合并/奖项重排 |
-| `output.py` | 310 | JSON 持久化 + Markdown 报告渲染 + Hugo 部署 |
-| `prompts.py` | 318 | 7 个 LLM prompt 模板（轨迹分析、奖项识别、引用影响、主页 URL/学生提取等） |
-| `homepage_discovery.py` | 262 | 多策略主页 URL 发现 → HTML 解析 → LLM 学生提取 |
-| `models.py` | 180 | 5 个 dataclass：Paper, ResearcherMetrics, ResearcherTier, StudentCandidate, ResearcherProfile |
-| `scoring.py` | 91 | 加权打分：h-index 25% + 总引用 20% + 近 5 年引用 20% + 顶会比 20% + 学术年龄 15% |
-| `student_discovery.py` | 94 | 共著模式打分：第一作者信号 40% + 时间跨度 25% + 频次 20% + 时近性 15% |
-| `llm.py` | 95 | LLM 调用封装 + SHA-256 内容哈希缓存 + 4 阶段 JSON 修复 |
-| `config.py` | 116 | `~/.config/research/config.json` 管理 + 路径解析 |
+| 文件 | 职责 |
+|------|------|
+| `analysis.py` | BFS 编排器，论文选择/合并/奖项重排 |
+| `output.py` | JSON 持久化 + Markdown 渲染 + Hugo 部署 |
+| `prompts.py` | Profiler prompt 模板 |
+| `homepage_discovery.py` | 主页 URL 发现 → HTML 解析 → LLM 学生提取；`_is_safe_url` + `_SafeRedirectHandler` 拦私网/回环/保留地址与不安全跳转 |
+| `models.py` | dataclass：`Paper`, `ResearcherMetrics`, `ResearcherTier`, `StudentCandidate`, `ResearcherProfile` |
+| `scoring.py` | 默认权重：h-index 25% + 总引用 20% + 近 5 年引用 20% + 顶会比 20% + 学术年龄 15%；可用 `weights`/`thresholds` 覆盖 |
+| `student_discovery.py` | 共著打分：一作信号 40% + 时间跨度 25% + 频次 20% + 时近性 15%（`weights` 可覆盖） |
+| `llm.py` | Profiler LLM 封装 → `common.llm` + `common.json_utils`；默认 backend `ollama` |
+| `config.py` | 根 `config.json` 的 `research` 段（非 `~/.config`） |
+| `cache.py` | re-export `common.cache.DiskCache` |
 
 ### API 客户端
 
-| 文件 | 行数 | 职责 |
-|------|------|------|
-| `apis/arxiv_client.py` | 220 | ArXiv 搜索 + 全文下载（HTML 解析 + PyMuPDF PDF 回退） |
-| `apis/semantic_scholar.py` | 610 | S2 作者搜索/消歧、论文数据、共著分析、引用图谱；指数退避重试 |
-| `apis/rate_limiter.py` | 44 | 线程安全令牌桶：ArXiv 1/3s, S2 10/s, Web 1/2s |
+| 文件 | 职责 |
+|------|------|
+| `apis/arxiv_client.py` | ArXiv 搜索 + 全文（HTML + PyMuPDF PDF 回退） |
+| `apis/semantic_scholar.py` | S2 作者/论文/共著/引用；指数退避 |
+| `apis/openreview_client.py` | OpenReview 审稿 |
+| `apis/rate_limiter.py` | 令牌桶：ArXiv 1/3s, S2 10/s, Web 1/2s, OpenReview 2/s |
 
 ---
 
 ## 3. 依赖与模块结构
 
-### 调用关系图
+### 调用关系
 
 ```
-research_scout.py (独立)
-    ├── common.llm          (call_llm_raw, LLMCallConfig, chunking)
-    ├── common.json_utils   (parse_json_response, try_parse_json)
-    ├── common.io           (atomic_write, content_hash)
-    ├── common.hugo         (run_hugo_update)
-    ├── common.site_staging (write_site_content)
-    └── apis/semantic_scholar.py (引用图谱)
+python -m research.scout  (scout/cli.py)
+    ├── research.scout.{search,evaluate,report,insight,ask,project,config}
+    ├── common.llm / common.json_utils / common.io / common.hugo / common.site_staging
+    └── research.apis.semantic_scholar（引用图）
 
-cli.py → analysis.py (Profiler 编排器)
+research_scout.py ──shim──► research.scout
+
+python -m research  (cli.py → analysis.py)
     ├── apis/arxiv_client.py
     ├── apis/semantic_scholar.py
-    ├── homepage_discovery.py
-    │   └── apis/rate_limiter.py (web_limiter)
+    ├── homepage_discovery.py  → apis/rate_limiter.py (web_limiter) + SSRF
     ├── student_discovery.py
-    ├── scoring.py
-    ├── llm.py → common.llm + common.json_utils
-    ├── prompts.py
-    ├── output.py → common.hugo + common.site_staging
-    ├── models.py
-    ├── config.py → common.paths
+    ├── scoring.py / llm.py / prompts.py / output.py / models.py
+    ├── config.py → common.config（section research）
     └── cache.py → common.cache.DiskCache
 ```
 
 ### 外部依赖
 
-| 包 | 用途 |
-|----|------|
-| `arxiv>=2.0.0` | ArXiv API 客户端 |
-| `anthropic>=0.18.0` | Anthropic LLM 后端 |
-| `openai>=1.0.0` | OpenAI LLM 后端 |
-| `PyMuPDF` (可选) | PDF 全文提取（详细模式） |
-| stdlib `urllib.request` | bioRxiv / PubMed / S2 / 主页抓取 |
-| stdlib `xml.etree` | PubMed XML 解析 |
+安装源：**仓库根** `pip install -e ".[research]"`（`tools/research/requirements.txt` 只指向该 extra，不是第二份依赖表）。extra 含 `arxiv`、`anthropic`、`openai`、`openreview-py`、`pymupdf`。bioRxiv / PubMed / 主页抓取走 stdlib `urllib` / `xml.etree`。
 
 ### 配置
 
-- `~/.config/research_scout/config.json` — Research Scout 配置
-- `~/.config/research/config.json` — Researcher Profiler 配置
-- `projects/<name>/project.json` — 每个项目的搜索参数
-- 环境变量：`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
+- 仓库根 `config.json`（gitignore；模板 `config.example.json`）
+  - `research_scout` — Scout：`default_api`（默认 `ollama`）、回溯天数、max results、Hugo 路径等
+  - `research` — Profiler：model / depth / S2 key 等
+  - Scout 加载时合并：scout 键优先，profiler 段补缺
+- `GADGET_CONFIG` 覆盖配置文件路径；无 `~/.config/...` 回退
+- `tools/research/projects/<name>/project.json` — 每项目搜索参数（`projects/` gitignore，保留 `.gitkeep`）
+- 环境变量：`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`；Ollama 不需要 key。全局后端还可 `GADGET_LLM_BACKEND`
 
-### 输出路径（全部在 `outputs/` 下，gitignored）
+### 输出路径（`outputs/`，gitignored）
 
 ```
 outputs/
-├── reports/research-scout/        ← Scout 报告
-├── reports/research-profiler/     ← Profiler Markdown 报告
-├── data/research-profiler/profiles/  ← JSON 研究者画像
-├── cache/research-scout/{eval,papers}/  ← 评估/搜索缓存
+├── reports/research-scout/           ← Scout 报告（tools/research/reports/ 是墓碑 README）
+├── reports/research-profiler/        ← Profiler Markdown
+├── data/research-profiler/profiles/  ← JSON 画像
+├── cache/research-scout/{eval,papers,insight}/
 ├── cache/research-profiler/{api/arxiv, api/semantic_scholar, api/homepage, api/pdfs, llm}/
-└── logs/research-scout/           ← 旋转日志 5MB×3
+└── logs/research-scout/              ← 旋转日志 5MB×3
 ```
 
 ---
 
 ## 4. 潜在问题与代码异味
 
-### 单文件巨石 — `research_scout.py` (2934 行)
+### 已不是问题（旧 SUMMARY 过时）
 
-这个文件包含搜索、评估、报告生成、CLI 解析等所有 Scout 功能。与 Profiler 的模块化设计形成鲜明对比。建议按功能拆分（search、evaluate、report、cli）以提高可维护性。
+- `research_scout.py` 已不是 2934 行巨石；实现在 `scout/`。
+- 配置已统一到仓库根 `config.json`，不是两套 `~/.config/...`。
+- `homepage_discovery.fetch_homepage` **有** SSRF：只允许 http/https，解析 DNS 后拒绝 private/loopback/link-local/reserved，并对 redirect 目标再验。
 
-### 重复基础设施
+### 仍在的重复与硬编码
 
-- `research_scout.py` 有自己的 `_call_llm()` 封装，Profiler 有独立的 `llm.py`，两者都最终调用 `common.llm.call_llm_raw()` 但各自维护缓存和 JSON 解析逻辑。
-- 两套独立的配置文件（`research_scout/config.json` vs `research/config.json`），分别位于不同路径。
+- Scout 的 `call_scout_llm` 与 Profiler 的 `llm.py` 各自包一层 `common.llm` + JSON 修复。
+- 两个配置**段**（同文件）：`research_scout` vs `research`。
+- `scoring.py` 层级阈值（75/50/30）和权重、`student_discovery.py` 阈值 0.4 与权重，默认仍写在函数里（可经参数覆盖，未进 config.json）。
+- `semantic_scholar.py` 的 `TOP_VENUES` 仍硬编码。
+- 不少 Scout 内部函数签名默认 `api="claude_cli"`；**CLI / config / `main()` 的用户默认是 `ollama`**，调用方会覆盖签名默认值。
 
-### 硬编码值
+### 错误处理与安全
 
-- `scoring.py` 的层级阈值（75/50/30）和权重（25/20/20/20/15）硬编码在函数体内。
-- `semantic_scholar.py` 中的顶会列表硬编码为 `TOP_VENUES` 集合，无法通过配置自定义。
-- `student_discovery.py` 的阈值 0.4 和权重（40/25/20/15）均硬编码。
-
-### 错误处理
-
-- `apis/semantic_scholar.py` 的 `_s2_request()` 在重试耗尽后只返回 `None`，调用方需检查 None（大多数都做了）。
-- `homepage_discovery.py` 的 `fetch_homepage()` 捕获所有 Exception 并返回空字符串，可能掩盖非网络错误。
-- `research_scout.py` 中多处 bare `except Exception` 日志后继续，某些场景下可能遗漏关键失败。
-
-### 类型注解覆盖
-
-- `research_scout.py` 的函数签名缺少类型注解（2934 行单文件中几乎无类型标注）。
-- Profiler 模块化代码有更好的类型注解覆盖但仍不完整（特别是 `analysis.py` 的内部函数）。
-
-### 安全考量
-
-- `homepage_discovery.py` 从 LLM 生成的 URL 直接 HTTP 请求，虽有 2MB 响应限制，但无 SSRF 保护（无内网 IP 过滤）。
-- S2 API key 若配置在 config.json 中，以明文存储在用户目录。
+- `apis/semantic_scholar.py` 重试耗尽后返回 `None`，调用方需检查。
+- 主页抓取网络失败返回空字符串；HTML 解析仍 `except Exception`。
+- Scout 搜索/评估多处捕获 `Exception` 后记日志继续。
+- S2 API key 若写在 `config.json` 里是明文（该文件 gitignored）。

@@ -2,34 +2,23 @@
 """Research Paper Scout — DEPRECATION SHIM.
 
 This file is a thin compatibility shim. The actual implementation has moved to
-the `scout/` subpackage. Please update your imports:
+the `research.scout` package. Please update your imports:
 
     # Old (deprecated):
     from research_scout import load_all_projects
-    python research/research_scout.py report ...
+    python tools/research/research_scout.py report ...
 
     # New (recommended):
-    from scout.project import load_all_projects
+    from research.scout.project import load_all_projects
     python -m research.scout report ...
 
 This shim will be removed in a future version.
 """
 
-import sys as _sys
-from pathlib import Path as _Path
-
-# When run as `python research/research_scout.py`, Python adds research/ to
-# sys.path but not the repo root.  Several scout/ modules lazily import from
-# the research profiler package (research.apis, research.prompts, etc.), which
-# requires the repo root on sys.path so that `import research` resolves.
-_repo_root = str(_Path(__file__).resolve().parent.parent)
-if _repo_root not in _sys.path:
-    _sys.path.insert(0, _repo_root)
-
 import warnings as _warnings
 
 _warnings.warn(
-    "research_scout.py is deprecated. Use 'python -m research.scout' or import from scout.* instead.",
+    "research_scout.py is deprecated. Use 'python -m research.scout' or import from research.scout.* instead.",
     DeprecationWarning,
     stacklevel=2,
 )
@@ -37,7 +26,7 @@ _warnings.warn(
 # ─── Re-export all public symbols for backward compatibility ────────
 
 # Config
-from scout.config import (  # noqa: F401
+from research.scout.config import (  # noqa: F401
     load_scout_config as _load_scout_config,
     setup_logging as _setup_logging,
 )
@@ -46,7 +35,7 @@ from scout.config import (  # noqa: F401
 logger = _setup_logging()
 
 # Project CRUD
-from scout.project import (  # noqa: F401
+from research.scout.project import (  # noqa: F401
     create_project,
     create_project_from_overview,
     load_project,
@@ -55,12 +44,11 @@ from scout.project import (  # noqa: F401
 )
 
 # Search
-from scout.search import (  # noqa: F401
+from research.scout.search import (  # noqa: F401
     build_arxiv_query,
     search_arxiv,
     search_arxiv_conference,
     search_arxiv_author,
-    search_all_projects,
     search_biorxiv,
     search_pubmed,
     paper_id as _paper_id,
@@ -71,7 +59,7 @@ from scout.search import (  # noqa: F401
 )
 
 # Evaluate
-from scout.evaluate import (  # noqa: F401
+from research.scout.evaluate import (  # noqa: F401
     call_scout_llm as _call_llm,
     evaluate_papers_for_project,
     suggest_directions,
@@ -79,7 +67,7 @@ from scout.evaluate import (  # noqa: F401
 )
 
 # Report
-from scout.report import (  # noqa: F401
+from research.scout.report import (  # noqa: F401
     generate_daily_report,
     generate_report_markdown,
     save_report,
@@ -88,7 +76,7 @@ from scout.report import (  # noqa: F401
 )
 
 # CLI entry point
-from scout.cli import main
+from research.scout.cli import main
 
 
 if __name__ == "__main__":

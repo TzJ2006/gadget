@@ -17,7 +17,7 @@ from common.cache import DiskCache
 from common.io import atomic_write
 from common.json_utils import parse_json_response as _parse_json_response
 
-from scout.config import (
+from research.scout.config import (
     CACHE_DIR,
     INSIGHT_CACHE_DIR,
     INSIGHT_TOP_N,
@@ -26,15 +26,15 @@ from scout.config import (
     resolve_param,
     get_logger,
 )
-from scout.evaluate import call_scout_llm
-from scout.prompts import (
+from research.scout.evaluate import call_scout_llm
+from research.scout.prompts import (
     INSIGHT_ANALYSIS_PROMPT,
     INSIGHT_ABSTRACT_PROMPT,
     REVIEW_CONSENSUS_PROMPT,
     WRITING_GUIDE_PROMPT,
     language_instruction,
 )
-from scout.search import paper_id as _paper_id
+from research.scout.search import paper_id as _paper_id
 
 logger = get_logger()
 

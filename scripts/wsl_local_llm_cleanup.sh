@@ -7,8 +7,9 @@
 # pointer at ~/.gadget-local-llm-revert.
 #
 # Run this INSIDE WSL (it needs sudo for the Ollama service/store):
-#   bash /mnt/d/Github/gadget/scripts/wsl_local_llm_cleanup.sh          # DRY RUN — just shows sizes
-#   bash /mnt/d/Github/gadget/scripts/wsl_local_llm_cleanup.sh --yes    # actually delete
+#   bash scripts/wsl_local_llm_cleanup.sh          # DRY RUN — just shows sizes
+#   bash scripts/wsl_local_llm_cleanup.sh --yes    # actually delete
+# Repo root is derived from this script's location, not a hardcoded /mnt/d/... path.
 #
 # It does NOT unregister the distro or delete the `AI` conda env — that's your
 # "minimal revert path". To go back to serving on WSL, follow docs/guides/summarize-local-llm.md
@@ -17,6 +18,8 @@
 # ponytail: dry-run default because this box's WSL was frozen when the script was
 # written, so its exact contents couldn't be verified first. Look, then --yes.
 set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Hard guard: outside WSL, ~ is the WINDOWS home — deleting ~/.ollama there would
 # nuke the production Windows-native Ollama model store this migration moved TO.
@@ -109,7 +112,7 @@ echo
 
 echo "[5] Leave revert pointer at ~/.gadget-local-llm-revert"
 if [ "$CONFIRM" = 1 ]; then
-  printf 'Local-LLM serving moved to Windows-native Ollama on %s.\nTo revert to WSL: see /mnt/d/Github/gadget/docs/guides/summarize-local-llm.md ("WSL fallback / revert")\nand run /mnt/d/Github/gadget/scripts/serve_local_llm.sh.\n' "$(hostname)" > ~/.gadget-local-llm-revert
+  printf 'Local-LLM serving moved to Windows-native Ollama on %s.\nTo revert to WSL: see %s/docs/guides/summarize-local-llm.md ("WSL fallback / revert")\nand run %s/scripts/serve_local_llm.sh.\n' "$(hostname)" "$REPO_ROOT" "$REPO_ROOT" > ~/.gadget-local-llm-revert
   echo "  wrote ~/.gadget-local-llm-revert"
 else
   echo "  would write ~/.gadget-local-llm-revert (revert instructions)"

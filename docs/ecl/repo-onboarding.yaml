@@ -80,7 +80,7 @@ functions:
     name: "step_gadgets"
     file: "scripts/onboard.py"
     depends_on: ["FN-001"]
-    output: "write per-tool ~/.config/*/config.json (reuse research.config.save_config)"
+    output: "write gadget tool settings into repo-root config.json (summarize / research / research_scout sections)"
     verify: "python -m pytest scripts/tests/test_onboard.py -q"
     status: "implemented"
   - id: FN-006

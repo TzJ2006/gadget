@@ -32,7 +32,7 @@ class DiskCache:
         if not path.exists():
             return None
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 entry = json.load(f)
         except (json.JSONDecodeError, OSError):
             return None

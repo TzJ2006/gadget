@@ -169,7 +169,7 @@ def _identify_awards(
     model: str = "sonnet",
     cache: DiskCache | None = None,
     no_cache: bool = False,
-    backend: str = "claude_cli",
+    backend: str = "ollama",
 ) -> int:
     """Use LLM to identify paper awards. Modifies papers in-place. Returns count."""
     if not papers:
@@ -217,7 +217,7 @@ def analyze_researcher(
     cache: DiskCache | None = None,
     no_cache: bool = False,
     s2_api_key: str = "",
-    backend: str = "claude_cli",
+    backend: str = "ollama",
     affiliation: str = "",
     paper_hint: str = "",
     author_id_hint: str = "",
@@ -442,7 +442,7 @@ def discover_students(
     cache: DiskCache | None = None,
     no_cache: bool = False,
     s2_api_key: str = "",
-    backend: str = "claude_cli",
+    backend: str = "ollama",
     homepage_url: str = "",
 ) -> list[dict[str, Any]]:
     """Discover potential students via homepage (primary) + co-authorship (supplement)."""
@@ -572,7 +572,7 @@ def run_analysis(
     profiles_dir: str = "",
     reports_dir: str = "",
     s2_api_key: str = "",
-    backend: str = "claude_cli",
+    backend: str = "ollama",
     homepage_url: str = "",
     affiliation: str = "",
     paper_hint: str = "",
@@ -672,3 +672,92 @@ def run_analysis(
     print()
 
     return all_profiles
+
+
+def run_profiler(args: Any) -> list[ResearcherProfile]:
+    """Shared CLI entry for ``python -m research analyze`` and scout ``profile``.
+
+    Resolves names / config / cache, runs ``run_analysis``, optionally deploys
+    profiles to Hugo. Both CLIs pass their argparse namespace.
+    """
+    import sys
+    from pathlib import Path
+
+    from research.cache import DiskCache
+    from research.config import load_config, resolve_profiler_paths
+
+    config = load_config()
+    paths = resolve_profiler_paths(config)
+    no_cache = getattr(args, "no_cache", False)
+    cache = DiskCache(paths["cache"]) if not no_cache else None
+
+    names: list[str] = []
+    batch_hints: dict[str, tuple[str, str]] = {}
+    if getattr(args, "names", None):
+        names.extend(args.names)
+    from_file = getattr(args, "from_file", None)
+    if from_file:
+        path = Path(from_file)
+        if not path.exists():
+            print(f"错误: 文件不存在 — {path}")
+            sys.exit(1)
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                parsed_name, ph, aid = _parse_batch_line(line)
+                names.append(parsed_name)
+                if ph or aid:
+                    batch_hints[parsed_name] = (ph, aid)
+
+    if not names:
+        print("错误: 请提供至少一个研究者姓名")
+        sys.exit(1)
+
+    mode = getattr(args, "mode", None) or config.get("default_mode", "fast")
+    depth = args.depth if getattr(args, "depth", None) is not None else config.get("default_depth", 1)
+    max_students = (
+        args.max_students if getattr(args, "max_students", None) is not None
+        else config.get("max_students", 10)
+    )
+    model = getattr(args, "model", None) or config.get("model", "sonnet")
+    backend = getattr(args, "api", None) or config.get("default_api", "ollama")
+    s2_key = config.get("semantic_scholar_api_key", "")
+
+    profiles = run_analysis(
+        seed_names=names,
+        mode=mode,
+        depth=depth,
+        max_students=max_students,
+        model=model,
+        cache=cache,
+        no_cache=no_cache,
+        profiles_dir=str(paths["profiles"]),
+        reports_dir=str(paths["reports"]),
+        s2_api_key=s2_key,
+        backend=backend,
+        homepage_url=getattr(args, "homepage", "") or "",
+        affiliation=getattr(args, "affiliation", "") or "",
+        paper_hint=getattr(args, "paper", "") or "",
+        author_id_hint=getattr(args, "author_id", "") or "",
+        hints=batch_hints if batch_hints else None,
+    )
+
+    if getattr(args, "deploy", False) and profiles:
+        from research.output import deploy_to_hugo
+        from common.paths import GADGET_ROOT, resolve_repo_path
+        from common.hugo import run_hugo_update
+
+        raw_hugo = getattr(args, "hugo_site", None) or config.get("hugo_site", "")
+        hugo_site = (
+            resolve_repo_path(raw_hugo)
+            if raw_hugo
+            else (GADGET_ROOT / "tools" / "website")
+        )
+        if hugo_site.exists():
+            for p in profiles:
+                deploy_to_hugo(p, hugo_site)
+            run_hugo_update(hugo_site)
+        else:
+            print(f"警告: Hugo 站点不存在: {hugo_site}，跳过部署")
+
+    return profiles
