@@ -1,0 +1,2230 @@
+version: 1
+project: gadget
+overview: >
+  一个个人开发工具箱单仓：五个可独立使用的工具（summarize 对话日报、research 论文发现、
+  benchmark 跑分、website Hugo 博客、translator 文档翻译器）共用一个 common/ 基础设施包
+  （LLM 调用、JSON 修复、磁盘缓存、原子落盘、本地推理翻译、Hugo 发布）。分层是 hub-and-spoke：
+  共享代码只放 common/，工具之间零 import，common/ 从不反向依赖 tools/。所有 LLM 与翻译默认
+  跑在本机 Ollama 上（聊天 qwen3.8-27B，翻译 HY-MT2-1.8B），不需要任何云端 API key。
+  产物统一落 outputs/，唯一例外是生成的站点内容直接写进 tools/website/content|static 并打
+  gadget_generated 标记。开发工作流引擎与全部 skills 在同级独立仓库 ../ai-companion/。
+  许可为 GPL-3。
+
+endpoints: [I-025, I-016, I-032, I-043, I-050]
+
+steps:
+  - name: 共用底座
+    blurb: 把读配置、安全写文件、缓存结果、调用大语言模型这四件每个工具都要做的事，做成所有工具共用的一套代码。
+  - name: 本机翻译
+    blurb: 在自己电脑的显卡上跑翻译模型，把文章翻成另一种语言，全程不把任何内容发给外部服务。
+  - name: 博客自动发布
+    blurb: 一条命令把新文章翻成中英两份、压好图片和视频、逐项检查，再构建并推送到公开网站上。
+  - name: 每天的工作日报
+    blurb: 自动收集多台电脑上跟各种人工智能助手的对话，汇总成当天的工作总结，再攒成周报和月报发到博客上。
+  - name: 论文与硬件
+    blurb: 自动去各大论文库找新论文、给学者画研究画像，并测出这台机器的实际算力，各自产出一份能点开看的报告。
+  - name: 别人装上就能用
+    blurb: 让任何人把这个仓库下载下来、装一次就能单独使用其中任何一个工具，不需要作者本人的机器和账号。
+  - name: 报告质量与换模型
+    blurb: 先定下报告好不好的评分标准再重写生成报告的措辞，并把「这次用哪个本地模型」收成一处随时可改的开关。
+
+ideas:
+  # ─────────────────────────── 基础设施 ───────────────────────────
+  - id: I-001
+    step: 共用底座
+    name: "全部配置只放在仓库根的一个 config.json 里"
+    status: done
+    needs: []
+    what: >
+      所有工具的运行期配置只有一个来源：仓库根 config.json，按 summarize / research /
+      research_scout / sync / translator / translation 分节；路径可用 GADGET_CONFIG 覆盖。
+      取值顺序固定为 CLI flag > 环境变量 > 该节 > 硬编码默认值。
+    why: >
+      配置曾散落在 ~/.config/<tool>/ 和 tools/<tool>/config.json 里，同一个键在两处不一致时
+      没人知道哪个生效，跨设备同步也无从下手。
+    expected: >
+      删掉 ~/.config 下的旧文件后所有工具仍按仓库根 config.json 正常工作；
+      load_section("summarize") 与 load_section("research") 互不干扰；改完 config.json
+      不重启进程也能通过 clear_cache() 生效。
+    how: >
+      common/config.py 提供 resolve_config_path / load_root_config / load_section /
+      update_section，带进程内缓存；各工具的 config.py 只在这之上做 CLI-flag 与 env 的覆盖层。
+    why_this_way: >
+      AGENTS.md 把「repo-root config.json only，无 ~/.config 回退」写成了硬规则——单文件
+      可以整份 rclone 同步到别的机器，多份分散的配置不行。
+    code:
+      - file: common/config.py
+        symbol: load_root_config
+        lines: "54-77"
+      - file: common/config.py
+        symbol: load_section
+        lines: "78-84"
+      - file: common/config.py
+        symbol: resolve_config_path
+        lines: "39-46"
+    verify:
+      command: python -m pytest common/tests/test_config.py
+      pass: "exit 0"
+    future: >
+      新工具只要加一个节就接进同一套解析顺序，不用自己发明配置查找。
+
+  - id: I-002
+    step: 共用底座
+    name: "写文件不会留下半截、重跑能直接用上次的缓存"
+    status: done
+    needs: []
+    what: >
+      一层最小的持久化原语：atomic_write（先写临时文件再替换）、content_hash（内容指纹）、
+      以及带命名空间和 TTL 的 SHA-256 磁盘缓存 DiskCache。
+    why: >
+      这些流水线里每一步都可能被 Ctrl-C、超时或断网打断。没有原子写就会留下半截 JSON 让下一次
+      运行解析失败；没有内容缓存，一次重跑就要重新烧掉几十分钟的 LLM 时间。
+    expected: >
+      进程在写入中途被杀，目标文件要么是旧内容要么是新内容，不会是半截；同一份输入第二次跑时
+      直接命中缓存、不再发起远端调用；非 ASCII 内容 roundtrip 不损坏。
+    how: >
+      common/io.py 用 tempfile + os.replace 做原子替换；common/cache.py 把 key 做 SHA-256
+      后按命名空间分目录存 JSON，读时检查 TTL。
+    why_this_way: null
+    code:
+      - file: common/io.py
+        symbol: atomic_write
+        lines: "11-27"
+      - file: common/io.py
+        symbol: content_hash
+        lines: "28-32"
+      - file: common/cache.py
+        symbol: DiskCache
+        lines: "13-69"
+    verify:
+      command: python -m pytest common/tests/test_cache.py
+      pass: "exit 0"
+    future: >
+      任何新的「贵调用」都可以直接挂上 DiskCache，不用各自发明缓存目录。
+
+  - id: I-003
+    step: 共用底座
+    name: "四种 LLM 后端用同一个开关切换"
+    status: done
+    needs: [I-001]
+    what: >
+      一个统一的 LLM 调用层：ollama（默认，本地无 key）/ anthropic / openai / claude_cli
+      四个后端，通过 --api 或 GADGET_LLM_BACKEND 整仓统一切换；分两档 API——call_llm_raw
+      要纯文本，call_llm 要结构化 JSON。
+    why: >
+      五个工具都要调 LLM。如果每个工具各自 import provider SDK，换后端就得改五处，而且本地跑
+      和云端跑的差异会渗进业务代码。
+    expected: >
+      同一条命令加 --api ollama 与 --api anthropic 都能跑通且产出同形状的结果；传一个不在
+      LLM_BACKENDS 里的后端名会抛 ValueError 并列出合法集合，而不是静默走 claude_cli。
+    how: >
+      common/llm.py 定义 LLM_BACKENDS 常量与 LLMCallConfig，call_llm_raw / call_llm 按名字
+      分派到 _raw_* / call_* 实现；ollama 与 openai 共用 OpenAI 协议核心，只在 base_url、
+      模型名、是否要 key 上不同。
+    why_this_way: >
+      docs/reports/phase0-baseline.md 的 Phase 2 记录了这个决定：原来的 `else → claude_cli`
+      静默兜底会把拼错的后端名变成一次莫名其妙的云端调用，改成显式 ValueError；同时明确否决了
+      「注册表 dict-of-callables」——四个条目用不着那层间接。
+    code:
+      - file: common/llm.py
+        symbol: LLM_BACKENDS
+        lines: "53-63"
+      - file: common/llm.py
+        symbol: call_llm_raw
+        lines: "223-245"
+      - file: common/llm.py
+        symbol: call_llm
+        lines: "414-429"
+    verify:
+      command: python -m pytest common/tests/test_dispatch.py
+      pass: "exit 0"
+    future: >
+      再接一个后端只需加一个 call_* 实现并进 LLM_BACKENDS，所有工具立刻可用。
+
+  - id: I-004
+    step: 共用底座
+    name: "让本地小模型稳定吐出报告结构"
+    status: done
+    needs: [I-003]
+    what: >
+      对 ollama 后端把调用方原有的 Anthropic tool schema 转成 response_format 的 json_schema
+      做约束解码，并把所有顶层属性提升为 required；解析端配一条 JSON 修复阶梯（try_parse →
+      修引号 → 交给 LLM 重排）。
+    why: >
+      本地 27B 模型在纯 json_object 模式下有一半的概率把 daily_overview 的内容当成整份报告返回：
+      JSON 合法、层级错一层，其余段落全空。云端模型不会，本地模型会——这是切到本地推理必须付的代价。
+    expected: >
+      同一条 prompt 下，json_schema + 全 required 产出 5,093–6,460 字符、填满 9 段中的 8–9 段；
+      而原 required 只产出 434 字符 3 段，无约束产出 5,677 字符 7 段（docs/guides/summarize-local-llm.md
+      实测表）。提升 required 不得就地改动调用方传入的 schema 对象。
+    how: >
+      common/llm.py 的 _schema_from_tools 把 tool schema 拷一份并覆盖 required 为全部属性，
+      _chat_json 在 ollama 路径带上它；common/json_utils.py 负责解析失败后的逐级修复。
+    why_this_way: >
+      docs/guides/summarize-local-llm.md「Schema-constrained decoding」一节写明：约束解码会让
+      模型只吐声明为 required 的字段就停手，所以必须全 required；而 call_openai 故意留在
+      json_object——云端 json_schema 是 strict-only，会直接拒掉这些 schema，且云端模型本来就听 prompt。
+    code:
+      - file: common/llm.py
+        symbol: _schema_from_tools
+        lines: "166-189"
+      - file: common/llm.py
+        symbol: _chat_json
+        lines: "190-222"
+      - file: common/json_utils.py
+        symbol: repair_json_with_llm
+        lines: "157-198"
+    verify:
+      command: python -m pytest common/tests/test_llm_schema.py
+      pass: "exit 0"
+    future: >
+      任何新的结构化输出（研究报告、评审共识）都能复用同一条约束+修复链，不必各自写容错。
+
+  - id: I-005
+    step: 共用底座
+    name: "超长输入切成块分别摘要、再合并成一份"
+    status: done
+    needs: [I-002, I-003]
+    what: >
+      把远超上下文窗口的输入切成块、逐块摘要、再把块摘要归并成一份；每块结果按内容哈希落缓存，
+      单块超时抛 ChunkTimeoutError 而不是拖垮整轮。
+    why: >
+      一天四台设备的对话日志能到 47 万字符 / 18 万 token，一次塞不进任何窗口；而且中途失败
+      如果不缓存已完成的块，重试就是从零开始。
+    expected: >
+      15 段对话 / 1469 条消息 / 472,328 字符会被切成 4 块 + 1 次归并共 5 次调用；解析失败的块
+      不会被写进缓存，也不会污染归并结果；全部块都失败时显式抛错而不是产出空报告。
+    how: >
+      common/llm.py 的 chunk_text 按字符预算（默认 150,000）切分，timed_llm_call 带计时与超时，
+      load_chunk_cache / save_chunk_cache 以块内容哈希为键，hierarchical_merge 把块结果两两归并。
+    why_this_way: >
+      docs/guides/summarize-local-llm.md 给了 max_chars=150,000 的来历：对这类开发日志约等于
+      每块 ~40k token，加上 prompt 与输出仍留在 num_ctx 65536 之内。缓存拒绝存 parse_error
+      是因为一次坏结果会被后续每次重跑复用，比不缓存更糟。
+    code:
+      - file: common/llm.py
+        symbol: chunk_text
+        lines: "444-457"
+      - file: common/llm.py
+        symbol: save_chunk_cache
+        lines: "501-516"
+      - file: common/llm.py
+        symbol: hierarchical_merge
+        lines: "525-596"
+    verify:
+      command: python -m pytest tools/summarize/tests/test_offschema.py
+      pass: "exit 0"
+    future: >
+      周报、月报、论文批量筛选都走同一条分块-归并链，只换 prompt。
+
+  # ─────────────────────────── 本地翻译 ───────────────────────────
+  - id: I-006
+    step: 本机翻译
+    name: "本地翻译引擎按本机装了什么自动选推理后端"
+    status: done
+    needs: [I-001]
+    what: >
+      一个 TranslationEngine 抽象加四个实现（Ollama / vLLM / llama.cpp GGUF / transformers），
+      由 create_engine() 按「本机有什么」自动挑，GADGET_TRANSLATION_BACKEND 可强制指定；
+      引擎按 (backend, model_id) 缓存复用。
+    why: >
+      站点双语化要翻上百个页面。走云端翻译 API 意味着把整站内容和每次改动都发出去，还要按量付费；
+      而不同机器上装的推理栈完全不同（Windows 有 transformers，Linux 有 vLLM，低显存机器只有 GGUF）。
+    expected: >
+      本机 Ollama 已 pull 了 HY-MT2 时自动选 OllamaEngine；换了非默认模型时不再自动走 Ollama；
+      设置一个不在合法集合里的后端名会抛 ValueError；同一 model_id 在后端环境变量变化后不会
+      错拿到上一个后端的引擎实例。
+    how: >
+      common/engine/__init__.py 的 create_engine 先看环境变量强制项，再按可用性优选 Ollama，
+      否则回落到 llamacpp / vllm / transformers，返回一个 _CachedEngineProxy。
+    why_this_way: >
+      docs/guides/summarize-local-llm.md 说明优选 Ollama 的理由是「no extra process VRAM，
+      不需要 PyTorch / llama-cpp」——复用已经为聊天模型跑着的那个服务；
+      docs/reports/phase0-baseline.md 的 Phase 4 记录缓存键从 model_id 改成 (backend, model_id)
+      的原因：后端环境变量中途变化时旧键会返回错后端的引擎。
+    code:
+      - file: common/engine/__init__.py
+        symbol: create_engine
+        lines: "69-138"
+      - file: common/engine/__init__.py
+        symbol: _CachedEngineProxy
+        lines: "49-65"
+    verify:
+      command: python -m pytest common/tests/test_engine_ollama.py -k factory
+      pass: "exit 0"
+    future: >
+      translator GUI、website 批量翻译、summarize 双语发布共用同一个引擎实例，模型只加载一次。
+
+  - id: I-007
+    step: 本机翻译
+    name: "翻译时保住代码和链接不被改动、按语言挑切块大小"
+    status: done
+    needs: [I-006]
+    what: >
+      翻译前把代码块、URL、Hugo shortcode 等替换成 [[[HYMTPH_n]]] 占位符，翻完再还原；
+      切块时按语言用不同上限（中文 5000 字符 / 英文 7000），并对没有标点的长行做硬切。
+    why: >
+      翻译模型会「顺手」翻译代码里的标识符和链接，一次就能把一篇技术文章改烂；
+      而中文字符的 token 密度远高于英文，用同一个字符上限切块，中文块会超出模型窗口。
+    expected: >
+      含代码块的文档翻完后代码逐字不变、占位符全部还原（还原正则容忍模型把 [[[ 写成 [[）；
+      中文正文按 5000 上限切、英文按 7000 切，切开再拼回与原文一致；一整行没有标点的中文
+      也能被切开而不是整块超限。
+    how: >
+      common/translation/protect.py 的 protect_fragments / restore_fragments 做替换与还原，
+      chunk_ceiling 按 CJK 比例决定上限，split_large_text 逐级降级到 _hard_split。
+    why_this_way: >
+      占位符还原用的是容忍 2–3 个方括号的正则，因为模型会改写括号数量——严格匹配等于把
+      还原失败率交给模型的手感。
+    code:
+      - file: common/translation/protect.py
+        symbol: protect_fragments
+        lines: "62-83"
+      - file: common/translation/protect.py
+        symbol: chunk_ceiling
+        lines: "213-223"
+      - file: common/translation/protect.py
+        symbol: split_large_text
+        lines: "132-203"
+    verify:
+      command: python -m pytest common/tests/test_translation_chunking.py
+      pass: "exit 0"
+    future: >
+      同一套保护规则被 translator GUI 与站点批量翻译共用，新增一类需要保护的片段只改一处正则。
+
+  - id: I-008
+    step: 本机翻译
+    name: "翻译模型与聊天模型共驻一块显卡"
+    status: done
+    needs: [I-006]
+    what: >
+      OllamaEngine 直接打 /api/generate 并自带手写的 HY-MT2 prompt 模板，把翻译模型的
+      num_ctx 压到 8192、默认 4 路并发、每次请求带 keep_alive，让它和 27B 聊天模型同时常驻显存。
+    why: >
+      一台 32GB 的 5090 要同时服务「总结」和「翻译」。默认配置下两个模型互相驱逐，
+      每次 summarize↔translate 切换要付约 10 秒的卸载+重载。
+    expected: >
+      ollama ps 显示两个模型同时驻留、100% GPU；翻译模型约 3.6GB；并发批量翻译相对串行
+      约 2.2× 的墙钟加速，且返回顺序与提交顺序一致；超长 prompt 会临时抬高 num_ctx 而不是被截断。
+    how: >
+      common/engine/ollama.py 里 _HY_TEMPLATE 手工拼 prompt 走原生 generate 接口，
+      generate_batch 用线程池按 GADGET_TRANSLATION_CONCURRENCY 并发，free_ollama_vram 在
+      流水线收尾时释放（GADGET_KEEP_OLLAMA=1 可跳过）。
+    why_this_way: >
+      走原生 /api/generate 而不是 /api/chat，是因为 Ollama 为 HY-MT2 自动推导的 chat 模板是坏的；
+      num_ctx 8192 的数字来自 docs/guides/summarize-local-llm.md：这是让 HY-MT2 停在 ~3.6GB
+      从而与聊天模型共驻的上限，代价是中文块要卡在 5000 字符以内。
+    code:
+      - file: common/engine/ollama.py
+        symbol: OllamaEngine
+        lines: "114-252"
+      - file: common/engine/ollama.py
+        symbol: free_ollama_vram
+        lines: "65-113"
+    verify:
+      command: python -m pytest common/tests/test_engine_ollama.py
+      pass: "exit 0"
+    future: >
+      同一块卡上再加第三个小模型（如 OCR）只需要重新分配 num_ctx 预算。
+
+  - id: I-009
+    step: 本机翻译
+    name: "翻译结果落盘前先检查：拦下原样返回和语言不对的输出"
+    status: done
+    needs: [I-007]
+    what: >
+      翻译结果落盘前先过校验：长度不足原文 15% 判失败、输出与输入几乎相同（模型回声）判失败、
+      正文仍是源语言判失败；判定只看正文散文，跳过代码与内嵌 HTML。
+    why: >
+      2026-08-04 的排查发现：模型偶尔原样回吐输入，而当时的校验只看长度，于是中文原文被当成
+      英文页写了出去，还盖上了 src-hash 标记——之后每次部署都跳过它。九篇日报因此中英文逐字相同。
+    expected: >
+      原样回吐输入的输出被拒；英文页里出现中文标题被拒；中文页里保留英文专有名词不被误判；
+      正文被大段代码/CSS 稀释时判定仍然正确（旧的整篇 CJK 比例做法会稀释到 0.002 而放行）。
+    how: >
+      common/translation/document.py 的 validate_translated_output 接收 target_lang 并串联
+      三项检查；common/translation/protect.py 的 wrong_language 只在散文长度超过 _PROSE_MIN
+      时才判定；scripts/language.py 的站点审计复用同一个 helper。
+    why_this_way: >
+      提交 d937dff 记录了原因：raw CJK ratio over the whole body 被内嵌 usage-card 的 CSS/HTML
+      稀释，九篇全中文的英文报告被读成「fine」还反过来标成 zh_low_cjk 冤枉了中文文件；
+      改成 prose-only 判定后才对得上。
+    code:
+      - file: common/translation/document.py
+        symbol: validate_translated_output
+        lines: "67-99"
+      - file: common/translation/protect.py
+        symbol: wrong_language
+        lines: "240-250"
+      - file: scripts/language.py
+        symbol: scan_directory
+        lines: "169-289"
+    verify:
+      command: python -m pytest common/tests/test_translation_language.py
+      pass: "exit 0"
+    future: >
+      同一个闸门可以接到任何新的翻译入口上——它判的是结果，不关心是谁产生的。
+
+  - id: I-010
+    step: 本机翻译
+    name: "标题和标签只往英文方向翻，翻完让本地模型复查一遍"
+    status: done
+    needs: [I-009]
+    what: >
+      frontmatter 里的 title / keywords / tags 也参与翻译，但只往英文方向翻；中文页保留英文
+      taxonomy 原样。翻完再让本地 qwen 做一次结构化 JSON 复核，复核调用固定
+      reasoning_effort=none。
+    why: >
+      原来的扫描只覆盖 summary: 和 description:，于是 37 个英文页顶着「研究者分析报告」这类
+      中文标题、还挂着中文标签芯片。
+    expected: >
+      英文页的 title 与 tags 全部为英文；中文页上原本是英文的标签（Bug Journal ×206、
+      LeetCode ×51）翻译后仍然一字不动；复核调用返回合法 JSON 而不是空字符串。
+    how: >
+      common/translation/frontmatter.py 的 _scan_frontmatter_fields 扩到标签类字段，
+      _gate_english 只放行英译方向，review_frontmatter_fields 走一次本地 LLM 复核。
+    why_this_way: >
+      提交 d937dff 写明了单向的理由：中文页是刻意共用英文 taxonomy 的，逐页翻译会把一个标签
+      裂成若干近义词、打断 series 与 taxonomy 页。复核固定 reasoning_effort=none 的理由在
+      docs/guides/summarize-local-llm.md：这是一次很短的结构化 JSON 编辑，思考阶段会吃光
+      1024 token 预算并返回空——19 秒的空 vs 0.2 秒的合法 JSON。
+    code:
+      - file: common/translation/frontmatter.py
+        symbol: _scan_frontmatter_fields
+        lines: "56-93"
+      - file: common/translation/frontmatter.py
+        symbol: _gate_english
+        lines: "139-150"
+      - file: common/translation/frontmatter.py
+        symbol: review_frontmatter_fields
+        lines: "374-419"
+    verify:
+      command: python -m pytest common/tests/test_translation_review.py
+      pass: "exit 0"
+    future: >
+      复核这一步是通用的「让小模型自查结构化输出」范式，可以接到别的 JSON 产出上。
+
+  - id: I-011
+    step: 本机翻译
+    name: "双语页面可以放心重跑：源文件没变就整对跳过"
+    status: done
+    needs: [I-002, I-010]
+    what: >
+      write_bilingual 一次写出 foo.md / foo.zh.md 一对，两个文件都盖上 gadget:src-hash:v2:
+      标记；下次源内容没变就整对跳过。翻译失败重试三次，仍失败则记进
+      outputs/logs/translation-failures.log 且不留标记。
+    why: >
+      每天的日报都要发中英两份。没有指纹就会每次重译一遍（几分钟的 GPU 时间），
+      有指纹但盖错了就会把一次坏翻译永久冻住。
+    expected: >
+      源不变时第二次运行不发起任何推理；源变了两份都重译；翻译失败时不写标记，
+      下一次运行会重试；zh→en 失败时绝不把中文内容写到英文路径上。
+    how: >
+      common/bilingual.py 的 write_bilingual 先算 content_hash、比对两个文件里的标记，
+      _translate_with_retries 负责重试，失败走 _record_translation_failure。
+    why_this_way: >
+      标记版本号从 v1 提到 v2 是提交 d937dff 的刻意动作：已经被「原样回吐」的坏翻译
+      冻住的页面必须失效一次才能重译，否则修好校验也叫不动它们。
+    code:
+      - file: common/bilingual.py
+        symbol: write_bilingual
+        lines: "92-192"
+      - file: common/bilingual.py
+        symbol: _hash_marker
+        lines: "32-39"
+      - file: common/bilingual.py
+        symbol: _translate_with_retries
+        lines: "66-91"
+    verify:
+      command: python -m pytest common/tests/test_bilingual_skip.py
+      pass: "exit 0"
+    future: >
+      任何要发双语的新内容类型只调这一个函数，就自动获得跳过、重试与失败日志。
+
+  # ─────────────────────────── 网站 ───────────────────────────
+  - id: I-012
+    step: 博客自动发布
+    name: "生成内容与手写文章同住一处，手写的绝不被覆盖"
+    status: done
+    needs: [I-002]
+    what: >
+      生成的站点内容直接写进 tools/website/content|static（不再有单独的 staging 树），
+      每个生成文件盖 gadget_generated: true；写入前先分类，遇到没有标记的人写文件抛
+      HumanContentError，force 覆盖前先备份并记账。
+    why: >
+      生成内容和手写文章住在同一棵 Hugo 内容树里。一次路径写错就能悄悄把一篇手写博客
+      替换成自动日报，而 Hugo 的内容目录是 gitignore 的——覆盖了就找不回来。
+    expected: >
+      写生成文件成功且带标记；同路径已有生成文件可直接覆盖；同路径是人写文件则抛
+      HumanContentError；即使在生成目录里，显式标了 human 的文件也拦得住；
+      force 覆盖会在 outputs/backups/ 留一份，内容完全相同则不产生多余备份。
+    how: >
+      common/site_staging.py 的 write_site_content / copy_site_static 负责落点，
+      common/website_backup.py 的 classify_file / stamp_generated / backup_file 负责归属判定
+      与备份账本。
+    why_this_way: >
+      AGENTS.md 把这条写成硬规则：「Files without that marker are human-written and must
+      never be overwritten」——归属只认文件里的标记，不认目录约定，因为目录会被人挪。
+    code:
+      - file: common/site_staging.py
+        symbol: write_site_content
+        lines: "57-90"
+      - file: common/website_backup.py
+        symbol: classify_file
+        lines: "55-69"
+      - file: common/website_backup.py
+        symbol: backup_file
+        lines: "136-169"
+    verify:
+      command: python -m pytest common/tests/test_site_ownership.py
+      pass: "exit 0"
+    future: >
+      新的生成器（新的报告种类、新的图表页）接进来就自动继承这套归属与备份保护。
+
+  - id: I-013
+    step: 博客自动发布
+    name: "只压缩上次构建之后新改动的图片和视频"
+    status: doing
+    needs: []
+    what: >
+      每次构建只压缩比 .last_build 更新的图片与视频：图片走 pngquant，视频走 HandBrakeCLI，
+      并且并发跑。
+    why: >
+      站点里累积了上千个媒体文件。每次全量重压是几十分钟的 CPU 时间，而一次发布通常只动了几张图。
+    expected: >
+      两次连续构建之间没有新增媒体时，压缩步骤零工作量直接通过；新加一张 jpg 后构建会把它
+      压成 png 并被预检认可。
+    how: >
+      tools/website/publish.py 用 .last_build 的 mtime 作为分界找出 _newer_files，
+      再用线程池分别调 compress_image.py / compress_video.py。
+    why_this_way: null
+    code:
+      - file: tools/website/publish.py
+        symbol: _newer_files
+        lines: "138-149"
+      - file: tools/website/publish.py
+        symbol: compress_images
+        lines: "229-241"
+      - file: tools/website/compress_image.py
+        symbol: compress_with_pngquant
+        lines: "8-69"
+    verify:
+      manual: "连跑两次 tools/website/update.sh：第二次的第 3、4 步应报告 0 个文件被压缩；随后新放一张 .jpg 进 static/images/ 再跑，应看到它被压缩并转成 png。"
+      signed_off: null
+    future: >
+      同样的「按 .last_build 找增量」判据可以扩到别的重型构建步骤。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+  - id: I-014
+    step: 博客自动发布
+    name: "只翻译真正改过的那一侧，避免中英来回互翻"
+    status: done
+    needs: [I-011, I-012]
+    what: >
+      构建前先把 content/ 里的中英文对补齐：扫描 foo.md / foo.zh.md，判断哪一侧变了、
+      往哪个方向翻，用一个本地状态文件记录上次同步结果；流水线生成的页面默认跳过。
+    why: >
+      手写文章可能先写中文也可能先写英文，两边都可能后续再改。没有状态记录，
+      就会出现「英文翻成中文、下次又把那份中文翻回英文」的来回互翻，把两侧都磨成机翻。
+    expected: >
+      缺失的一侧被补出来；只有真正变化的一侧触发翻译；一对已经同步过且都没动的文件
+      零工作量；--dry-run 时不加载翻译引擎；带 gadget_generated 标记的页面被排除。
+    how: >
+      tools/website/translate_site_batch.py 的 collect_pairs 收集配对，plan_pair 依据
+      .translation_state.json 里的哈希决定动作，run 执行并回写状态。
+    why_this_way: >
+      文件头注释写明状态文件的目的就是「avoid en<->zh translation ping-pong」；
+      生成页默认跳过则是为了不打乱它们的 src-hash 标记（--include-generated 才覆盖）。
+    code:
+      - file: tools/website/translate_site_batch.py
+        symbol: plan_pair
+        lines: "349-401"
+      - file: tools/website/translate_site_batch.py
+        symbol: collect_pairs
+        lines: "193-251"
+      - file: tools/website/translate_site_batch.py
+        symbol: run
+        lines: "411-564"
+    verify:
+      command: python -m pytest tools/website/tests/test_translate_site_batch.py
+      pass: "exit 0"
+    future: >
+      同一个状态机可以扩到第三种语言，只要再定义一个文件名形状。
+
+  - id: I-015
+    step: 博客自动发布
+    name: "发布前自动检查常见问题，能修的顺手修掉"
+    status: done
+    needs: [I-014]
+    what: >
+      构建前对「自 .last_build 以来改动过的文件」跑五项检查：未压缩图片、失效的
+      ../../static 链接、frontmatter YAML 合法性、双语配对完整性、正文语言正确性。
+      按 BLOCK / WARN / FIX 三档处理，退出码 0/1/2。
+    why: >
+      Hugo 会把这些问题原样构建出去。等发现的时候错误内容已经在 tzj2006.github.io 上了，
+      而 public/ 是独立的部署仓，回滚要跨仓操作。
+    expected: >
+      什么都没改时退出 0；只改了生成内容时退出 0；frontmatter 缺 title 退出 1；
+      只有未压缩 jpg 或失效链接时退出 2；同时存在 BLOCK 与 WARN 时 BLOCK 胜出；
+      --no-fix 全程不加载翻译引擎。
+    how: >
+      tools/website/preflight_check.py 逐项产出 Issue，按 tier 汇总决定退出码，
+      FIX 档通过翻译引擎就地补齐配对或改正语言。
+    why_this_way: >
+      文件头注释写明分档的理由：frontmatter 错误会让页面构建不出来所以 BLOCK，
+      失效链接和未压缩图片只是质量问题所以 WARN 不挡发布；同时明确「auto-fixing a generated
+      file would desync it from its src-hash marker and cause churn」——所以预检只碰手写内容。
+    code:
+      - file: tools/website/preflight_check.py
+        symbol: check_bilingual_pairs
+        lines: "188-246"
+      - file: tools/website/preflight_check.py
+        symbol: check_language
+        lines: "247-295"
+      - file: tools/website/preflight_check.py
+        symbol: main
+        lines: "420-491"
+    verify:
+      command: python -m pytest tools/website/tests/test_preflight.py
+      pass: "exit 0"
+    future: >
+      再加一项检查只需要写一个返回 Issue 列表的函数并挂上 tier。
+
+  - id: I-016
+    step: 博客自动发布
+    name: "一条命令完成双语博客从翻译到发布的全流程"
+    status: done
+    needs: [I-012, I-013, I-015]
+    what: >
+      一条八步流水线让 tzj2006.github.io 自己保持最新：预翻译 → 重写手写 Markdown 里的站点
+      URL 与媒体引用 → 压图 → 压视频 → 预检 → 清 public/ 并跑 hugo → 提交推送 public/ →
+      更新 .last_build。update.sh / update.ps1 只是它的薄壳。
+    why: >
+      发布一次要按顺序做八件事，任何一步顺序错了结果就不对（比如先构建后压图等于发布了未压缩的图）。
+      写在两份 shell 脚本里就意味着 macOS 和 Windows 各错一次。
+    expected: >
+      预检退出 1 时整条流水线中止；退出 2（仅警告）时继续构建；跑完后 public/ 里是新构建的站点
+      并已 commit + push 到 tzj2006/tzj2006.github.io；.last_build 时间戳前移。
+    how: >
+      tools/website/publish.py 的 main 顺序调用各步骤，每步带计时；update.sh 与 update.ps1
+      只负责选好解释器再调它。
+    why_this_way: >
+      文件头注释写明 update.sh / update.ps1 是 thin wrappers——把顺序与判据收进一份 Python，
+      两个平台就不会各自漂移。
+    code:
+      - file: tools/website/publish.py
+        symbol: main
+        lines: "343-380"
+      - file: tools/website/publish.py
+        symbol: run_preflight
+        lines: "258-269"
+      - file: tools/website/publish.py
+        symbol: commit_and_push
+        lines: "305-342"
+    verify:
+      command: python -m pytest tools/website/tests/test_publish.py
+      pass: "exit 0"
+    future: >
+      任何新的内容生成器只要把文件写进 content|static，就自动被这条流水线翻译、压缩、发布。
+
+  # ─────────────────────────── summarize ───────────────────────────
+  - id: I-017
+    step: 每天的工作日报
+    name: "从各家 AI 工具的历史记录里按日期抽出对话"
+    status: done
+    needs: []
+    what: >
+      从本机各个 AI CLI 的历史里按日期抽出对话：Claude Code、Codex、Cursor Agent、
+      ChatGPT 导出、通用 JSON；同时能反向枚举「本机一共有哪些天有记录」。
+    why: >
+      日报的原料分散在五种互不相同的私有格式里，路径还随操作系统（含 WSL 下的 /mnt/c）变化。
+      不先统一成一种形状，后面每一步都要处理五种分支。
+    expected: >
+      给定日期能从多个 Claude 项目目录里合并出对话；Cursor 的子 agent 记录被剔除；
+      时间戳带 UTC 偏移时解析正确、缺失时回落到文件 mtime；目录不存在时返回空而不是抛错。
+    how: >
+      tools/summarize/parsers.py 为每种来源写一个 parse_*，各自发现目录、按日期过滤、
+      抽取文本，最后由 collect_conversations 汇成统一的 conversation 列表。
+    why_this_way: >
+      WSL 判定用 /proc 内核字符串而不是环境变量（代码注释：既便宜又可靠，WSL1/2 都含
+      "microsoft"），因为要从 WSL 里读 Windows 侧的 CLI 历史。
+    code:
+      - file: tools/summarize/parsers.py
+        symbol: collect_conversations
+        lines: "775-812"
+      - file: tools/summarize/parsers.py
+        symbol: discover_all_dates
+        lines: "202-297"
+      - file: tools/summarize/parsers.py
+        symbol: parse_cursor
+        lines: "697-774"
+    verify:
+      command: python -m pytest tools/summarize/tests/test_parsers.py
+      pass: "exit 0"
+    future: >
+      接一个新的 AI CLI 只要加一个 parse_* 并在 collect_conversations 里挂上。
+
+  - id: I-018
+    step: 每天的工作日报
+    name: "多台设备先各自导出对话、再汇总成一份当天日报"
+    status: doing
+    needs: [I-005, I-017]
+    what: >
+      日报分两阶段：export 在每台设备上把当天对话导成带 device_name 的 JSON；
+      merge 在汇总机上把所有设备的当天文件合成一份报告，用 _finalized 标记避免重复处理。
+    why: >
+      一天的工作分散在台式机、笔记本、服务器上。让每台机器各写一份日报得到的是三份割裂的
+      叙事；而把原始日志全同步过去再统一总结，才有一份完整的当天视角。
+    expected: >
+      export 后 outputs/logs/summarize/ 出现 <日期>_<设备>.json；merge 后
+      outputs/reports/summarize/<日期>.{json,md} 出现且包含所有设备的内容；
+      已 finalize 的日期再跑 export 不重复导出。
+    how: >
+      tools/summarize/daily_export.py 的 cmd_export 负责阶段一，
+      tools/summarize/daily_merge.py 的 cmd_merge / _cmd_merge_sync_all 负责阶段二
+      （--sync-all 会逐天扫过所有未合并的日期）。
+    why_this_way: >
+      tools/summarize/AGENTS.md 记录了字段名必须稳定的约束（token_usage、
+      conversation_summaries、device_name、_finalized）——merge 与各渲染器跨设备解析它们，
+      改名等于让别的机器上的旧文件失效。
+    code:
+      - file: tools/summarize/daily_export.py
+        symbol: cmd_export
+        lines: "21-165"
+      - file: tools/summarize/daily_merge.py
+        symbol: cmd_merge
+        lines: "222-470"
+      - file: tools/summarize/daily_merge.py
+        symbol: _cmd_merge_sync_all
+        lines: "60-221"
+    verify:
+      manual: "跑 python -m summarize daily export --date <某天>，确认 outputs/logs/summarize/ 出现 <date>_<device>.json 且含 _finalized；再跑 python -m summarize daily merge --date <某天> 并显式传入这些文件，确认 outputs/reports/summarize/<date>.json 与 .md 生成且包含每台设备的段落。"
+      signed_off: null
+    future: >
+      设备数量可以任意增长，merge 那一侧不需要改。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+  - id: I-019
+    step: 每天的工作日报
+    name: "用 ssh 把远端机器的对话日志拉回本机"
+    status: todo
+    needs: [I-018]
+    what: >
+      对 config.json 里配置的每台 ssh_hosts：先远程跑一次 daily export，再 scp 把它的
+      JSON 日志拉回本机的 logs 目录；远端 export 失败也照样拉已有日志。
+    why: >
+      服务器上的对话记录不会自己出现在笔记本上。手动 scp 意味着每天都要记得做，
+      而漏掉一台的那天日报就是残缺的。
+    expected: >
+      跑完之后本机 logs 目录里真的多出远端那台设备的 <日期>_<设备>.json——这是唯一算数的
+      判据。scp 的源路径必须对得上远端 export 的实际落点 outputs/logs/summarize/，
+      而不是 outputs/logs/。其余：字符串形式的条目默认用远端 ~/.gadget；
+      没有配置 ssh_hosts 时完全不动作、也不创建目录。
+    how: >
+      tools/summarize/ssh_pull.py 的 _hosts 归一化配置条目，pull_remote_logs 逐台
+      执行远程 export 再 scp；auto 流水线在最开头调用它。
+    why_this_way: >
+      ~/.gadget 是 scripts/onboard.py --only link 建的符号链接——固定的按用户句柄，
+      让远端 checkout 可以放在任何路径上而配置里不用写死。远端 export 失败设为非致命
+      （代码注释：still pull whatever logs exist），因为一台机器掉线不该让整天的日报泡汤。
+    code:
+      - file: tools/summarize/ssh_pull.py
+        symbol: pull_remote_logs
+        lines: "55-77"
+      - file: tools/summarize/ssh_pull.py
+        symbol: _hosts
+        lines: "27-41"
+    verify:
+      command: python -m pytest tools/summarize/tests/test_ssh_pull.py
+      pass: "exit 0"
+    future: >
+      同一个扇出形状可以用来在多台机器上跑别的导出任务。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: >
+          done → todo。ssh_pull.py:73 的 scp 源是 {repo}/outputs/logs/*.json，
+          但远端 daily export 落在 outputs/logs/summarize/（daily_helpers.py:9
+          _DEFAULT_LOGS_DIR = LOGS_DIR / "summarize"）—— glob 少一层目录，实际拉不到任何文件。
+          verify 命令仍然绿是因为 test_ssh_pull.py:16,18 断言的正是这条错路径，
+          把 bug 锁进了测试。修代码不在 /ccscan 范围内；这里只把 expected 改成真判据并降级状态。
+
+  - id: I-020
+    step: 每天的工作日报
+    name: "模型输出结构跑偏时自动修回合法的报告，而不是崩溃"
+    status: done
+    needs: [I-004, I-018]
+    what: >
+      在 LLM 输出与渲染之间放一层归一化：拆掉多余的信封层、把只返回了 daily_overview 的
+      回答重新套回报告结构、从同义键里恢复 summary、把本该是列表的字段里的裸字符串包起来；
+      结构完全不对时重试一次。
+    why: >
+      本地模型即使在约束解码下仍会偶尔跑偏（实测 3 次干净运行里仍有 1 次逃逸）。
+      渲染器直接 t['name'] 取值会 KeyError 崩掉，或者产出一份看似成功的空报告。
+    expected: >
+      顶层键被改名时能从同义词里恢复 summary，而不是被一个更薄的子对象骗走；
+      信封嵌套时解到内容最丰富的那一层；裸 daily_overview 被重新套回；
+      结构分为 0 时触发一次重试；列表字段里的裸字符串被包成合法条目而不是让渲染崩溃。
+    how: >
+      tools/summarize/summarizer.py 的 _unwrap_envelope / _renest_overview /
+      _normalize_report 串成 _finalize_report，重试逻辑按 _report_content_score 判定；
+      渲染侧再由 formatter.py 的 _coerce_report_lists 兜一次。
+    why_this_way: >
+      docs/reports/phase0-baseline.md 记录了这两层是有意的「防御性护栏」，不是 prompt 重写：
+      重试只在已经失败的运行上多付一次归并调用（约 2 分钟，块摘要已算好）；
+      而 _unwrap_envelope 挑「最丰富的子对象」是一次对抗式复查发现的——旧写法会被
+      statistics.summary 这种薄诱饵骗走并丢掉真报告。
+    code:
+      - file: tools/summarize/summarizer.py
+        symbol: _finalize_report
+        lines: "428-448"
+      - file: tools/summarize/summarizer.py
+        symbol: _unwrap_envelope
+        lines: "347-369"
+      - file: tools/summarize/formatter.py
+        symbol: _coerce_report_lists
+        lines: "46-56"
+    verify:
+      command: python -m pytest tools/summarize/tests/test_summarizer.py
+      pass: "exit 0"
+    future: >
+      这层护栏让「换一个更小的本地模型」变成可以尝试的事，而不是一换就崩。
+
+  - id: I-021
+    step: 每天的工作日报
+    name: "按 AI 工具逐个统计 token 用量并累积历史"
+    status: done
+    needs: [I-001]
+    what: >
+      通过 ccusage 20.x 的命名空间命令逐个来源抓 token 用量（claude / codex / gemini …），
+      归一化成一种形状后按来源+设备存快照，并与历史累积合并。
+    why: >
+      ccusage 20.x 的统一报表把所有来源压成一个 agent:"all" 的合并块，拆不出各来源的
+      token 数；而各来源的 JSON 形状本身还不一样（claude 用 modelBreakdowns/totalCost，
+      codex 用 models{}/costUSD）。
+    expected: >
+      标准形态直通、codex 形态的 costUSD→totalCost 与 models{}→modelBreakdowns 被正确映射；
+      来源发现从 metadata.agents 取并集、失败时回落默认集合；版本 <20 时静默尝试全局升级，
+      失败则本次回退 npx；单个来源抓取失败只跳过它、不影响其余来源。
+    how: >
+      tools/summarize/usage.py 的 discover_sources 先跑一次统一报表取来源集合，
+      fetch_source_usage 逐源抓取，_normalize_usage 归一，save_usage_file 存
+      usage_<source>_<device>.json，_merge_usage_history 累积历史。
+    why_this_way: >
+      docs/superpowers/specs/2026-06-14-... 记录了这条路的来历：一旦全局升到 20.x，
+      裸 ccusage --json 会静默换成统一形态（period 取代 date），
+      load_ccusage_for_date 按 date 匹配就会失败、Claude 统计静默丢失、Codex 被重复计算——
+      所以版本升级和抓取重写必须同时发布，且必须逐源命名空间抓。
+    code:
+      - file: tools/summarize/usage.py
+        symbol: discover_sources
+        lines: "149-180"
+      - file: tools/summarize/usage.py
+        symbol: fetch_source_usage
+        lines: "181-214"
+      - file: tools/summarize/usage.py
+        symbol: _normalize_usage
+        lines: "69-77"
+    verify:
+      command: python -m pytest tools/summarize/tests/test_usage.py
+      pass: "exit 0"
+    future: >
+      ccusage 支持的新 agent CLI 会自动出现在报表里，不需要改代码。
+
+  - id: I-022
+    step: 每天的工作日报
+    name: "把 token 用量画成图表和卡片嵌进报告"
+    status: done
+    needs: [I-021]
+    what: >
+      把逐源用量画成一张三子图 PNG（tokens / cost / token 类型拆分，横轴是来源），
+      并另外渲染一张纯 HTML/CSS 的用量卡片嵌进 Markdown 报告里。
+    why: >
+      一串数字看不出「今天钱花在哪个模型上」。而 matplotlib 在有些机器上根本没装，
+      图表不能是报告能否生成的前提。
+    expected: >
+      来源数量任意时图都画得出来（调色板按序号循环）；matplotlib 缺失时返回 None、
+      报告照常生成；Markdown 里同时列出合计与每个来源一行。
+    how: >
+      tools/summarize/charts.py 的 generate_daily_chart 懒加载 matplotlib 并按来源堆叠柱状图；
+      tools/summarize/usage_card.py 的 render_usage_card 直接拼 HTML 条形卡片。
+    why_this_way: null
+    code:
+      - file: tools/summarize/charts.py
+        symbol: generate_daily_chart
+        lines: "94-227"
+      - file: tools/summarize/usage_card.py
+        symbol: render_usage_card
+        lines: "112-197"
+    verify:
+      command: python -m pytest tools/summarize/tests/test_formatter.py
+      pass: "exit 0"
+    future: >
+      同一份 usage_by_source 结构也喂给周报与月报的图，不用另写一套。
+
+  - id: I-023
+    step: 每天的工作日报
+    name: "把一段时间的日报再汇总成周报和月报"
+    status: done
+    needs: [I-018, I-021]
+    what: >
+      把一周/一月的日报再喂给 LLM 做二级汇总，产出趋势型报告；结果按「输入日报集合的哈希」
+      缓存，输入没变就不重算。
+    why: >
+      日报回答「今天做了什么」，回答不了「这个月的重心在往哪偏」。而重算一次月报是三十份
+      日报的输入量，没有缓存就没法反复调格式。
+    expected: >
+      同一批日报第二次生成时命中缓存直接返回；源哈希忽略下划线开头的内部键；
+      多设备用量按来源正确汇总；生成的 Hugo 时间戳带本地时区偏移。
+    how: >
+      tools/summarize/period_report.py 提供共享件（缓存、分块调用、图表、Hugo 文章生成），
+      weekly_summary.py / monthly_summary.py 在其上各自实现渲染与 CLI。
+    why_this_way: null
+    code:
+      - file: tools/summarize/period_report.py
+        symbol: run_cached_period_llm
+        lines: "216-246"
+      - file: tools/summarize/period_report.py
+        symbol: call_period_summarize_chunked
+        lines: "247-317"
+      - file: tools/summarize/weekly_summary.py
+        symbol: cmd_generate
+        lines: "606-703"
+    verify:
+      command: python -m pytest tools/summarize/tests/test_period_report.py
+      pass: "exit 0"
+    future: >
+      再加一个季度/年度层级只需要复用 period_report 的共享件。
+
+  - id: I-024
+    step: 每天的工作日报
+    name: "把报告作为中英双语文章发到博客上"
+    status: done
+    needs: [I-011, I-012, I-023]
+    what: >
+      把日报/周报/月报的 Markdown 包上 Hugo frontmatter，经 write_bilingual 写成
+      bugJournal 下的中英一对，落进 tools/website/content。
+    why: >
+      报告只存在 outputs/reports/ 里等于只有本机能看。发到站点上才能在任何设备上回看，
+      也才有「把这一年翻一遍」的可能。
+    expected: >
+      生成的文章走 write_bilingual（因此自动获得跳过与重试）；frontmatter 的日期时间带
+      本地时区偏移而不是裸 UTC；文件带 gadget_generated 标记因而不会误伤手写文章。
+    how: >
+      tools/summarize/period_report.py 的 generate_period_hugo_post 拼 frontmatter 并调
+      write_bilingual；tools/summarize/daily_deploy.py 的 cmd_deploy 负责日报侧的部署命令。
+    why_this_way: null
+    code:
+      - file: tools/summarize/period_report.py
+        symbol: generate_period_hugo_post
+        lines: "110-172"
+      - file: tools/summarize/daily_deploy.py
+        symbol: cmd_deploy
+        lines: "32-151"
+    verify:
+      command: python -m pytest tools/summarize/tests/test_period_report.py -k hugo_post
+      pass: "exit 0"
+    future: >
+      研究报告与 benchmark 页面走的是同一条落点，站点侧不区分它们来自哪个工具。
+
+  - id: I-025
+    step: 每天的工作日报
+    name: "一条命令跑完从拉日志到发布的整个日报流程"
+    status: done
+    needs: [I-008, I-019, I-020, I-022, I-024]
+    what: >
+      一条命令 python -m summarize auto --deploy 跑完全程：ssh 拉取各设备日志 → 本机
+      daily export → merge --sync-all 逐天合并 → 补齐缺失或过期的周报 → 补齐缺失或过期的
+      月报 → 一次性部署 → 释放常驻的 Ollama 模型。
+    why: >
+      手动跑要记住六个子命令和它们的顺序、还要自己判断哪些周/月需要重算。
+      能放进 cron 的东西才会真的每天发生。
+    expected: >
+      开跑前的就绪检查不通过就直接退出、不做任何工作；缺失和过期的周/月报被识别并重算，
+      已是最新的被跳过并打日志；中间各步用 GADGET_DEFER_HUGO_UPDATE=1 推迟 Hugo 构建，
+      最后只跑一次部署；收尾释放显存（GADGET_KEEP_OLLAMA=1 可保留）。
+    how: >
+      tools/summarize/auto.py 的 cmd_auto 按固定顺序用 subprocess 驱动各子命令，
+      _find_missing_weeks / _find_missing_months / _stale 决定要补哪些聚合报告，
+      _unload_ollama 收尾。
+    why_this_way: >
+      各步之间用 subprocess 而不是直接 import，是因为每个子命令都是独立的 CLI 入口
+      （tools/summarize/AGENTS.md：auto.py drives the subcommands via subprocess），
+      失败一步不会污染同一个进程的状态；推迟 Hugo 构建到最后一次是为了避免每份报告都触发
+      一次全站构建。
+    code:
+      - file: tools/summarize/auto.py
+        symbol: cmd_auto
+        lines: "155-233"
+      - file: tools/summarize/auto.py
+        symbol: _find_missing_weeks
+        lines: "64-108"
+      - file: tools/summarize/auto.py
+        symbol: _unload_ollama
+        lines: "30-44"
+    verify:
+      command: python -m pytest tools/summarize/tests/test_onboarding.py
+      pass: "exit 0"
+    future: >
+      这条链一旦稳定，日报就变成基础设施——后面所有「回看历史」的功能都有数据可用。
+
+  # ─────────────────────────── research ───────────────────────────
+  - id: I-026
+    step: 论文与硬件
+    name: "从多个论文库检索新论文，并排除已经看过的"
+    status: done
+    needs: [I-001, I-002]
+    what: >
+      按项目定义的关键词从 arXiv / bioRxiv / PubMed 检索近期论文，支持按会议、按作者检索；
+      结果按 (项目, 日期, 来源) 落缓存，并排除该项目已经见过的论文 ID。
+    why: >
+      每天重新检索同一批关键词会把上周已经读过的论文再推一遍。而三个来源的 API 形状、
+      限流规则、失败方式各不相同。
+    expected: >
+      缓存命中时不发起网络请求；硬失败（超时/接口错误）不写缓存，只有真实成功才写；
+      真的没有新论文时返回空列表并正常缓存；已知 ID 的论文不再出现在结果里。
+    how: >
+      tools/research/scout/search.py 为每个来源写一个 search_*，统一由 search_source
+      套上缓存与已知 ID 过滤；apis/ 下的客户端负责限流与重试。
+    why_this_way: >
+      代码注释写明了 None 与 [] 的区分：searcher 硬失败返回 None、真空结果返回 []，
+      只缓存后者——否则一次失败的检索会被冻成当天的权威结果。
+    code:
+      - file: tools/research/scout/search.py
+        symbol: search_source
+        lines: "748-779"
+      - file: tools/research/scout/search.py
+        symbol: load_known_paper_ids
+        lines: "123-156"
+      - file: tools/research/scout/search.py
+        symbol: search_arxiv
+        lines: "206-282"
+    verify:
+      command: python -m pytest tools/research/tests/test_pipeline_contracts.py
+      pass: "exit 0"
+    future: >
+      再接一个来源只要写一个 search_* 并在 search_source 里挂上，缓存与去重自动生效。
+
+  - id: I-027
+    step: 论文与硬件
+    name: "论文分三轮逐步筛选评分，失败的模型结果不写进缓存"
+    status: done
+    needs: [I-004, I-005, I-026]
+    what: >
+      检索到的论文过三道：快速筛选（相关性/动机/创新点）→ 深度评估（打 composite score =
+      0.4 相关 + 0.3 影响 + 0.3 新颖）→ 引用影响分析。每一道的结果都缓存，但缓存前先检查
+      结果「像不像 LLM 失败的样子」。
+    why: >
+      一次检索可能有上百篇论文，全量深度评估既慢又贵，所以要先便宜地筛掉大部分。
+      而 LLM 失败时会返回一批「全部 low relevance、动机与创新点全空」的默认值——
+      这种结果一旦被缓存，之后每次都会读到它。
+    expected: >
+      全部论文都是 low relevance 且动机/创新点全空时不写筛选缓存；所有 composite_score
+      都是 0 时不写深度评估缓存；论文数很多时筛选自动分块而不是一次超时。
+    how: >
+      tools/research/scout/evaluate.py 的 _screen_papers(_chunked) / _deep_evaluate_papers /
+      analyze_citations 三段，各自前面挂 _screening_is_usable / _deep_eval_is_usable 闸门。
+    why_this_way: >
+      两个 is_usable 的 docstring 直接写了判据的来历：那组默认值就是「the LLM-failure
+      signature」——用结果的形状而不是异常来识别失败，因为 LLM 失败时不抛异常。
+    code:
+      - file: tools/research/scout/evaluate.py
+        symbol: _screening_is_usable
+        lines: "128-140"
+      - file: tools/research/scout/evaluate.py
+        symbol: _deep_eval_is_usable
+        lines: "141-150"
+      - file: tools/research/scout/evaluate.py
+        symbol: evaluate_papers_for_project
+        lines: "418-506"
+    verify:
+      command: python -m pytest tools/research/tests/test_pipeline_contracts.py -k CacheQualityGate
+      pass: "exit 0"
+    future: >
+      「用结果形状识别 LLM 失败」这个判据可以推广到别的缓存点。
+
+  - id: I-028
+    step: 论文与硬件
+    name: "一句自然语言提问自动变成检索计划并执行"
+    status: doing
+    needs: [I-004, I-026]
+    what: >
+      ask 子命令把一句自然语言（"找 Pieter Abbeel 最近的机器人操作论文"）解析成结构化的
+      检索计划——选哪个来源、按作者还是按关键词、回溯多久——再执行它。
+    why: >
+      记住 search / --conference / --author 各自的参数形状是有成本的。
+      而不同的问题天然对应不同的来源（生物问题不该去 arXiv 找）。
+    expected: >
+      解析出的计划经过校验（来源合法、字段齐全）才会执行；解析不出来时给出可读的失败原因
+      而不是空跑一次检索。
+    how: >
+      tools/research/scout/ask.py 的 parse_ask_intent 走一次 LLM 出结构化计划，
+      validate_ask_plan 校验并补默认值，route_search 按计划调 search 层。
+    why_this_way: null
+    code:
+      - file: tools/research/scout/ask.py
+        symbol: parse_ask_intent
+        lines: "159-183"
+      - file: tools/research/scout/ask.py
+        symbol: validate_ask_plan
+        lines: "43-158"
+      - file: tools/research/scout/ask.py
+        symbol: route_search
+        lines: "184-261"
+    verify:
+      manual: "跑 python -m research.scout ask \"找最近的扩散模型机器人操作论文\" --max-results 20，确认打印出的检索计划里 source/关键词/回溯天数都合理，并且真的返回了论文列表。"
+      signed_off: null
+    future: >
+      同一个「自然语言 → 结构化计划 → 执行」形状可以套到别的子命令上。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+  - id: I-029
+    step: 论文与硬件
+    name: "读论文全文分析写作方法，并汇总审稿意见的共识与分歧"
+    status: doing
+    needs: [I-027]
+    what: >
+      --insight 模式下载论文全文，让 LLM 分析写作结构、发表策略与可复用的核心知识；
+      能匹配到 OpenReview 的还会抓审稿意见并分析共识与争议；最后跨论文综合出一份写作指南。
+    why: >
+      只读摘要能知道一篇论文讲什么，读不出它「为什么被接收」。而审稿意见里的共识与争议
+      是公开却很少有人系统读的信号。
+    expected: >
+      全文与洞察结果都按内容哈希缓存、重复运行不重下不重算；PyMuPDF 缺失时降级而不是崩；
+      OpenReview 匹配不到时跳过审稿分析、其余部分照常产出。
+    how: >
+      tools/research/scout/insight.py 的 download_paper_fulltext 抓全文，
+      analyze_paper_insight / analyze_review_consensus 各跑一次 LLM，
+      synthesize_writing_guide 做跨论文综合，全部由 run_insight_analysis 编排。
+    why_this_way: null
+    code:
+      - file: tools/research/scout/insight.py
+        symbol: run_insight_analysis
+        lines: "361-476"
+      - file: tools/research/scout/insight.py
+        symbol: analyze_review_consensus
+        lines: "200-248"
+      - file: tools/research/scout/insight.py
+        symbol: synthesize_writing_guide
+        lines: "277-308"
+    verify:
+      manual: "对一篇有 OpenReview 记录的论文跑 report --insight，确认报告里出现写作结构分析与审稿共识两段，且第二次运行时命中缓存不重新下载全文。"
+      signed_off: null
+    future: >
+      写作指南可以随论文积累而变厚，成为投稿前的自查清单。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+  - id: I-030
+    step: 论文与硬件
+    name: "自动生成一位学者的研究画像、影响力分级和师生关系"
+    status: doing
+    needs: [I-002, I-003]
+    what: >
+      从 ArXiv + Semantic Scholar 拉一位学者的论文与引用数据，让 LLM 写研究轨迹分析，
+      按引用/产出算 tier 分级；再通过抓主页 + 共著模式自动发现师生关系；支持同名消歧。
+    why: >
+      判断一个组值不值得申请/合作，靠的是研究轨迹和学生去向，而这些散在主页、
+      Semantic Scholar 和论文作者列表里，人工拼一次要一两个小时。
+    expected: >
+      给定姓名能产出带 tier 的画像；同名的不同学者能被分开；抓主页时拒绝内网/非 HTTP(S)
+      地址与危险重定向；抓不到主页时退回纯共著推断而不是失败。
+    how: >
+      tools/research/analysis.py 的 analyze_researcher 组织数据与 LLM 分析，
+      scoring.py 算 tier，homepage_discovery.py 负责带 SSRF 校验的主页抓取，
+      student_discovery.py 给候选人打分。
+    why_this_way: >
+      homepage_discovery.py 用 _is_safe_url 与自定义重定向处理器做 SSRF 防护，
+      因为主页 URL 来自 LLM 与第三方数据——这是一条会跟着不可信输入走的网络请求。
+    code:
+      - file: tools/research/analysis.py
+        symbol: analyze_researcher
+        lines: "213-375"
+      - file: tools/research/scoring.py
+        symbol: compute_tier_score
+        lines: "10-94"
+      - file: tools/research/homepage_discovery.py
+        symbol: _is_safe_url
+        lines: "27-59"
+    verify:
+      manual: "跑 python -m research.scout profile \"Sergey Levine\"，确认产出的画像含研究轨迹叙述、tier 分级与至少一批学生候选人，并且 outputs/data 下留有 profile JSON。"
+      signed_off: null
+    future: >
+      画像数据攒起来之后可以横向比较不同组的产出节奏。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+  - id: I-031
+    step: 论文与硬件
+    name: "分析一篇论文引用了谁、又被谁引用"
+    status: doing
+    needs: [I-003]
+    what: >
+      给一个 arXiv ID 或 DOI，拉它的前向引用与反向参考文献，配一段 LLM 的影响力解读。
+    why: >
+      一篇论文的真实影响力不在它自己的摘要里，而在谁引了它、它站在谁的肩上。
+    expected: >
+      给定 arXiv ID 能同时列出引用它的论文与它引用的论文；接口限流时退避重试而不是直接失败。
+    how: >
+      tools/research/apis/semantic_scholar.py 的 get_paper_citations / get_paper_references
+      带限流客户端拉数据，tools/research/scout/cli.py 的 cmd_citations 组织输出。
+    why_this_way: null
+    code:
+      - file: tools/research/apis/semantic_scholar.py
+        symbol: get_paper_citations
+        lines: "473-513"
+      - file: tools/research/scout/cli.py
+        symbol: cmd_citations
+        lines: "495-605"
+    verify:
+      manual: "跑 python -m research.scout citations 2301.12597，确认同时打印出前向引用与参考文献两栏，且条目数与 Semantic Scholar 网页一致量级。"
+      signed_off: null
+    future: >
+      引用数据可以反过来喂给深度评估的影响力打分。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+  - id: I-032
+    step: 论文与硬件
+    name: "把论文检索与学者分析的结果汇成一份研究周报发布"
+    status: done
+    needs: [I-012, I-027, I-029, I-030, I-031]
+    what: >
+      把检索、三阶段评估、深度洞察、学者画像、引用分析的结果汇成一份可读的研究周报
+      （Markdown + JSON），并发布到站点的 research 分区；同时往项目的文献笔记里追加条目。
+    why: >
+      前面几步各自产出的是中间数据。真正要「点开看」的东西是一份按项目组织、按分数排序、
+      带推荐理由的周报。
+    expected: >
+      报告输入契约稳定（评估结果缺字段时降级渲染而不是崩）；表格单元格里的换行与竖线被转义；
+      发布后站点 research 分区出现对应文章且带 gadget_generated 标记。
+    how: >
+      tools/research/scout/report.py 的 generate_daily_report / generate_report_markdown
+      渲染，generate_hugo_post 经 write_site_content 落进站点，
+      append_literature_note 追加文献笔记。
+    why_this_way: null
+    code:
+      - file: tools/research/scout/report.py
+        symbol: generate_report_markdown
+        lines: "116-292"
+      - file: tools/research/scout/report.py
+        symbol: generate_hugo_post
+        lines: "441-477"
+      - file: tools/research/scout/cli.py
+        symbol: cmd_report
+        lines: "329-417"
+    verify:
+      command: python -m pytest tools/research/tests/test_pipeline_contracts.py -k Report
+      pass: "exit 0"
+    future: >
+      周报累积成一条领域时间线，配合文献笔记可以直接支撑写 related work。
+
+  # ─────────────────────────── benchmark ───────────────────────────
+  - id: I-033
+    step: 论文与硬件
+    name: "抗后台干扰的跑分计时，结果只往 CSV 追加、从不覆盖"
+    status: doing
+    needs: []
+    what: >
+      一套「预热 + 正式测量 + 统计」的计时器（中位数 + IQR 剔异常），结果以追加模式写进
+      benchmark_results.csv——永不覆盖、永不去重。
+    why: >
+      单次计时在有后台负载的机器上能差出两倍。而跑分的价值在于横跨多台硬件、多个时间点
+      累积对比，一旦重写 CSV 就丢掉了历史。
+    expected: >
+      同一台机器重复跑，中位数结果稳定在小范围内；连续跑两次后 CSV 行数是两次之和，
+      旧行一字不动；输出目录不存在时自动创建。
+    how: >
+      tools/benchmark/benchmark/core.py 的 RobustTimer 做预热与统计，
+      BenchmarkResults.save 以 append 模式写 CSV。
+    why_this_way: >
+      AGENTS.md 把追加写成硬规则：「results **append** to benchmark_results.csv by design —
+      never rewrite or dedupe it」；README.zh 补充了理由——追加天然支持多硬件累积排行榜。
+    code:
+      - file: tools/benchmark/benchmark/core.py
+        symbol: RobustTimer
+        lines: "34-108"
+      - file: tools/benchmark/benchmark/core.py
+        symbol: BenchmarkResults.save
+        lines: "223-257"
+    verify:
+      manual: "在 tools/benchmark/ 下记下 benchmark_results.csv 的行数，跑 python -m benchmark.cli --cpu-only --duration 3，确认行数只增不减且旧行未被改动。"
+      signed_off: null
+    future: >
+      CSV 是唯一事实来源，报告、排行榜、公共提交都从它派生。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+  - id: I-034
+    step: 论文与硬件
+    name: "自动识别各家厂商的 GPU 并在每个数值精度档上跑分"
+    status: doing
+    needs: [I-033]
+    what: >
+      自动识别 NVIDIA (CUDA) / Apple (MPS) / Intel (XPU) 并在 FP64 / FP32 / FP16 / BF16 /
+      FP8(实验) 各档上跑 GEMM，按显存自动选矩阵规模，测量前显式同步。
+    why: >
+      同一段代码在三种后端上的可用精度和同步语义都不一样；不显式同步的 GPU 计时量到的是
+      提交队列的时间，不是计算时间。
+    expected: >
+      --info 在没有 torch 的机器上也能列出检测到的硬件；不支持的精度档被跳过并说明原因
+      而不是抛异常；显存越大自动选的矩阵越大。
+    how: >
+      tools/benchmark/benchmark/detect.py 分厂商探测，gpu.py 的 GpuBenchmark 按精度档
+      逐项测量并在计时前后同步，calculate_matrix_size_from_memory 按显存定规模。
+    why_this_way: >
+      README.zh 记录了一个刻意的边界：--info 可能检测到 OpenCL，但 gpu.py 不跑 OpenCL——
+      检测和实测是两回事，不能因为探测得到就假装能测。
+    code:
+      - file: tools/benchmark/benchmark/detect.py
+        symbol: get_gpu_info
+        lines: "134-162"
+      - file: tools/benchmark/benchmark/gpu.py
+        symbol: GpuBenchmark
+        lines: "53-468"
+      - file: tools/benchmark/benchmark/gpu.py
+        symbol: calculate_matrix_size_from_memory
+        lines: "17-52"
+    verify:
+      manual: "在 tools/benchmark/ 下跑 python -m benchmark.cli --info，确认列出的 GPU 厂商/显存与 nvidia-smi（或系统信息）一致，且没有精度档因异常中断。"
+      signed_off: null
+    future: >
+      新厂商后端只要加一个 _detect_* 与一段 GpuBenchmark 分支。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+  - id: I-035
+    step: 论文与硬件
+    name: "从跑分数据生成可交互的图表报告和排行榜页面"
+    status: doing
+    needs: [I-012, I-034]
+    what: >
+      从累积的 CSV 生成带 Plotly 图表的交互式 HTML 报告与排行榜，可发布到站点的
+      /benchmark/ 路径，也可提交到公共排行榜。
+    why: >
+      CSV 本身没法「点开看」。而跑分的意义正是横向比较，需要一个能筛选、能排序的页面。
+    expected: >
+      plotly 未安装时 --info 等只读命令仍能工作（懒 import）；排行榜为空时不因
+      pd.concat([]) 崩溃；--report --deploy 后站点 /benchmark/ 页面更新。
+    how: >
+      tools/benchmark/benchmark/report.py 的 BenchmarkReport 读 CSV 生成 HTML，
+      cli.py 的 deploy_report 经 common 的站点落点发布。
+    why_this_way: >
+      plotly 是懒加载的：docs/reports/phase0-baseline.md 记录 smoke 网里 benchmark --info
+      在没装 plotly 的裸环境下应当 skip 而不是 fail——只读命令不该被绘图依赖绑架。
+    code:
+      - file: tools/benchmark/benchmark/report.py
+        symbol: BenchmarkReport
+        lines: "20-585"
+      - file: tools/benchmark/benchmark/cli.py
+        symbol: deploy_report
+        lines: "317-344"
+    verify:
+      manual: "在 tools/benchmark/ 下跑 python -m benchmark.cli --report（不加 --deploy），用浏览器打开生成的 HTML，确认图表可交互且排行榜含本机结果。"
+      signed_off: null
+    future: >
+      公共排行榜积累够多机器后可以回答「这张卡值不值」这类问题。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+
+  # ─────────────────────────── translator ───────────────────────────
+  - id: I-036
+    step: 本机翻译
+    name: "在本地网页界面里翻译贴入的文字或上传的文档"
+    status: done
+    needs: [I-006, I-007]
+    what: >
+      一个 Google-Translate 风格的本地网页：贴文字或传文件（.md/.txt/.pdf/.docx/图片）
+      翻译并保留 Markdown 结构；PDF/图片走 OCR，docx 用标准库解 zip+xml；
+      模型常驻内存、切换时懒加载。
+    why: >
+      不是所有需要翻译的东西都在站点里。一份要读的 PDF、一段要发的文字，
+      也应该能用同一个本地模型翻，而不用把内容发去云端。
+    expected: >
+      源语言选 auto 时按 CJK 比例判断；目标选 auto 时在 zh↔en 之间翻转；
+      空输入不触发任何推理；docx 走标准库而不是外部 OCR；OCR 子进程失败时抛出可读的
+      RuntimeError 而不是让界面卡死。
+    how: >
+      tools/translator/core.py 负责语言判定、分块计数、文件转 Markdown 与翻译，
+      app.py 用 Gradio 接线并驱动进度条。
+    why_this_way: >
+      docx 刻意不走 OCR 管线（代码与测试都锁了这条路径）——它本来就是 zip 里的 XML，
+      用标准库解析比跑一遍 OCR 又快又准。
+    code:
+      - file: tools/translator/core.py
+        symbol: translate_file
+        lines: "383-397"
+      - file: tools/translator/core.py
+        symbol: docx_to_markdown
+        lines: "326-355"
+      - file: tools/translator/app.py
+        symbol: build_ui
+        lines: "117-156"
+    verify:
+      command: python -m pytest tools/translator/tests/test_core.py
+      pass: "exit 0"
+    future: >
+      GUI 是这套翻译能力最直接的展示面，也是调试翻译质量最快的入口。
+
+  # ─────────────────────────── 运维与分发 ───────────────────────────
+  - id: I-037
+    step: 别人装上就能用
+    name: "用 rclone 在多台设备之间同步数据文件"
+    status: done
+    needs: [I-001]
+    what: >
+      一个集中的 rclone 同步入口：push / pull / status / bootstrap / config，
+      按类目（summarize / website / research / benchmark / backups）分别同步，
+      配置与 tokens 单独处理。
+    why: >
+      日报的原料和产物分散在多台机器上，而 outputs/ 是 gitignore 的——git 帮不上忙。
+    expected: >
+      未配置远端时给出可读的提示而不是静默成功；--dry-run 只列出将要传的文件；
+      rclone 失败时明确告警（历史上曾经静默失败过）。
+    how: >
+      scripts/sync.py 用 config.json 的 sync 节解析远端与类目，
+      sync_dirs / sync_files 分别处理目录与单文件类目。
+    why_this_way: >
+      提交 903cf1a 的信息记录了促成这轮修补的三个现实 bug：配置文件路径错、
+      rclone 失败没有告警、Windows 的 CRLF——所以现在失败必须显式报出来。
+    code:
+      - file: scripts/sync.py
+        symbol: sync_dirs
+        lines: "240-275"
+      - file: scripts/sync.py
+        symbol: cmd_push
+        lines: "374-386"
+      - file: scripts/sync.py
+        symbol: cmd_bootstrap
+        lines: "414-490"
+    verify:
+      command: python -m pytest scripts/tests/test_sync.py
+      pass: "exit 0"
+    future: >
+      新工具产出的新目录只要进类目表就自动被同步。
+
+  - id: I-038
+    step: 别人装上就能用
+    name: "一个带密码保护的网页，总览所有项目的进度"
+    status: doing
+    needs: [I-016, I-037]
+    what: >
+      python scripts/sync.py --category dag 会生成跨项目的 DAG 总览页（每个项目一簇
+      milestone 级节点、点开看五问），用 StatiCrypt 加密后放进站点的 static/dag/，
+      再走现有发布链发到 /dag/。
+    why: >
+      多个项目、多台设备之间切换时需要一眼看到全局进度和下一步；但这些内容大多是 dev 的、
+      不适合公开，而 tzj2006.github.io 是公开的用户站。
+    expected: >
+      未输密码时看不到任何图内容；输对能看到 overview；产物落在
+      tools/website/static/dag/ 并经现有 update 链发布到 /dag/，不新建仓库；
+      口令走环境变量、不进 git。
+    how: >
+      scripts/sync.py 的 sync_dag 调 ../ai-companion/scripts/build-dag-site.ts stage
+      生成并加密，落进站点 static，再触发 website 发布。
+    why_this_way: >
+      docs/ecl/cross-project-live-dag.yaml 的 DEC-001 撤销了「push 到私有 repo gadget-dag」
+      的方案：gadget 已是私有仓且已有 website→Pages 的发布链，新开一个仓是多余的；
+      私有性改由 StatiCrypt + 错 3 次跳 404 承担，并明确记录这是「中等安全」不是机密级。
+    code:
+      - file: scripts/sync.py
+        symbol: sync_dag
+        lines: "526-608"
+      - file: scripts/sync.py
+        symbol: DAG_STAGE_DIR
+        lines: "56-57"
+    verify:
+      manual: "设好 STATICRYPT_PASSWORD 后跑 python scripts/sync.py --category dag --dry-run，确认列出将生成的 dag 产物与将发布的路径且退出码为 0；实跑一次后用浏览器打开站点 /dag/，确认先出现密码框、输对后能看到各项目簇。"
+      signed_off: null
+    future: >
+      本仓的 ideas/graph.yaml 一旦成型，gadget 自己也能作为一簇出现在这张总览里。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+  - id: I-039
+    step: 别人装上就能用
+    name: "新机器填一张表、跑一条命令就完成全部环境配置"
+    status: done
+    needs: [I-001, I-037]
+    what: >
+      填一张 YAML sheet（tokens/onboard.yaml），跑一次 scripts/onboard.py，
+      自动完成 SSH 配置、Claude/Codex CLI 安装与鉴权、pip extras 与 ai-companion 安装、
+      各工具 config、rclone bootstrap，最后自检。
+    why: >
+      新机器接进来要做十几件互相依赖的事，凭记忆做一遍要一小时且必然漏掉一两项——
+      而漏掉的那项通常要等到某天流水线失败才被发现。
+    expected: >
+      --dry-run 打印将要做的事而不动系统；每一步可单独用 --only 跑；
+      写入的私钥与仓库根被收紧权限；重复运行是幂等的（SSH config 段落做 upsert 而不是追加）。
+    how: >
+      scripts/onboard.py 把流程拆成 step_link / step_ssh / step_claude / step_install /
+      step_gadgets / step_sync 六步注册进 STEPS，main 按需筛选执行并汇总 StepResult。
+    why_this_way: >
+      权限收紧只做到仓库根为止（代码注释：repo root only — nothing above it is ours）——
+      脚本不去改它没创建的上层目录。
+    code:
+      - file: scripts/onboard.py
+        symbol: STEPS
+        lines: "719-757"
+      - file: scripts/onboard.py
+        symbol: step_link
+        lines: "325-357"
+      - file: scripts/onboard.py
+        symbol: main
+        lines: "758-816"
+    verify:
+      command: python -m pytest scripts/tests/test_onboard.py
+      pass: "exit 0"
+    future: >
+      加一台新机器进 ssh_hosts 的成本降到「填一行 + 跑一次」。
+
+  - id: I-040
+    step: 别人装上就能用
+    name: "一条命令快速检查每个工具还能不能正常启动"
+    status: done
+    needs: []
+    what: >
+      一条 bash scripts/smoke.sh 对所有工具跑 --help / --info / import 检查：
+      不调 LLM、不联网、不写盘；缺依赖的项标 skip 而不是 fail。
+    why: >
+      单元测试是纯 mock 的，测不到「这个 CLI 还能不能启动」。而重构最容易打断的正是
+      import 链和 argparse 接线——这类断裂在真正跑流水线前不会暴露。
+    expected: >
+      在一个只装了基础依赖的环境里跑，结果是若干 pass + 少量 skip、0 fail；
+      任何一个工具的入口 import 断了就会 fail。
+    how: >
+      scripts/smoke.sh 逐个执行只读命令，通过 grep stderr 里的 ModuleNotFoundError
+      把「缺依赖」与「真坏了」区分开。
+    why_this_way: >
+      脚本注释写明了这个区分方式（ponytail: dep-missing is detected by grepping stderr
+      for ModuleNotFoundError）——比为每个可选依赖写一次探测便宜得多。
+    code:
+      - file: scripts/smoke.sh
+        symbol: smoke
+        lines: "1-70"
+    verify:
+      command: bash scripts/smoke.sh
+      pass: "0 failed"
+    future: >
+      任何重构后先跑它，30 秒内知道有没有把某个工具的入口弄坏。
+
+  - id: I-041
+    step: 别人装上就能用
+    name: "不需要网络、GPU 或 API key 也能全部跑通的测试基线"
+    status: done
+    needs: []
+    what: >
+      每个模块自带 tests/ 目录（common/tests、scripts/tests、tools/<tool>/tests），
+      全部把模型、LLM API、子进程用 unittest.mock 打桩；没有仓库级统一 runner。
+    why: >
+      这些工具的真实依赖是 GPU、本地模型服务和外部 API。如果测试需要它们，
+      就等于没有测试——没人会在改一行 formatter 之后去开一次 Ollama。
+    expected: >
+      在没有网络、没有 GPU、没有任何 API key 的机器上，common/tests + scripts/tests +
+      各工具 tests 全绿；唯一的例外 test_daily_e2e.py 在缺少实时 Ollama 时自动 skip。
+    how: >
+      按模块就近放测试，pytest 从仓库根或 tools/ 下按路径调用；重依赖统一用
+      unittest.mock.patch 替换。
+    why_this_way: >
+      AGENTS.md 明确写了「no repo-wide runner；baseline suites are pure-mock
+      (no network/GPU/keys)」——分层调用让每个工具可以独立演进，也让 CI 不需要 GPU。
+    code:
+      - file: common/tests/test_dispatch.py
+        symbol: test_call_llm_raw_rejects_unknown_backend
+        lines: "11-15"
+      - file: tools/summarize/tests/test_daily_e2e.py
+        symbol: test_daily_aggregate_then_translate
+        lines: "69-160"
+      - file: .devcompanion/tests/char/test_char_common_pure.py
+        symbol: TestContentHash
+        lines: "25-42"
+    verify:
+      command: python -m pytest common/tests scripts/tests
+      pass: "exit 0"
+    future: >
+      这层基线是所有后续重构的安全网——没有它，改 common/ 就是赌博。
+
+  - id: I-042
+    step: 别人装上就能用
+    name: "文档中英各一份，给人读的和给 agent 读的分开写"
+    status: doing
+    needs: []
+    what: >
+      面向人的文档中英各一份：根目录 README.md / TUTORIAL.md，docs/ 下
+      README.zh.md / TUTORIAL.zh.md；面向 agent 的协议放 AGENTS.md（每个工具目录一份），
+      CLAUDE.md 只做转发。
+    why: >
+      使用者读中文更快，而开源出去要英文。两份文档如果都写成大而全，就会各自漂移；
+      而 agent 需要的是可执行的命令与硬规则，不是叙述性的教程。
+    expected: >
+      README 是简介、TUTORIAL 是分步操作，中英两侧结构一一对应；
+      每个 tools/<tool>/AGENTS.md 都能独立回答「怎么跑、怎么验证、有哪些坑」。
+    how: >
+      根 README/TUTORIAL 收总览与入口，各工具的细节留在 tools/<tool>/ 自己的文档里，
+      docs/ 存设计文档、ECL 计划与历史归档。
+    why_this_way: >
+      提交 fe94650 记录了 AGENTS.md 与 CLAUDE.md 的分工来历：把两份都重写成简明的
+      agent 指南，CLAUDE.md 改成只 @AGENTS.md 转发——避免同一套规则在两个文件里各写一遍。
+    code:
+      - file: AGENTS.md
+        symbol: agent-protocol
+        lines: "1-60"
+      - file: docs/README.zh.md
+        symbol: overview-zh
+        lines: "1-74"
+    verify:
+      manual: "对照 README.md 与 docs/README.zh.md 的目录，确认章节一一对应；随机挑一个 tools/<tool>/AGENTS.md，按里面的命令能跑通该工具的 --help 与测试。"
+      signed_off: null
+    future: >
+      文档结构稳定后，新工具接进来只要补一份 AGENTS.md 和两侧 README 的一段。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "功能已实现并在用，但只有 manual 验证 —— 按格式规则机器不能标 done，等人工签字或等 I-044 补上自动化测试。"
+  - id: I-043
+    step: 别人装上就能用
+    name: "任何人 clone 下来装上就能用的五件套工具箱"
+    status: doing
+    needs: [I-016, I-025, I-028, I-032, I-035, I-036, I-038, I-039, I-040, I-041, I-042, I-044,
+            I-052, I-053]
+    what: >
+      任何人 clone 后 pip install -e ".[all]" 就能单独使用五个工具中的任何一个；
+      分层规则（工具之间零 import、common/ 不反向依赖 tools/）不被破坏；
+      向后兼容的 re-export shim 保持存活；GPL-3 已发布。
+    why: >
+      这些工具是逐个长出来的，很容易长成一坨互相 import 的泥球——那样就只有本机能跑，
+      也不可能把其中一个单独给别人用。
+    expected: >
+      在一台干净机器上 pip install -e ".[all]" 后冒烟检查全部通过（缺可选依赖的项 skip）；
+      grep 不到任何 tools/<a> 里 import tools/<b> 的调用；
+      research/cache.py 与 research_scout.py 这两个 shim 仍可 import。
+    how: >
+      pyproject.toml 按工具切分 optional-dependencies extras（translator 刻意不在 all 里），
+      共享能力一律进 common/，跨工具协作只走 subprocess 或读配置。
+    why_this_way: >
+      AGENTS.md 把 hub-and-spoke 写成硬规则并点名了两个必须存活的 shim；
+      translator 不进 [all] 是因为它拉 gradio 这一整套 GUI 依赖，
+      而绝大多数使用场景（服务器、cron）根本不需要 GUI。
+    code:
+      - file: pyproject.toml
+        symbol: optional-dependencies
+        lines: "1-80"
+      - file: AGENTS.md
+        symbol: architecture-rules
+        lines: "30-52"
+    verify:
+      command: bash scripts/smoke.sh
+      pass: "0 failed"
+    future: >
+      一旦分层守住，把其中任何一个工具单独拆出去发布都只是搬目录的事。
+
+  - id: I-044
+    step: 别人装上就能用
+    name: "给四块没有测试覆盖的代码补齐单元测试——下面七件小事全部做完才算数"
+    status: todo
+    needs: [I-054, I-055, I-056, I-057, I-058, I-059, I-060]
+    what: >
+      一个汇合点，它本身不写任何代码。下面挂着一个量具节点（把「被测到了多少」量成数字
+      并给每块定下限）和六个区域节点（跑分账本、跑分硬件探测、学者画像、论文洞察与引用、
+      周月报渲染、媒体压缩）。七个全部做完，「有几块代码从来没人测过」这件事才算解决。
+    why: >
+      docs/reports/phase0-baseline.md 明确把这几块列为 Phase 0 没有解决的问题：
+      冒烟检查只能证明「能启动、能解析」，证明不了「算得对」。benchmark 是最极端的一个——
+      它是唯一一个连 tests/ 目录都没有的工具，而它写的是一份永不覆盖的累积账本。
+    expected: >
+      七个子节点全部 done；四块区域各自的覆盖率都不低于 I-054 定下的那条线；
+      补完后在没有 GPU、没有网络、没有任何 API key 的机器上各套件仍然全绿。
+    how: >
+      按现有约定就近建 tools/benchmark/tests/ 等目录，用 unittest.mock 打桩 torch 与
+      文件系统，优先锁「失败时的降级路径」而不是happy path。
+      待覆盖面不需要重新盘点：.devcompanion/tests/ 下已有 474 个按函数生成的
+      *.test.py 骨架（每个只有 assert False，pytest 默认不收集），文件名即
+      「模块_函数」，可以直接当作未覆盖函数的清单来挑优先级。
+      真正要写的测试放进各模块的 tests/，不要写进那批骨架里。
+    why_this_way: >
+      docs/reports/phase0-baseline.md 的 Phase 3 记录过一次相关判断：per-period 渲染器
+      因为「没有单元覆盖 → 回归风险高」而被拒绝合并——也就是说缺测试本身正在阻止重构。
+    future: >
+      补上之后，被 Phase 3 因风险而搁置的那几处去重才有可能真的做。
+    log:
+      - date: "2026-09-01"
+        by: ccthink
+        note: >
+          被拆成 I-054（量具与门槛）+ I-055…I-060（六个区域），本节点退休为汇合点。
+          原来的 code 与 verify 指向的是具体的测试文件，那现在是子节点各自的事，已移除；
+          汇合点自己的 verify（一条同时跑四块并检查门槛的命令）在本轮第 5 步补。
+          I-043 对本节点的依赖一字未动。
+
+  - id: I-045
+    step: 别人装上就能用
+    name: "把仓库拆成公开的工具代码仓和私有的个人数据仓"
+    status: blocked
+    needs: [I-043]
+    what: >
+      把通用工具代码（summarize / research / benchmark / website / common）放公开仓，
+      把 tokens、个人测试内容、DAG 进度数据、私人笔记留在私有仓，两仓之间用 sync 做桥。
+    why: >
+      现在整个 gadget 是私有仓，所以工具代码也没法给别人用；
+      而直接公开会连带泄露 tokens 与私人内容。
+    expected: >
+      公开仓里 grep 不到任何 secrets 与私人内容（包括 git 历史）；
+      私有内容仍能被本地流水线正常读到；DAG 数据不出现在公开仓里。
+    how: >
+      docs/ecl/cross-project-live-dag.yaml 的 deferred_ideas 已经对齐了拆分边界，
+      下一步是单独一轮讨论定 git 历史清理策略、两仓同步桥与 CI。
+    why_this_way: >
+      同一份文档记录了顺序上的理由：当前 gadget 私有，所以「先部署 DAG、拆仓单独再做」
+      是最安全的；而拆分前必须先从 git 历史里清理曾提交过的私人内容与 secrets，
+      否则公开仓一发布就泄露。
+    code:
+      - file: docs/ecl/cross-project-live-dag.yaml
+        symbol: deferred_ideas.IDEA-split-repos
+        lines: "333-349"
+    verify:
+      manual: "在公开仓的完整 git 历史上跑一次 secret 扫描（如 gitleaks），确认零命中；再在私有仓侧确认流水线仍能读到 tokens 与 DAG 数据。"
+      signed_off: null
+    future: >
+      拆完之后这些工具才真的可以被别人 clone 来用，而不只是被 pip install 到本机。
+    log:
+      - date: "2026-08-24"
+        by: ccscan
+        note: "记录为 blocked：docs/ecl/cross-project-live-dag.yaml 里用户已决定「先部署，拆仓单独再做」，硬阻塞是 git 历史清理未做。"
+      - date: "2026-08-24"
+        by: ccscan
+        note: >
+          用户确认：这是真实但推迟的工作，不是死代码，也不是终点。保持 blocked。
+          check 会一直把它报成「no endpoint depends on this」——这是预期的，
+          它挂在 I-043 之后，只是没有哪个终点需要它。
+
+  # ─────────────────── 补测试（ccthink 2026-09-01，拆自 I-044） ───────────────────
+  - id: I-054
+    step: 别人装上就能用
+    name: "把「这块代码被测到了多少」量成一个数字，并给每块各定一条不许跌破的下限"
+    status: todo
+    needs: [I-041]
+    what: >
+      给仓库接上覆盖率量具，并为下面六个区域各自定一条覆盖率下限：跑分账本与计时、
+      跑分硬件探测、学者画像、论文洞察与引用、周月报渲染、媒体压缩。门槛挂在模块集合上
+      而不是工具目录上，并给出一条能跑出这个数字、低于门槛就失败的命令。
+    why: >
+      验收标准选的是覆盖率数字，那就得先有量具，否则每一块的完成判据都无从谈起。
+      门槛必须按块定：tools/benchmark/ 里 report.py 一个文件就有 600 行图表与网页生成，
+      是全仓最不值得测的代码之一——按工具目录定一个总数，它要么把数字拖到没人愿意看，
+      要么反过来逼人去测不该测的东西。
+    expected: >
+      一条命令能对指定的模块集合跑出覆盖率百分比，低于门槛时退出码非 0；
+      门槛值有一个明确的存放位置，改门槛不用改任何测试；
+      这条命令在没有 GPU、没有网络、没有任何 API key 的机器上能跑完。
+    how: null
+    why_this_way: null
+    future: >
+      有了量具，「这次重构有没有把覆盖打薄」变成一个能当场回答的问题。
+    log:
+      - date: "2026-09-01"
+        by: ccthink
+        note: "created —— 拆自 I-044，是其余六个区域节点的前置（它们的验收命令里带着门槛）。"
+
+  - id: I-055
+    step: 别人装上就能用
+    name: "用测试钉住跑分结果只会往账本里追加、绝不重写已经存在的行"
+    status: todo
+    needs: [I-054]
+    what: >
+      给 tools/benchmark/ 建立它的第一个 tests/ 目录，覆盖计时与结果落盘两件事：
+      预热加中位数、去掉异常值的统计行为，以及把一次跑分结果写进 CSV 时的追加语义。
+    why: >
+      那份 CSV 是跨硬件、跨时间累积的账本，约定永不重写、永不去重，
+      而 benchmark 是唯一一个连 tests/ 目录都没有的工具。哪次重构把追加写成了覆盖，
+      历史数据当场消失并且找不回来——这个目录和那份 CSV 都不在版本控制的保护范围里。
+    expected: >
+      连续两次落盘之后，文件里的行数是两次之和、旧行逐字不变；
+      输出目录不存在时会被建出来而不是抛错；
+      统计在混进一个异常慢的样本时仍然给出稳定的中位数。
+    how: null
+    why_this_way: null
+    future: >
+      账本的语义被钉住之后，才敢去动那个已经攒了多台机器数据的结果文件的格式。
+    log:
+      - date: "2026-09-01"
+        by: ccthink
+        note: "created —— 拆自 I-044。图表与排行榜生成（report.py 600 行）不在本轮范围。"
+
+  - id: I-056
+    step: 别人装上就能用
+    name: "用测试钉住没有显卡或没装深度学习框架的机器上跑分会跳过而不是崩溃"
+    status: todo
+    needs: [I-054]
+    what: >
+      覆盖硬件探测与精度档跳过：缺少深度学习框架时仍能回答「这台机器上有什么硬件」，
+      遇到当前后端不支持的数值精度档时跳过并说明原因，以及按显存大小自动换算矩阵规模。
+    why: >
+      这段代码的正确行为几乎全是降级，而降级路径恰恰是最不会在作者本机上被触发的那部分——
+      作者的机器有显卡也有完整的框架。别人拿到一台没有显卡的服务器上跑，炸掉的是这里，
+      而作者永远看不到。
+    expected: >
+      没有装框架时探测仍返回结果，而不是抛出找不到模块的错误；
+      不支持的精度档被跳过并带上原因，不中断其余精度档；
+      显存越大换算出的矩阵越大，且显存极小时不会给出非法尺寸。
+    how: null
+    why_this_way: null
+    future: >
+      降级路径被钉住之后，再加一家新厂商的后端就不必担心把旧的三家弄坏。
+    log:
+      - date: "2026-09-01"
+        by: ccthink
+        note: "created —— 拆自 I-044。"
+
+  - id: I-057
+    step: 别人装上就能用
+    name: "用测试钉住学者画像在抓不到主页、遇到内网地址时的退路"
+    status: todo
+    needs: [I-054]
+    what: >
+      覆盖学者画像这一支：影响力分级的打分换算、按共著模式给学生候选人排序，
+      以及抓取个人主页时对内网地址、非网页协议和危险重定向的拒绝。
+    why: >
+      主页地址来自大模型的输出和第三方数据，是一条跟着不可信输入走的网络请求——
+      这类防护没有测试就等于没有，因为它平时永远不触发。而分级和学生推断是纯计算，
+      改一个系数不会报错，只会悄悄给出不同的结论。
+    expected: >
+      内网地址、本机地址、非网页协议、以及重定向到内网的地址全部被拒绝；
+      抓不到主页时退回纯共著推断并给出结果，而不是整个失败；
+      同一批输入的分级结果稳定，边界值落在预期的那一档。
+    how: null
+    why_this_way: null
+    future: >
+      防护被钉住之后，才敢让这条链去抓更多来源不明的地址。
+    log:
+      - date: "2026-09-01"
+        by: ccthink
+        note: "created —— 拆自 I-044。"
+
+  - id: I-058
+    step: 别人装上就能用
+    name: "用测试钉住论文全文分析和引用查询在缓存命中与依赖缺失时的行为"
+    status: todo
+    needs: [I-054]
+    what: >
+      覆盖论文洞察与引用这一支：全文和分析结果按内容缓存后第二次不重下不重算，
+      解析 PDF 的库缺失时降级而不是崩，匹配不到审稿记录时跳过那一段但其余照常产出，
+      以及引用查询把「谁引了它」和「它引了谁」两栏都组织出来。
+    why: >
+      这一支每跑一次都要下载全文并发起多次大模型调用，是全仓最贵的路径之一。
+      缓存的命中判断一旦错了，代价是几十分钟和一堆重复下载，而且不会报错。
+      解析 PDF 的库是可选依赖，缺了它的机器上这条路必须还能走。
+    expected: >
+      同一篇论文第二次分析时不发起下载、不发起模型调用；
+      解析 PDF 的库不可用时给出降级结果而不是抛异常；
+      匹配不到审稿记录时报告里少那一段、其余段落齐全；
+      引用查询同时给出两栏而不是只有一栏。
+    how: null
+    why_this_way: null
+    future: >
+      贵路径的缓存语义被钉住之后，才敢把分析扩到更多论文上。
+    log:
+      - date: "2026-09-01"
+        by: ccthink
+        note: "created —— 拆自 I-044。"
+
+  - id: I-059
+    step: 别人装上就能用
+    name: "用测试钉住周报和月报在字段缺失时降级渲染而不是整个崩掉"
+    status: todo
+    needs: [I-054]
+    what: >
+      覆盖周报与月报的渲染：日报字段缺失、类型不是预期的那种、本该是列表的地方混进裸字符串时，
+      渲染出一份少一段但完整的报告而不是抛错；以及统计汇总在多台设备、多个来源上的合并结果。
+    why: >
+      周月报的输入是本地模型生成的日报，而本地模型的输出会跑偏——这是仓库里已经反复付过
+      代价的事实。渲染崩掉意味着那一周的报告直接没有；更糟的是悄悄少算，
+      因为没人会去逐条核对一份看起来正常的月报。这一块还有一笔明账：
+      per-period 渲染器的去重改动曾经因为「没有单元覆盖」被拒绝合并。
+    expected: >
+      日报缺任意一个被消费的字段时渲染不抛异常，缺的那段明确缺席而不是错位成空白；
+      本该是列表的字段里出现裸字符串时被容纳；
+      多台设备的用量按来源汇总的结果与逐条相加一致。
+    how: null
+    why_this_way: null
+    future: >
+      降级行为被钉住之后，被搁置的那几处渲染器去重才有可能真的做。
+    log:
+      - date: "2026-09-01"
+        by: ccthink
+        note: "created —— 拆自 I-044，直接对应 Phase 3 那次因缺覆盖而被拒的合并。"
+
+  - id: I-060
+    step: 别人装上就能用
+    name: "用测试钉住只有真正改动过的图片和视频才会被重新压缩"
+    status: todo
+    needs: [I-054]
+    what: >
+      覆盖发布流水线的媒体增量判据与压缩调用：以上次构建的时间为界挑出该压缩的文件，
+      没有新增时零工作量通过，以及压缩工具没装在这台机器上时的行为。
+    why: >
+      这个判据错一边是几十分钟的处理器时间白烧，错另一边是把未压缩的大图发到了公开站上——
+      两种错都不会报错。而它依赖的两个压缩程序是外部命令，不是每台机器都装了。
+    expected: >
+      两次构建之间没有新增媒体时，挑出的待压缩文件为空；
+      新增一个文件后它出现在待压缩列表里，而更早的文件不出现；
+      外部压缩命令不存在时给出可读的失败，而不是静默跳过。
+    how: null
+    why_this_way: null
+    future: >
+      增量判据被钉住之后，同样的「按上次构建时间找增量」可以放心扩到别的重型构建步骤。
+    log:
+      - date: "2026-09-01"
+        by: ccthink
+        note: "created —— 拆自 I-044。"
+
+  # ─────────────────────── 本地模型的可换性 ───────────────────────
+  - id: I-051
+    step: 报告质量与换模型
+    name: "「这次该用哪个聊天模型」只由一个函数决定"
+    status: todo
+    needs: []
+    what: >
+      common/llm.py 里新增 resolve_chat_model()，把「本次调用该用哪个 Ollama tag」这件事
+      收成一个函数，优先级为 OLLAMA_MODEL > OPENAI_MODEL > config 的 llm.chat_model >
+      DEFAULT_OLLAMA_CHAT_MODEL。抽象名（sonnet/opus/haiku）继续被忽略——它们对 Ollama
+      没有意义。原来的 _ollama_model 保留为 shim。
+    why: >
+      今天这件事散在两处：_ollama_model 只有两级 env 回退，根本没有 config 这一级；
+      config 是靠 tools/summarize/config.py 的 _ENV_FROM_CONFIG 把 model 桥接成
+      OLLAMA_MODEL 环境变量绕进来的。结果是「换个模型」要先知道这条桥的存在，
+      而 common/ 自己读不到配置。上一次换模型（qwen3.6 → qwen3.8）牵出三个必修 bug，
+      改动散在好几个文件——想对比几个本地模型谁写的日报更好，不该每次都是一次重构。
+    expected: >
+      四级优先级逐级生效，且 env 为空串时不会吃掉下一级；
+      config 里只写 llm.chat_model（不设任何环境变量）就能改掉全局聊天模型；
+      翻译那两个旋钮（GADGET_TRANSLATION_MODEL / OLLAMA_TRANSLATION_MODEL）
+      既不被这个函数读取，也不被它改写——聊天和翻译仍是两个独立的开关。
+    how: >
+      照抄 common/translation/frontmatter.py:244 的 resolve_review_model() 的形状：
+      先读 env（strip 后判空），再在函数体内 `from common.config import load_section`
+      读 llm 段，最后落到模块常量。summarize 的老路径（apply_env_from_config 用
+      setdefault 灌出 OLLAMA_MODEL）天然落在第 1 级，不需要为它单开一个回退级。
+    why_this_way: >
+      Web 调研的主流答案是上 pydantic-settings / dynaconf / confuse，这里不采纳：
+      为了一个模型名引入依赖是纯负债，而且要重写 common/config.py 的整套 section 语义。
+      本仓已经有一个能用且在用的三级回退惯例（resolve_review_model），抄它就是最短路径。
+      load_section 用函数内局部 import 而不是模块顶层，同样是抄它——
+      common/config.py 与 common/llm.py 互不在顶层依赖，这条不能破。
+      优先级次序 CLI > env > file > default 与 AGENTS.md 已写明的解析规则一致，不新造。
+    code:
+      - file: common/llm.py
+        symbol: resolve_chat_model
+    verify:
+      command: python -m pytest common/tests/test_llm_model.py
+      pass: "exit 0"
+    future: >
+      有了唯一解析点，「今天用哪个模型」变成一个可观测、可打日志、可在报告里落款的值；
+      日后想按任务类型分模型（长 merge 用大的、frontmatter 复核用小的）只是多一个参数。
+
+  - id: I-052
+    step: 报告质量与换模型
+    name: "默认聊天模型换成 gemma4:26b，全仓只保留这一处硬编码的默认模型名"
+    status: todo
+    needs: [I-051]
+    what: >
+      DEFAULT_OLLAMA_CHAT_MODEL 从 qwen3.8:27b 改成 gemma4:26b；
+      并让 common/translation/frontmatter.py 的 DEFAULT_REVIEW_MODEL 跟随聊天默认，
+      删掉仓库里的第二个硬编码模型名。同步 config.example.json、
+      docs/guides/summarize-local-llm.md、docs/ecl/gadget-features.yaml
+      以及 common/tests/test_translation_review.py 里钉住 "qwen3.8" 的断言。
+    why: >
+      硬编码的 qwen3.8:27b 本机根本没 pull（ollama list 只有 qwen3.8-sum:latest），
+      它一直被 config.json 的 summarize.model 盖住——换机器或 config 丢了就炸。
+      更糟的是 DEFAULT_REVIEW_MODEL = "qwen3.8" 同样没 pull，所以 resolve_review_tag()
+      每次都返回 None：frontmatter 复核目前是静默关闭的，没人知道。
+      两个默认名各钉各的，就是「默认值会腐烂」的结构性原因。
+    expected: >
+      DEFAULT_OLLAMA_CHAT_MODEL == "gemma4:26b"；
+      DEFAULT_REVIEW_MODEL 与聊天默认同源——改一个另一个跟着变，
+      全仓 grep 不到第二个硬编码的聊天默认名；
+      frontmatter 复核不再被静默跳过（resolve_review_tag 能解析出一个真实存在的 tag）。
+    how: >
+      翻常量，把 frontmatter 的常量改为从 common.llm 取值，然后把上面列出的
+      文档 / 示例配置 / 测试断言一起改掉。测试断言面是这个节点里最琐碎的部分（6 处）。
+    why_this_way: >
+      选 gemma4:26b 而不是 gemma4:12b，是因为它已经在本机（18 GB，Q4_K_M，25.2B，
+      256K 原生上下文），且实测跑通了 summarize 依赖的 json_schema 约束解码。
+      实测还确认了一件本来最担心的事：仓库现有的 reasoning_effort=none 对 gemma4
+      不但兼容而且必需——同一个 schema 请求，带 none 是 16.8s 合法 JSON 三字段齐全，
+      省略它是 35.1s 且 content 为空（thinking 烧光预算）。这与 frontmatter.py:322
+      早就写下的 qwen3.x 失败模式完全一致，所以换模型不需要动任何 reasoning 代码。
+      网上 ollama#15540 报的「reasoning_effort=none 破坏 gemma4 schema」在本机这个
+      build/量化上不复现，方向反而相反——所以按实测走，不按 issue 走。
+      复核模型跟随聊天默认而不是各钉各的，正是「代码里再也找不到第二个硬编码默认名」；
+      想给复核单独用小模型的人设 config 的 translation.review_model 即可，那一级本来就在。
+    code:
+      - file: common/llm.py
+        symbol: DEFAULT_OLLAMA_CHAT_MODEL
+      - file: common/translation/frontmatter.py
+        symbol: DEFAULT_REVIEW_MODEL
+    verify:
+      command: python -m pytest common/tests/test_translation_review.py common/tests/test_llm_model.py
+      pass: "exit 0"
+    future: >
+      默认名收成一个之后，再换下一个模型就只剩「改一行 + 跑一天日报肉眼对比」，
+      而不是一次跨文件重构。这让「试一个新本地模型」变成一件便宜的事。
+
+  - id: I-053
+    step: 报告质量与换模型
+    name: "模型没 pull 时立刻报错并列出可用 tag"
+    status: todo
+    needs: [I-051]
+    what: >
+      解析出聊天 tag 之后加一次 preflight：向本地 Ollama 要一次 /api/tags，
+      要的模型不在里面就直接抛 RuntimeError，消息里带上请求名、ollama pull 提示
+      和本机全部可用 tag。Ollama 不可达时**不拦**。
+    why: >
+      现在写错一个 tag 会一路走到 openai SDK 那层，跑到一半才炸出一个不知所云的错误。
+      对「快速对比几个模型」这件事来说，这是最直接的摩擦——而默认值已经是一个
+      没 pull 的 tag，所以这条路径不是假想，是当前状态。
+    expected: >
+      tag 列表里没有目标 → 抛 RuntimeError，消息含请求名、ollama pull、可用 tag 列表；
+      有目标（含 bare 名匹配 :latest 的情况）→ 不抛；
+      Ollama 不可达（_ollama_tags 返回 None）→ 不抛，交给现有的连接错误路径。
+    how: >
+      复用 common/engine/ollama.py 已有的 _ollama_tags；把 frontmatter.py 的
+      _match_review_tag 提到 common/engine/ollama.py 作共享 helper（frontmatter 留
+      re-export shim），报错文案照抄 OllamaEngine.load() 的那段。
+      engine 的 import 放在函数体内——import common.engine.ollama 会触发
+      common/engine/__init__.py（实测 85ms，拉进了 transformers 后端模块但没有 torch），
+      而 common/llm.py 是到处都在 import 的模块，不该为此变慢。
+    why_this_way: >
+      三份 tag 探测代码已经存在两份（engine 的 _model_in_tags、frontmatter 的
+      _match_review_tag），不该有第三份——所以是提取共享，不是新写。
+      策略上刻意与复核路径不同：复核没 pull 就静默跳过（它是可选增强），
+      聊天没 pull 必须炸（它是全部工作）。同一份探测代码，两种策略。
+      「不可达时不拦」是为了不把「Ollama 服务没起」误报成「模型没 pull」——
+      两个原因需要两种修法，混成一条消息会把人引到错的方向。
+      提取时 frontmatter 侧留 shim，是因为 AGENTS.md 把「向后兼容 re-export shim
+      必须存活」写成了硬规则。
+    code:
+      - file: common/llm.py
+        symbol: _preflight_ollama_model
+      - file: common/engine/ollama.py
+        symbol: match_tag
+    verify:
+      command: python -m pytest common/tests/test_llm_model.py
+      pass: "exit 0"
+    future: >
+      有了「本机有哪些 tag」这个已经被调用的探测点，日后想做「列出可选模型」
+      或「自动降级到已 pull 的同族小模型」都只是换一个失败分支。
+
+  # ─────────────────────── 报告质量优化（ccthink 2026-08-26） ───────────────────────
+  - id: I-046
+    step: 报告质量与换模型
+    name: "先定下报告质量的评分标准，并留存改动前的基线样本"
+    status: todo
+    needs: []
+    what: >
+      一份报告质量 rubric（G-Eval 四维 coherence/consistency/relevance/fluency +
+      自定义「可复盘性」维 + 稳定性维：节覆盖数/空段率/重复率），加一组用现行 prompt
+      重新生成的基线样本存档：约 3 个日报日（含 e2e 参考日 2026-06-26）、2 个周、1 个月，
+      thinking on/off 各跑一遍（--no-cache），落 outputs/reports/baseline/（gitignored）；
+      附一页现状缺陷清单（哪些板块空/泛/重复）。
+    why: >
+      不定标准，「更好」就是感觉；不留基线，改完无从对照。且 config.json 当前
+      reasoning_effort=none 是实测会让报告从 8-9/9 节掉到 6/9 节的减配模式——
+      这个变量不先控制住，会把 thinking 的锅算到 prompt 头上。
+    expected: >
+      rubric 文档存在且用户认可维度与锚点描述；baseline 目录里每个样本日期有
+      thinking on/off 两版 json+md；缺陷清单指名道姓列出现状问题。
+    how: >
+      rubric 写成 markdown，借 G-Eval 骨架（arXiv 2303.16634）加自定义维度；
+      基线用现有 CLI 跑（python -m summarize daily merge --date … --no-cache 等），
+      不写新代码；缺陷清单人工读样本得出。
+    why_this_way: >
+      G-Eval 是摘要评估的标准骨架，自定义「可复盘性」维补上「自己回顾有没有用」
+      这个真正的目标；用现有 CLI 而非写评估脚本——一次性工作不值得自动化（ponytail）。
+    code:
+      - file: docs/guides/report-quality-rubric.md
+        symbol: rubric
+    verify:
+      manual: "打开 docs/guides/report-quality-rubric.md，维度与锚点描述认可；outputs/reports/baseline/ 下每个样本日期有 thinking on/off 两版 json+md；缺陷清单非空。"
+      signed_off: null
+    future: >
+      rubric 之后可用于任何新报告种类的验收；缺陷清单直接喂给 I-047 的结构设计。
+    log:
+      - date: "2026-08-26"
+        by: ccthink
+        note: "created — 优化 summarize 全链路 prompt 计划的第 1 步。"
+
+  - id: I-047
+    step: 报告质量与换模型
+    name: "重新设计日报、周报、月报各自的板块结构"
+    status: todo
+    needs: [I-046]
+    what: >
+      决定日报/周报/月报各自的板块集合与条目格式，产出三份新 JSON 结构定义
+      （逐字段 description + 枚举值）+ 与旧结构的字段映射表（覆盖 _REPORT_SIGNAL_KEYS、
+      compute_weekly_statistics 消费的日报字段、format_reports_for_llm 剥离表的迁移说明）。
+      纯设计决策，不写代码。
+    why: >
+      prompt、tool schema、渲染器、抢救层全部从结构派生；结构不先定，
+      后面每步都在流沙上改。用户明确要求可以增删板块、换叙事方式。
+    expected: >
+      设计文档过用户评审；每层顶层字段数不多于现状（本地路径全 required，字段=成本）；
+      无形状像整份报告的子对象（daily_overview 逃逸教训）；概览字段排最前
+      （左到右生成）；条目格式统一为「做了什么+为什么重要+结果」变体；
+      日报保留 weekly statistics 需要的字段或同时给出 stats 代码改法。
+    how: >
+      基于 I-046 缺陷清单 + brag-document 条目骨架（Julia Evans / Pragmatic Engineer
+      work log）+ 仓内实测约束逐层设计；和用户一轮评审定稿。
+    why_this_way: >
+      借已被大量工程师验证的复盘格式而非自创；硬约束全部来自本仓实测
+      （docs/guides/summarize-local-llm.md 的全 required 表、逃逸记录、
+      weekly_summary.py:120 的字段消费）而非猜测。
+    code:
+      - file: docs/ecl/report-structure-redesign.yaml
+        symbol: structures
+    verify:
+      manual: "用户读三份新结构定义并批准；映射表覆盖级联清单里的每一处（summarizer/formatter/weekly/monthly/tests/AGENTS.md）。"
+      signed_off: null
+    future: >
+      结构定义是 I-048/I-049 的唯一输入；未来加季度报也从这份文档延伸。
+    log:
+      - date: "2026-08-26"
+        by: ccthink
+        note: "created。"
+
+  - id: I-048
+    step: 报告质量与换模型
+    name: "按新结构重写日报的 prompt，并改好配套代码"
+    status: todo
+    needs: [I-047]
+    what: >
+      按新结构重写 SUMMARY_PROMPT、多设备变体（弃字符串 .replace() 补丁，
+      改为 builder 或双 prompt 整体替换）、CHUNK_MERGE_PROMPT（显式去重+保细节规则）；
+      _daily_tool_schema 逐字段 description + 枚举；同步 _REPORT_SIGNAL_KEYS /
+      _renest_overview / _normalize_report / formatter.py 渲染与 _LIST_FIELD_KEY；
+      日报最终缓存加 REPORT_SCHEMA_VERSION（进缓存 meta，不匹配视为 miss）；
+      prompt 加 level/importance 分布配额与反空话指令。
+    why: >
+      日报是全链路源头——周/月报的输入就是日报 JSON。现行 prompt 字段说明全是
+      占位符式空话、schema 裸字段名（description 是实测有效的嵌入式微 prompt，
+      白送的提升空间）；日报最终缓存无哈希校验，改 prompt 后旧缓存会静默冒充新产出。
+    expected: >
+      新 prompt 生成的日报在 rubric 上优于基线；单设备/多设备两分支都有测试锁住；
+      改 prompt 后重跑不踩旧缓存（版本不匹配→miss）；测试套件全绿（不含 e2e）。
+    how: >
+      措辞借 Chain of Density 密度理念（单 pass）+ 仓内 INSIGHT_ANALYSIS_PROMPT 的
+      inline e.g. 风格 + SCREENING_PROMPT 的 20-40% 配额模式；schema description
+      写成微 prompt、概览字段前置；缓存版本号复用 save/load_period_cache 的
+      meta 模式（period_report.py:186-213）。
+    why_this_way: >
+      全部手法来自已验证来源（仓内先例 + 文献），不发明新机制；保留
+      _finalize_report 重试与抢救层——它们挡的是采样随机性，prompt 再好也需要；
+      不引入 LLM 自查节点（frontmatter 复核模式可借但 YAGNI，记 future）。
+    code:
+      - file: tools/summarize/summarizer.py
+        symbol: SUMMARY_PROMPT
+      - file: tools/summarize/formatter.py
+        symbol: generate_markdown
+      - file: tools/summarize/daily_merge.py
+        symbol: cmd_merge
+    verify:
+      command: cd tools && python -m pytest summarize/tests
+      pass: "exit 0"
+    future: >
+      builder 化的多设备 prompt 让后续措辞迭代不再有静默失效风险；
+      缓存版本机制可推广到任何「prompt 变了要重算」的缓存点。
+    log:
+      - date: "2026-08-26"
+        by: ccthink
+        note: "created。"
+
+  - id: I-049
+    step: 报告质量与换模型
+    name: "按新结构重写周报和月报的 prompt，并改好配套代码"
+    status: todo
+    needs: [I-047, I-048]
+    what: >
+      按新结构重写 WEEKLY_SUMMARY_PROMPT / WEEKLY_MERGE_PROMPT /
+      MONTHLY_SUMMARY_PROMPT / MONTHLY_MERGE_PROMPT 与两个 tool schema
+      （逐字段 description + 枚举）；compute_weekly_statistics / compute_statistics
+      适配新日报字段；format_reports_for_llm 剥离表更新；两层 markdown 渲染器重写；
+      compute_source_hash 并入 schema 版本号（修周/月缓存不含 prompt 的失效 bug）。
+    why: >
+      周/月报是用户实际回顾时读的层（日报太多不会天天回看）；
+      其缓存 key 只哈希日报内容——只改周/月 prompt 时缓存完全不失效，
+      不修的话验证阶段会拿旧结果冒充新 prompt 的产出。
+    expected: >
+      周报读完能回答「这周重心在哪/下周该干嘛」，月报能回答「模式和趋势」，
+      rubric 优于基线；只改周/月 prompt 重跑能真正触发重算；测试套件全绿。
+    how: >
+      merge prompt 显式加「识别重复条目并合并、保留具体细节不许上抽象层」
+      （层级归并文献的两大实证失败模式）；importance 阈值与配额随新结构重定；
+      渲染器降级行为沿用 test_offschema 的三态兜底模式。
+    why_this_way: >
+      依赖 I-048 因为周报输入=日报 JSON，级联顺序不可倒；merge 规则来自
+      LLM×MapReduce / BooookScore 的实证失败模式而非拍脑袋。
+    code:
+      - file: tools/summarize/weekly_summary.py
+        symbol: WEEKLY_SUMMARY_PROMPT
+      - file: tools/summarize/monthly_summary.py
+        symbol: MONTHLY_SUMMARY_PROMPT
+      - file: tools/summarize/period_report.py
+        symbol: compute_source_hash
+    verify:
+      command: cd tools && python -m pytest summarize/tests
+      pass: "exit 0"
+    future: >
+      季度/年度层级复用同一套结构与 merge 规则；source_hash 版本化让
+      后续任何 prompt 迭代都能正确失效缓存。
+    log:
+      - date: "2026-08-26"
+        by: ccthink
+        note: "created。"
+
+  - id: I-050
+    step: 报告质量与换模型
+    name: "新旧报告逐项对照打分，用户认可签字后才算完成"
+    status: todo
+    needs: [I-046, I-048, I-049]
+    what: >
+      用 I-046 的同一批样本日期，以新 prompt 重新生成（--no-cache，thinking 模式
+      与基线对齐），按 rubric 逐维人工对照打分，写一页对照结论；跑一次真实 e2e
+      （test_daily_e2e.py，固定日 2026-06-26，需活 Ollama）；依据对照结果定夺
+      config.json 的 reasoning_effort 最终取值并记录理由；用户读新报告签字。
+    why: >
+      这是「质量更好」的唯一算数判据——报告是给用户自己复盘用的，
+      用户本人对照读过认可才算数。没有这步，前面全部是自嗨。
+    expected: >
+      对照文档里每个样本每个维度新旧分数并列；e2e 通过；
+      reasoning_effort 决策落进 config 并记录理由；用户签字。
+    how: >
+      人工为主逐维打分（约 6 个样本×2 模式，人工可负担）；
+      e2e 复用现成 test_daily_e2e.py，不新写。
+    why_this_way: >
+      样本量小，搭 LLM-judge 流水线是过度工程；e2e 已有真实 Ollama 的
+      端到端断言（节数/长度/双语），直接复用。
+    code:
+      - file: docs/guides/report-quality-rubric.md
+        symbol: comparison
+    verify:
+      manual: "对照文档存在且每个样本每维有新旧分数；cd tools && python -m pytest summarize/tests/test_daily_e2e.py 在活 Ollama 下通过；用户在此 signed_off 签字后才算 done。"
+      signed_off: null
+    future: >
+      对照打分的过程本身会产出下一轮 prompt 迭代的素材——rubric 哪一维最弱，
+      下一轮就优先攻哪一维。
+    log:
+      - date: "2026-08-26"
+        by: ccthink
+        note: "created — 本计划的终点，已加入 endpoints。"

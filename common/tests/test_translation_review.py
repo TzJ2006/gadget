@@ -70,8 +70,8 @@ def test_default_review_model_follows_chat_default():
 def test_review_model_follows_served_chat_tag(monkeypatch):
     """Review runs on the chat model, so an explicitly served tag wins over the
     bare default — else Ollama loads a second runner of the same ~18GB weights."""
-    monkeypatch.setenv("OLLAMA_MODEL", "gemma4-sum")
-    assert resolve_review_model() == "gemma4-sum"
+    monkeypatch.setenv("OLLAMA_MODEL", "some-other-tag:latest")
+    assert resolve_review_model() == "some-other-tag:latest"
     # config still outranks it
     monkeypatch.setenv("GADGET_TRANSLATION_REVIEW_MODEL", "other:tag")
     assert resolve_review_model() == "other:tag"

@@ -1314,7 +1314,7 @@ features:
       - "step_verify"
 
   - feature: "Local LLM Serve Helper"
-    description: "scripts/serve_local_llm.sh sets up an Ollama variant for summarize (default gemma4:26b → gemma4-sum with large num_ctx) and can print env exports; also pulls the Hy-MT2 GGUF tag for OllamaEngine. env mode is safe (prints only); serve/setup talks to a local Ollama daemon."
+    description: "scripts/serve_local_llm.sh pulls the chat model (default gemma4:26b), asserts the loaded context_length >= MIN_CTX (65536) and fails the setup otherwise, and can print env exports. No model variant is created any more — Ollama 0.33 auto-sizes the context window. env mode is safe (prints only); setup talks to a local Ollama daemon."
     purpose: "Point --api ollama at a summarize-tuned local model without cloud keys."
     implementation:
       approach: "bash scripts/serve_local_llm.sh [setup|env]. Default TRANSLATE_MODEL=$VARIANT (the chat variant; the pull step is skipped for it). Companion scripts/wsl_local_llm_cleanup.sh exists for WSL cleanup."
