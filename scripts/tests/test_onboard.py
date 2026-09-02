@@ -6,6 +6,8 @@ Run: python -m pytest scripts/tests/test_onboard.py -q
 import json
 import subprocess
 
+import pytest
+
 import onboard
 
 
@@ -183,3 +185,46 @@ def test_install_claude_plugin_skips_when_already_listed(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "[skip] plugin already installed: foo@bar" in out
     assert installs == []
+
+
+# --- step: link -------------------------------------------------------------
+
+
+def _symlinks_work(tmp_path) -> bool:
+    try:
+        (tmp_path / "probe").symlink_to(tmp_path, target_is_directory=True)
+    except OSError:  # Windows without Developer Mode
+        return False
+    (tmp_path / "probe").unlink()
+    return True
+
+
+def test_step_link_creates_and_repoints(tmp_path, monkeypatch):
+    if not _symlinks_work(tmp_path):
+        pytest.skip("symlinks unavailable on this host")
+    monkeypatch.setattr(onboard, "IS_WINDOWS", False)
+    monkeypatch.setattr(onboard, "GADGET_ROOT", tmp_path / "repo")
+    (tmp_path / "repo").mkdir()
+    (tmp_path / "old").mkdir()
+    link = tmp_path / "home" / ".gadget"
+    link.parent.mkdir()
+    ctx = onboard.Ctx(dry_run=False, assume_yes=True)
+
+    r = onboard.step_link({"path": str(link), "private": False}, ctx)
+    assert r.status == "ok" and link.resolve() == tmp_path / "repo"
+
+    onboard.step_link({"path": str(link), "private": False}, ctx)  # idempotent
+    assert link.resolve() == tmp_path / "repo"
+
+    link.unlink()
+    link.symlink_to(tmp_path / "old", target_is_directory=True)
+    assert onboard.step_link({"path": str(link), "private": False}, ctx).status == "ok"
+    assert link.resolve() == tmp_path / "repo"
+
+
+def test_step_link_refuses_real_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(onboard, "GADGET_ROOT", tmp_path / "repo")
+    real = tmp_path / ".gadget"
+    real.mkdir()
+    r = onboard.step_link({"path": str(real)}, onboard.Ctx(dry_run=False, assume_yes=True))
+    assert r.status == "failed"

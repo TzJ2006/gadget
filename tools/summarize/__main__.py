@@ -64,6 +64,8 @@ def _main_auto():
                         help="Force regeneration of existing reports")
     parser.add_argument("--workers", type=int, default=1,
                         help="Daily merge --sync-all worker count (default: 1)")
+    parser.add_argument("--no-ssh", action="store_true",
+                        help="Skip the SSH fan-out to summarize.ssh_hosts")
     parser.add_argument("--skip-onboard-check", action="store_true",
                         help="Skip readiness checks before running auto")
     from summarize.config import cli_defaults

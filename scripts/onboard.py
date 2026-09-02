@@ -317,6 +317,44 @@ def _push_public_key(host: dict, ctx: Ctx) -> None:
     print(f"  [ok] pushed public key to {alias}" if ok else f"  [error] push to {alias} failed")
 
 
+# ---------------------------------------------------------------------------
+# Step: link  (well-known ~/.gadget handle + private perms)
+# ---------------------------------------------------------------------------
+
+
+def step_link(cfg: dict, ctx: Ctx) -> StepResult:
+    """Symlink ~/.gadget → this checkout, so `cd ~/.gadget` works from anywhere.
+
+    On a shared server the checkout can live wherever the user likes; remote
+    callers (`summarize auto` ssh fan-out) only need the fixed handle.
+    """
+    link = Path(str(cfg.get("path") or "~/.gadget")).expanduser()
+    target = GADGET_ROOT
+
+    if link.is_symlink():
+        if link.resolve() == target:
+            print(f"  [skip] {link} already → {target}")
+            return StepResult("link", "ok", f"{link} → {target}")
+        print(f"  $ repoint {link} (was → {link.resolve()})")
+        if not ctx.dry_run:
+            link.unlink()
+    elif link.exists():
+        return StepResult("link", "failed", f"{link} exists and is not a symlink")
+
+    print(f"  $ ln -s {target} {link}")
+    if not ctx.dry_run:
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except OSError as e:
+            hint = " (Windows needs Developer Mode or admin)" if IS_WINDOWS else ""
+            return StepResult("link", "failed", f"symlink {link} failed: {e}{hint}")
+
+    if cfg.get("private", True) and not IS_WINDOWS and not ctx.dry_run:
+        _harden(target, 0o700)  # ponytail: repo root only — nothing above it is ours
+        print(f"  [ok] chmod 700 {target}")
+    return StepResult("link", "ok", f"{link} → {target}")
+
+
 def step_ssh(cfg: dict, ctx: Ctx) -> StepResult:
     hosts = cfg.get("hosts") or []
     if not hosts:
@@ -679,6 +717,7 @@ def step_verify(ctx: Ctx) -> bool:
 
 # Ordered registry. ADD A FUTURE ONBOARDING HERE (+ a step fn + a sheet section).
 STEPS = [
+    ("link", step_link),
     ("ssh", step_ssh),
     ("claude", step_claude),
     ("install", step_install),
@@ -734,8 +773,8 @@ def main() -> None:
     sheet_path = Path(args.sheet).expanduser() if args.sheet else DEFAULT_SHEET
     if sheet_path.exists():
         sheet = _load_sheet(sheet_path)
-    elif args.list:
-        sheet = {}
+    elif args.list or args.only:
+        sheet = {}  # --only names the steps; a fresh machine has no sheet yet
     else:
         _load_sheet(sheet_path)  # prints a helpful error and exits
         return
