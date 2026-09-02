@@ -1,4 +1,4 @@
-"""Hugo frontmatter field translation, language gating, and Qwen review."""
+"""Hugo frontmatter field translation, language gating, and local-LLM review."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from common.engine import _ollama_native_host, _ollama_tags
+from common.llm import DEFAULT_OLLAMA_CHAT_MODEL
 from common.translation.protect import (
     _reattach_body,
     build_translation_prompt,
@@ -35,10 +36,12 @@ _TRANSLATABLE_KEYS = ("summary:", "description:")
 _LABEL_KEYS = ("title:",)
 _LABEL_LIST_KEYS = ("keywords:", "tags:", "categories:")
 
-# Local Qwen review of translated frontmatter. Override via
+# Local chat-model review of translated frontmatter. Override via
 # GADGET_TRANSLATION_REVIEW_MODEL or config.json ``translation.review_model``.
 # Disable with GADGET_TRANSLATION_REVIEW=0 or ``translation.review: false``.
-DEFAULT_REVIEW_MODEL = "qwen3.6"
+# ponytail: follows the chat default rather than pinning a second model name —
+# one hardcoded tag to keep in sync, not two that rot apart.
+DEFAULT_REVIEW_MODEL = DEFAULT_OLLAMA_CHAT_MODEL
 _REVIEW_MODEL_ENV = "GADGET_TRANSLATION_REVIEW_MODEL"
 _REVIEW_ENABLE_ENV = "GADGET_TRANSLATION_REVIEW"
 _FALSEY = ("0", "false", "no", "off")
@@ -242,7 +245,12 @@ def translate_frontmatter(
 # ---------------------------------------------------------------------------
 
 def resolve_review_model() -> str:
-    """``GADGET_TRANSLATION_REVIEW_MODEL`` > config ``translation.review_model`` > default."""
+    """``GADGET_TRANSLATION_REVIEW_MODEL`` > config ``translation.review_model`` >
+    the served chat tag ``OLLAMA_MODEL`` > default.
+
+    The ``OLLAMA_MODEL`` step matters now that review runs on the chat model: falling
+    straight through to the bare default would ask Ollama for a *second* tag of the
+    same ~18GB weights and blow a single-GPU box."""
     env = os.environ.get(_REVIEW_MODEL_ENV, "").strip()
     if env:
         return env
@@ -251,7 +259,7 @@ def resolve_review_model() -> str:
     configured = cfg.get("review_model")
     if isinstance(configured, str) and configured.strip():
         return configured.strip()
-    return DEFAULT_REVIEW_MODEL
+    return os.environ.get("OLLAMA_MODEL", "").strip() or DEFAULT_REVIEW_MODEL
 
 
 def review_is_enabled() -> bool:
@@ -316,21 +324,30 @@ def resolve_review_tag() -> str | None:
 
 
 def _call_review_llm(prompt: str, model: str) -> str:
-    """Call local Qwen via ``common.llm``. Pins ``OLLAMA_MODEL`` because the
-    ollama backend otherwise ignores the per-call model argument.
+    """Call the local chat model via ``common.llm``. Pins ``OLLAMA_MODEL`` because
+    the ollama backend otherwise ignores the per-call model argument.
+
+    Also pins ``OPENAI_REASONING_EFFORT=none``: when the local model is a thinking
+    model, on a realistic frontmatter prompt it spends the whole 1024-token budget in
+    ``<think>``, returning empty content (``finish_reason: length``) — the review
+    then silently no-ops. This is a short structured-JSON edit, so the think
+    phase buys nothing and costs ~10x the latency. Unlike the summarize path,
+    where thinking measurably improves quality, here it only breaks the call.
     """
     from common.llm import call_llm_raw
-    prev = os.environ.get("OLLAMA_MODEL")
+    saved = {k: os.environ.get(k) for k in ("OLLAMA_MODEL", "OPENAI_REASONING_EFFORT")}
     os.environ["OLLAMA_MODEL"] = model
+    os.environ["OPENAI_REASONING_EFFORT"] = "none"
     try:
         return call_llm_raw(
             prompt, backend="ollama", model=model, timeout=60, max_tokens=1024,
         )
     finally:
-        if prev is None:
-            os.environ.pop("OLLAMA_MODEL", None)
-        else:
-            os.environ["OLLAMA_MODEL"] = prev
+        for key, prev in saved.items():
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
 
 
 def _build_review_prompt(

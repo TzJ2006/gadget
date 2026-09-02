@@ -38,7 +38,8 @@ features:
       constraints:
         - "DEFAULT_BACKEND = os.environ.get('GADGET_LLM_BACKEND') or 'ollama' (empty env still falls back to ollama)"
         - "LLM_BACKENDS is exactly ('ollama', 'anthropic', 'openai', 'claude_cli'); unknown values raise ValueError listing that tuple"
-        - "Default served Ollama chat tag is qwen3.6:35b (DEFAULT_OLLAMA_CHAT_MODEL); OLLAMA_MODEL > OPENAI_MODEL > that tag; abstract sonnet/opus/haiku aliases are ignored for Ollama"
+        - "Default served Ollama chat tag is gemma4:26b (DEFAULT_OLLAMA_CHAT_MODEL); OLLAMA_MODEL > OPENAI_MODEL > that tag; abstract sonnet/opus/haiku aliases are ignored for Ollama"
+        - "call_ollama constrains decoding with the caller's anthropic_tools[0].input_schema (response_format json_schema) and promotes every top-level property to required; call_openai stays on json_object because cloud json_schema is strict-only. Without the schema qwen3.8 returns daily_overview's contents as the whole report ~half the time; without the promotion it returns only the declared-required fields"
         - "Ollama base URL: OLLAMA_BASE_URL > OPENAI_BASE_URL > http://127.0.0.1:11434/v1 — never localhost (Windows IPv6 stall)"
         - "Ollama client is keyless (api_key EMPTY unless OPENAI_API_KEY is set)"
         - "_clean_env() strips CLAUDECODE to prevent nested Claude Code sessions"
@@ -254,7 +255,7 @@ features:
         - "common/tests/test_engine_ollama.py"
         - "common/tests/test_engine_budget.py"
       constraints:
-        - "Default model is tencent/Hy-MT2-1.8B; GGUF default tencent/Hy-MT2-1.8B-GGUF; Ollama tag hf.co/tencent/Hy-MT2-1.8B-GGUF"
+        - "Ollama backend (the default) translates with the served chat tag: OLLAMA_TRANSLATION_MODEL > OLLAMA_MODEL > gemma4:26b (DEFAULT_TRANSLATION_MODEL_OLLAMA = DEFAULT_OLLAMA_CHAT_MODEL), so one runner serves chat and translation. In-process fallbacks keep the dedicated MT model tencent/Hy-MT2-1.8B; GGUF default tencent/Hy-MT2-1.8B-GGUF"
         - "Model resolution: explicit arg > GADGET_TRANSLATION_MODEL env > default, then .strip()"
         - "Valid GADGET_TRANSLATION_BACKEND values: ollama | vllm | transformers | llamacpp (empty/unset = auto)"
         - "Auto-select: ollama (default model + tag pulled) → vllm → llamacpp → transformers"
@@ -299,6 +300,7 @@ features:
         - "validate_translated_output rejects output shorter than 15% of original, marker-only garbage, missing frontmatter delimiters, and same-language echo (wrong_language)"
         - "Frontmatter-field translations use max_new_tokens=512; body chunks use 4096"
         - "zh_path converts foo.md → foo.zh.md"
+        - "_call_review_llm pins OPENAI_REASONING_EFFORT=none for the duration of the call (restored after): qwen3.x otherwise spends the whole 1024-token budget in <think> and returns empty content, silently no-opping the review. Unlike the summarize path, thinking adds nothing to this structured-JSON edit"
     function_names:
       - "translate_markdown_document"
       - "translate_documents_batch"
@@ -417,6 +419,7 @@ features:
         - "Public wrappers summarize_with_anthropic / openai / claude_cli remain; ollama goes through _call_single_summarize → call_llm"
         - "Conversation chunking default max_chars 150000"
         - "_normalize_report is required for ollama/qwen renamed keys; it must not replace a top-level report with a thin nested decoy"
+        - "_finalize_report retries the report call once when _report_content_score is 0 (qwen3.8 answers daily_overview's contents as the whole report ~1/3 of merges even under schema-constrained decoding); _renest_overview is the last resort, re-nesting that payload and lifting global.what into summary so the report is degraded, never blank"
     function_names:
       - "_call_summarize"
       - "_call_single_summarize"
@@ -1311,10 +1314,10 @@ features:
       - "step_verify"
 
   - feature: "Local LLM Serve Helper"
-    description: "scripts/serve_local_llm.sh sets up an Ollama variant for summarize (default qwen3.6:35b → qwen3.6-sum with large num_ctx) and can print env exports; also pulls the Hy-MT2 GGUF tag for OllamaEngine. env mode is safe (prints only); serve/setup talks to a local Ollama daemon."
+    description: "scripts/serve_local_llm.sh sets up an Ollama variant for summarize (default gemma4:26b → gemma4-sum with large num_ctx) and can print env exports; also pulls the Hy-MT2 GGUF tag for OllamaEngine. env mode is safe (prints only); serve/setup talks to a local Ollama daemon."
     purpose: "Point --api ollama at a summarize-tuned local model without cloud keys."
     implementation:
-      approach: "bash scripts/serve_local_llm.sh [setup|env]. Default TRANSLATE_MODEL=hf.co/tencent/Hy-MT2-1.8B-GGUF. Companion scripts/wsl_local_llm_cleanup.sh exists for WSL cleanup."
+      approach: "bash scripts/serve_local_llm.sh [setup|env]. Default TRANSLATE_MODEL=$VARIANT (the chat variant; the pull step is skipped for it). Companion scripts/wsl_local_llm_cleanup.sh exists for WSL cleanup."
       key_files:
         - "scripts/serve_local_llm.sh"
         - "scripts/wsl_local_llm_cleanup.sh"

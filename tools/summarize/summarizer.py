@@ -367,20 +367,51 @@ def _unwrap_envelope(result: dict) -> dict:
     return best if best is not None else result
 
 
+def _renest_overview(result: dict) -> dict:
+    """Re-nest a report that is really just ``daily_overview``'s contents.
+
+    qwen3.8 sometimes answers one level too deep — `{"global": {...},
+    "devices": {...}}` instead of `{"daily_overview": {"global": ...}, ...}`.
+    Valid JSON, wrong level, and every downstream field reads empty. Nesting it
+    back and lifting `global.what` into `summary` salvages the overview instead
+    of publishing a blank report. Tasks/conversation summaries are genuinely
+    absent from such a response — they cannot be recovered, only the overview.
+    """
+    if _report_content_score(result) or not any(
+            k in result for k in ("global", "devices")):
+        return result
+    g = result.get("global")
+    summary = g.get("what") if isinstance(g, dict) else g
+    if not (isinstance(summary, str) and summary.strip()):
+        summary = ""
+        for dev in (result.get("devices") or {}).values():
+            cand = dev.get("what") if isinstance(dev, dict) else dev
+            if isinstance(cand, str) and cand.strip():
+                summary = cand
+                break
+    print("[warn] 模型把 daily_overview 的内容当成整份报告返回，已重新嵌套；"
+          "本次响应中缺少 tasks / conversation_summaries")
+    return {"daily_overview": result, "summary": summary.strip()}
+
+
 def _normalize_report(result: dict) -> dict:
     """Recover the canonical `summary` field when the model renamed it.
 
     Local models (qwen via ollama) unpredictably rename the required top-level
-    `summary` key (`one_sentence_summary`, `daily_summary`, …) or wrap the whole
-    report in an envelope, either of which silently empties the report. First
-    unwrap any envelope, then recover `summary` from a known synonym, else from
-    any other top-level ``*summary*`` string field (the legit list
+    `summary` key (`one_sentence_summary`, `daily_summary`, …), wrap the whole
+    report in an envelope, or answer with a sub-object — each of which silently
+    empties the report. First unwrap any envelope, re-nest a bare
+    ``daily_overview`` payload, then recover `summary` from a known synonym,
+    else from any other top-level ``*summary*`` string field (the legit list
     `conversation_summaries` is skipped by the str guard).
     # ponytail: heuristic string-key match; if it ever grabs the wrong field,
     #           go back to an explicit synonym allowlist.
     """
     result = _unwrap_envelope(result)
     if not isinstance(result, dict) or result.get("summary"):
+        return result
+    result = _renest_overview(result)
+    if result.get("summary"):
         return result
     for alt in _SUMMARY_SYNONYMS:
         if isinstance(result.get(alt), str) and result[alt].strip():
@@ -394,6 +425,27 @@ def _normalize_report(result: dict) -> dict:
     return result
 
 
+def _finalize_report(call, attempts: int = 2) -> dict:
+    """Run the report call, retrying once if it came back structurally wrong.
+
+    Even with schema-constrained decoding, qwen3.8 still answers one level too
+    deep on roughly a third of real merges — `{"global": ..., "devices": ...}`,
+    the contents of `daily_overview`, as the whole report. Sampling is the only
+    difference between a good and a bad answer, so one retry is worth far more
+    than any prompt wording: it costs a single merge call (~2 min) and only on
+    the runs that already failed, while the chunk summaries stay computed.
+    `_normalize_report` still salvages whatever the last attempt returned, so a
+    retry that also fails is no worse than not retrying.
+    """
+    result = call()
+    for _ in range(attempts - 1):
+        if _report_content_score(result):
+            break
+        print("[warn] 合并结果结构不符（模型答深了一层），重试一次...")
+        result = call()
+    return _normalize_report(result)
+
+
 def _call_summarize(api: str, conversations: list[dict], target_date: date,
                     prompt_prefix: str = SUMMARY_PROMPT,
                     extra_context: str = "",
@@ -405,7 +457,8 @@ def _call_summarize(api: str, conversations: list[dict], target_date: date,
 
     if n == 1:
         config = _build_daily_config(chunks[0], target_date, prompt_prefix, extra_context, timeout)
-        return _normalize_report(timed_llm_call(api, config, chunk_idx=1, total=1))
+        return _finalize_report(
+            lambda: timed_llm_call(api, config, chunk_idx=1, total=1))
 
     total_chars = sum(len(format_conversations(c)) for c in chunks)
     print(f"[info] 对话总量 {total_chars:,} 字符，分为 {n} 段进行层级总结 "
@@ -447,6 +500,6 @@ def _call_summarize(api: str, conversations: list[dict], target_date: date,
             thinking=_LOW_THINKING,
         )
 
-    return _normalize_report(
-        hierarchical_merge(api, chunk_summaries, CHUNK_MERGE_PROMPT,
-                           _daily_merge_config, timeout))
+    return _finalize_report(
+        lambda: hierarchical_merge(api, chunk_summaries, CHUNK_MERGE_PROMPT,
+                                   _daily_merge_config, timeout))

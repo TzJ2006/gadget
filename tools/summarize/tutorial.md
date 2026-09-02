@@ -83,7 +83,7 @@ pip install -r tools/summarize/requirements.txt
 
 ### 方式一：Ollama（默认，推荐）
 
-使用本地 Ollama 服务生成总结（默认模型 Qwen3.6-35B），**无需 API key**。需要本地已运行 Ollama 并拉取聊天模型（参见 `scripts/serve_local_llm.sh`），以及 `pip install openai`（Ollama 走 OpenAI 兼容协议）。
+使用本地 Ollama 服务生成总结（默认模型 Gemma4-26B），**无需 API key**。需要本地已运行 Ollama 并拉取聊天模型（参见 `scripts/serve_local_llm.sh`），以及 `pip install openai`（Ollama 走 OpenAI 兼容协议）。
 
 使用时无需额外参数，`--api` 默认就是 `ollama`（全局改默认：`GADGET_LLM_BACKEND` 环境变量或 config 的 `default_api`）：
 
@@ -821,7 +821,7 @@ python -m summarize daily deploy --hugo-site /path/to/site --reports-dir /path/t
 
 | 值 | 说明 | 是否需要 API key |
 |----|------|-----------------|
-| `ollama` | 调用本地 Ollama 服务（默认，Qwen3.6-35B） | 否，本地 keyless |
+| `ollama` | 调用本地 Ollama 服务（默认，Gemma4-26B） | 否，本地 keyless |
 | `claude_cli` | 调用本地 Claude Code CLI | 否，复用 CLI 登录状态 |
 | `anthropic` | 调用 Anthropic Claude API | 是，需 `ANTHROPIC_API_KEY` |
 | `openai` | 调用 OpenAI API | 是，需 `OPENAI_API_KEY` |

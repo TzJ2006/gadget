@@ -17,6 +17,7 @@ written under a temp dir, leaving the canonical one untouched.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -49,10 +50,19 @@ pytestmark = [
 ]
 
 
+def _prose(text: str) -> str:
+    """Drop the embedded token-usage card (a ~2.8 KB inline <style> block plus its
+    markup) so the ratio below measures the *report prose*. The card is constant
+    English boilerplate: on a terse report it alone can drag a correctly-translated
+    Chinese page under the threshold."""
+    return re.sub(r"<[^>]+>", "", re.sub(r"<style>.*?</style>", "", text, flags=re.S))
+
+
 def _cjk_ratio(text: str) -> float:
-    """Fraction of alphabetic-or-CJK characters that are CJK. 0 for pure English."""
-    cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
-    letters = sum(1 for ch in text if ch.isalpha())
+    """Fraction of alphabetic-or-CJK prose characters that are CJK. 0 for pure English."""
+    prose = _prose(text)
+    cjk = sum(1 for ch in prose if "一" <= ch <= "鿿")
+    letters = sum(1 for ch in prose if ch.isalpha())
     return cjk / max(cjk + letters, 1)
 
 

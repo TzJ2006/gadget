@@ -5,15 +5,19 @@
     "deploy": true,
     "hugo_site": "tools/website",
     "workers": 4,
-    "model": "qwen3.6-sum",
+    "model": "gemma4-sum",
     "base_url": "http://127.0.0.1:11434/v1",
     "reasoning_effort": "none",
     "translation_model": "tencent/Hy-MT2-1.8B-GGUF",
-    "translation_model_ollama": "hf.co/tencent/Hy-MT2-1.8B-GGUF",
+    "translation_model_ollama": "gemma4-sum",
     "translation_backend": "ollama",
     "logs_dir": "",
     "reports_dir": "",
     "rclone_remote": "gdrive:gadget/summarize",
+    "ssh_hosts": [
+      "user@laptop",
+      {"host": "gpu1", "repo": "/scratch/me/gadget", "python": "python3"}
+    ],
     "rclone_path": "",
     "chunk_chars": 150000,
     "timeout_daily": 600,
@@ -88,7 +92,7 @@
     ]
   },
   "translation": {
-    "review_model": "qwen3.6",
+    "review_model": "gemma4:26b",
     "review": true
   }
 }
