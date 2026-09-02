@@ -138,12 +138,12 @@ pip install -e ".[translator]"         # Gradio 翻译器
 
 双语内容由 `common.engine.create_engine()` 自动选择后端，**不走 `--api`**：
 
-- Ollama（`OllamaEngine`，**默认**）— 无额外依赖；拉取标签后自动优先（`ollama pull hf.co/tencent/Hy-MT2-1.8B-GGUF`）
+- Ollama（`OllamaEngine`，**默认**）— 无额外依赖；直接用聊天模型的同一个 tag（`gemma4:26b`）翻译，不需要额外拉模型
 - `pip install -e ".[translation]"` → torch + transformers（`TransformersEngine`，Windows 回退）
 - Linux：可选 `pip install vllm>=0.8` → `VLLMEngine`（更快的批量推理）
 - `pip install -e ".[translation-gguf]"` → `LlamaCppEngine`（低内存 GGUF，无 PyTorch）
 
-默认模型 `tencent/Hy-MT2-1.8B`（GGUF 变体 `tencent/Hy-MT2-1.8B-GGUF`），首次运行自动下载。覆盖方式：
+Ollama 后端用聊天 tag 翻译（`OLLAMA_TRANSLATION_MODEL` > `OLLAMA_MODEL` > `gemma4:26b`）；进程内回退后端仍用 `tencent/Hy-MT2-1.8B`（GGUF 变体 `tencent/Hy-MT2-1.8B-GGUF`），首次运行自动下载。覆盖方式：
 
 - 模型：`GADGET_TRANSLATION_MODEL` 环境变量或 `--model` CLI 参数
 - 后端：`GADGET_TRANSLATION_BACKEND`（`ollama` / `vllm` / `transformers` / `llamacpp`）

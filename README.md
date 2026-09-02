@@ -76,7 +76,7 @@ gadget/
 
 ### Summarize — AI Conversation Daily/Weekly/Monthly Reports
 
-Automatically reads your daily AI conversation records (Claude Code / Codex / Cursor Agent / ChatGPT / generic JSON) and calls an LLM API to generate structured daily, weekly, and monthly summaries. Multi-device workflow: export conversation logs on each device, aggregate them via cloud-drive sync or manual copy, and generate the final daily report; once enough daily reports have accumulated, you can go on to generate weekly reports and monthly trend summaries. Via [ccusage](https://github.com/ryoppippi/ccusage) 20.x's per-source namespaced commands (`ccusage claude`, `ccusage codex`, `ccusage gemini`…), it automatically discovers and tallies token usage and cost across all agent CLIs. There are four AI summarization backends, switched uniformly via `--api`: `ollama` (default — local Ollama, keyless, Qwen3.6-35B), `claude_cli` (reuses the Claude Code CLI login state, no API key needed), `anthropic`, `openai`.
+Automatically reads your daily AI conversation records (Claude Code / Codex / Cursor Agent / ChatGPT / generic JSON) and calls an LLM API to generate structured daily, weekly, and monthly summaries. Multi-device workflow: export conversation logs on each device, aggregate them via cloud-drive sync or manual copy, and generate the final daily report; once enough daily reports have accumulated, you can go on to generate weekly reports and monthly trend summaries. Via [ccusage](https://github.com/ryoppippi/ccusage) 20.x's per-source namespaced commands (`ccusage claude`, `ccusage codex`, `ccusage gemini`…), it automatically discovers and tallies token usage and cost across all agent CLIs. There are four AI summarization backends, switched uniformly via `--api`: `ollama` (default — local Ollama, keyless, Gemma4-26B), `claude_cli` (reuses the Claude Code CLI login state, no API key needed), `anthropic`, `openai`.
 
 ```bash
 python -m summarize daily export                                   # Phase 1: export all unexported dates
@@ -107,7 +107,7 @@ python tools/research/research_scout.py citations 2301.12597               # Cit
 python tools/research/research_scout.py deploy                              # Deploy reports to Hugo
 ```
 
-All LLM features support switching the backend via `--api`: `ollama` (default — local Ollama, keyless, Qwen3.6-35B), `claude_cli` (no API key needed), `anthropic`, `openai`.
+All LLM features support switching the backend via `--api`: `ollama` (default — local Ollama, keyless, Gemma4-26B), `claude_cli` (no API key needed), `anthropic`, `openai`.
 
 For detailed step-by-step instructions see [TUTORIAL.md — Research](TUTORIAL.md#research) and the source doc [tools/research/TUTORIAL.md](tools/research/TUTORIAL.md).
 
@@ -209,7 +209,7 @@ Hugo site content is written directly into `tools/website/content|static` (there
 - Node.js 18+ (only the separate repo `../ai-companion/` needs it)
 - For each tool's specific dependencies see the `requirements.txt` in the corresponding directory
 - common package + summarize / research / benchmark / website extras: `pip install -e ".[all]"` (`all` does **not** include `translator`; install `pip install -e ".[translator]"` separately)
-- The website/translation features use a local inference engine (Ollama by default; vLLM on Linux / transformers on Windows as fallbacks); the model `tencent/Hy-MT2-1.8B` is auto-downloaded on first run
+- The website/translation features use a local inference engine (Ollama by default, translating with the same `gemma4:26b` chat model; vLLM on Linux / transformers on Windows as fallbacks, which use `tencent/Hy-MT2-1.8B`, auto-downloaded on first run)
 
 ## Notes
 
@@ -217,7 +217,7 @@ Hugo site content is written directly into `tools/website/content|static` (there
 - The `tokens/` directory holds API keys and the onboarding sheet; it is gitignored — never commit its contents
 - All generated files are output to the `outputs/` directory, which is gitignored
 - The LLM backends are switched uniformly via the `--api` parameter: `ollama` (default), `claude_cli`, `anthropic`, `openai` (or `GADGET_LLM_BACKEND` globally)
-- The translation path uses a local inference engine selected by `GADGET_TRANSLATION_BACKEND`: `ollama` (default when the model is pulled, via the local Ollama server) → `llamacpp`/`vllm`/`transformers` (in-process), model `tencent/Hy-MT2-1.8B`
+- The translation path uses a local inference engine selected by `GADGET_TRANSLATION_BACKEND`: `ollama` (default — the local Ollama server, reusing the served chat tag `gemma4:26b`) → `llamacpp`/`vllm`/`transformers` (in-process, model `tencent/Hy-MT2-1.8B`)
 - Cross-device data sync uses `python scripts/sync.py push/pull` (requires rclone configuration)
 - Never `git add` auto-generated content, rclone-synced data, build artifacts (`build/`, `gadget.egg-info/`), or the deployment/theme repos under `tools/website/`
 - Tool settings live in the repo-root `config.json` (gitignored; copy from `config.example.json`). Override the path with `GADGET_CONFIG`.

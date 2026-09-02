@@ -23,7 +23,7 @@ class _FakeResp:
 
 def test_model_in_tags_tolerates_suffix():
     assert engine._model_in_tags("hf.co/x/y", ["hf.co/x/y:latest"])
-    assert engine._model_in_tags("qwen3.6:35b", ["qwen3.6:35b"])
+    assert engine._model_in_tags("qwen3.8:27b", ["qwen3.8:27b"])
     assert not engine._model_in_tags("a/b", ["c/d:latest"])
 
 
@@ -55,6 +55,25 @@ def test_generate_batch_builds_request_and_parses(monkeypatch):
     assert seen["body"]["options"]["num_ctx"] == 8192
     # request-level residency: don't idle-unload after Ollama's 5-minute default
     assert seen["body"]["keep_alive"] == "30m"
+
+
+def test_chat_path_disables_thinking(monkeypatch):
+    """A general chat model (the default translator now) burns the whole
+    num_predict budget in `thinking` and returns empty content unless think is off."""
+    seen = {}
+
+    def fake_urlopen(req, timeout=None):
+        seen["url"] = req.full_url
+        seen["body"] = json.loads(req.data)
+        return _FakeResp({"message": {"content": "译文"}})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    eng = engine.OllamaEngine("gemma4:26b")
+
+    assert eng.generate_batch(["translate me"]) == ["译文"]
+    assert seen["url"].endswith("/api/chat")
+    assert seen["body"]["think"] is False
+    assert seen["body"]["messages"] == [{"role": "user", "content": "translate me"}]
 
 
 def _echoing_urlopen(req, timeout=None):
@@ -118,10 +137,12 @@ def test_factory_auto_prefers_ollama_when_available(monkeypatch):
     engine._engine_cache.clear()
     monkeypatch.delenv("GADGET_TRANSLATION_BACKEND", raising=False)
     monkeypatch.delenv("GADGET_TRANSLATION_MODEL", raising=False)
+    monkeypatch.delenv("OLLAMA_TRANSLATION_MODEL", raising=False)
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
     monkeypatch.setattr(engine, "_ollama_available", lambda model: True)
     monkeypatch.setattr(
         "common.engine.ollama._ollama_tags",
-        lambda host, timeout=3: ["hf.co/tencent/Hy-MT2-1.8B-GGUF:latest"],
+        lambda host, timeout=3: [engine.DEFAULT_TRANSLATION_MODEL_OLLAMA],
     )
 
     proxy = engine.create_engine()

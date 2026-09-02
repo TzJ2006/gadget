@@ -203,7 +203,7 @@ def test_cli_defaults_feeds_argparse(tmp_path, monkeypatch):
 def test_apply_env_from_config_sets_env(tmp_path, monkeypatch):
     """Config LLM knobs are bridged to env vars."""
     _write_summarize(tmp_path, monkeypatch, {
-        "model": "qwen3.6-sum",
+        "model": "qwen3.8-sum",
         "reasoning_effort": "none",
     })
     monkeypatch.delenv("OLLAMA_MODEL", raising=False)
@@ -212,7 +212,7 @@ def test_apply_env_from_config_sets_env(tmp_path, monkeypatch):
     apply_env_from_config()
 
     import os
-    assert os.environ["OLLAMA_MODEL"] == "qwen3.6-sum"
+    assert os.environ["OLLAMA_MODEL"] == "qwen3.8-sum"
     assert os.environ["OPENAI_REASONING_EFFORT"] == "none"
 
 

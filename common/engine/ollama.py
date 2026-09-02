@@ -66,8 +66,8 @@ def free_ollama_vram() -> None:
     """Best-effort: unload models a local Ollama server is holding, before we
     load a translation model onto the same GPU.
 
-    On a single-GPU box the summarizer's resident model (e.g. ~23GB for
-    qwen3.6-35B) leaves little room for the GGUF translator, so both co-resident
+    On a single-GPU box the summarizer's resident model (e.g. ~18GB for
+    gemma4-26B) leaves little room for the GGUF translator, so both co-resident
     can hit the VRAM ceiling. Freeing it first avoids the OOM. Probes the local
     Ollama endpoint (OLLAMA_BASE_URL > OPENAI_BASE_URL > 127.0.0.1:11434); if
     nothing is there the /api/ps probe fails fast and this no-ops. All errors
@@ -167,11 +167,13 @@ class OllamaEngine(TranslationEngine):
         }
         # 8192 fits every chunk the pipeline sends (EN chunks capped at 7000 chars
         # ≈ 1.8k tokens, zh chunks at 5000 chars ≈ 3.3k tokens — see
-        # common.translation.chunk_ceiling) plus the 4096 output budget, AND keeps
-        # this model small enough (3.6GB vs 6.1GB at 16384, measured) to stay
-        # co-resident with the 24GB summarize chat model on a 32GB GPU instead of
-        # evicting it (~10s reload per summarize↔translate switch). Raise via env
-        # if you feed oversized chunks from outside the pipeline's chunkers.
+        # common.translation.chunk_ceiling) plus the 4096 output budget. Raise via
+        # env if you feed oversized chunks from outside the pipeline's chunkers.
+        # ponytail: known ceiling — translation now shares the chat model, and a
+        # num_ctx that differs from the one the chat runner was loaded with makes
+        # Ollama reload the runner on each summarize↔translate switch (~10s). Set
+        # OLLAMA_TRANSLATION_NUM_CTX to the chat variant's num_ctx if that churn
+        # shows up; the cost is KV-cache VRAM on every translate call.
         options["num_ctx"] = int(os.environ.get("OLLAMA_TRANSLATION_NUM_CTX", "8192"))
 
         # Ollama decodes concurrent requests in one batched pass (n_seq ≥ 8
@@ -229,6 +231,13 @@ class OllamaEngine(TranslationEngine):
                 "model": self.model_id,
                 "messages": build_chat_messages(prompt),
                 "stream": False,
+                # Thinking OFF. Now that translation runs on the general chat model,
+                # a reasoning model (gemma4, qwen3.x) spends the entire num_predict
+                # budget in `thinking` and returns EMPTY content with
+                # done_reason=length — measured: 0 chars out for a 2.7k-char chunk.
+                # Translation is a mechanical rewrite; the think phase buys nothing.
+                # Ollama accepts this field even on models without thinking support.
+                "think": False,
                 "options": options,
             }
             endpoint = "/api/chat"

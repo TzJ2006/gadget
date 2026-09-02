@@ -77,7 +77,7 @@ AI 总结后端四选一（默认 Ollama，可用 `GADGET_LLM_BACKEND` 或 confi
 
 | 后端 | 安装 | 需要 API key |
 |------|------|-------------|
-| Ollama（默认，本地） | 本地 Ollama 服务（Qwen3.6-35B）+ `pip install openai` | 否 |
+| Ollama（默认，本地） | 本地 Ollama 服务（Gemma4-26B）+ `pip install openai` | 否 |
 | Claude Code CLI | `npm install -g @anthropic-ai/claude-code` | 否 |
 | Anthropic API | `pip install anthropic` | 是 |
 | OpenAI API | `pip install openai` | 是 |

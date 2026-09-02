@@ -5,13 +5,21 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 
+from common.llm import DEFAULT_OLLAMA_CHAT_MODEL
 
+
+# In-process fallback backends (vllm / transformers / llamacpp) load a real
+# HuggingFace repo, so they stay on the dedicated MT model — there is no gemma
+# repo to substitute here, and this path only runs when Ollama is unreachable.
 DEFAULT_TRANSLATION_MODEL = "tencent/Hy-MT2-1.8B"
 DEFAULT_TRANSLATION_MODEL_GGUF = "tencent/Hy-MT2-1.8B-GGUF"
-# Ollama tag for the same model. Ollama pulls GGUF straight from HuggingFace via
-# the hf.co/ prefix, so no separate conversion step is needed:
+# ponytail: the Ollama path (the default) translates with the same tag the chat
+# backend serves — one model to pull, one name to change. OllamaEngine routes
+# non-HY tags through /api/chat, and build_translation_prompt is already a plain
+# instruction, so a general chat model needs no extra wiring. Override with
+# OLLAMA_TRANSLATION_MODEL to go back to a dedicated MT model, e.g.
 #   ollama pull hf.co/tencent/Hy-MT2-1.8B-GGUF
-DEFAULT_TRANSLATION_MODEL_OLLAMA = "hf.co/tencent/Hy-MT2-1.8B-GGUF"
+DEFAULT_TRANSLATION_MODEL_OLLAMA = DEFAULT_OLLAMA_CHAT_MODEL
 
 SAMPLING_DEFAULTS = {
     "top_k": 20,
@@ -82,11 +90,16 @@ def resolve_ollama_translation_model(model: str | None = None) -> str:
     translator GUI / ``--model`` point at a specific served model. An HF-repo-style id
     (``org/name``) can't be served by Ollama as-is, so it's ignored in favor of the
     configured tag (``OLLAMA_TRANSLATION_MODEL``, not ``GADGET_TRANSLATION_MODEL`` which
-    carries the HF-repo id for the in-process backends)."""
+    carries the HF-repo id for the in-process backends).
+
+    Falls back to the served chat tag (``OLLAMA_MODEL``) before the hardcoded default:
+    now that translation runs on the chat model, pointing at a *different* tag of the
+    same weights would make Ollama hold two ~18GB runners and blow a 32GB GPU."""
     if model and (":" in model or model.startswith("hf.co/")):
         return model.strip()
     return (
         os.environ.get("OLLAMA_TRANSLATION_MODEL")
+        or os.environ.get("OLLAMA_MODEL")
         or DEFAULT_TRANSLATION_MODEL_OLLAMA
     ).strip()
 

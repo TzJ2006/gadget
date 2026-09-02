@@ -1,10 +1,12 @@
 """Local Qwen review of translated frontmatter — mocked, never hits Ollama."""
 
 import json
+import os
 
 import pytest
 
 from common.config import clear_cache
+from common.llm import DEFAULT_OLLAMA_CHAT_MODEL
 from common.translation import (
     DEFAULT_REVIEW_MODEL,
     resolve_review_model,
@@ -17,6 +19,8 @@ from common.translation.frontmatter import (
     _build_review_prompt,
     _match_review_tag,
 )
+# Bound at import so the autouse _forbid_llm patch below can't shadow it.
+from common.translation.frontmatter import _call_review_llm as _real_call_review_llm
 
 
 FM = (
@@ -58,19 +62,29 @@ def _isolate(monkeypatch, tmp_path):
     clear_cache()
 
 
-def test_default_review_model_is_qwen36():
-    assert DEFAULT_REVIEW_MODEL == "qwen3.6"
-    assert resolve_review_model() == "qwen3.6"
+def test_default_review_model_follows_chat_default():
+    assert DEFAULT_REVIEW_MODEL == DEFAULT_OLLAMA_CHAT_MODEL == "gemma4:26b"
+    assert resolve_review_model() == "gemma4:26b"
+
+
+def test_review_model_follows_served_chat_tag(monkeypatch):
+    """Review runs on the chat model, so an explicitly served tag wins over the
+    bare default — else Ollama loads a second runner of the same ~18GB weights."""
+    monkeypatch.setenv("OLLAMA_MODEL", "gemma4-sum")
+    assert resolve_review_model() == "gemma4-sum"
+    # config still outranks it
+    monkeypatch.setenv("GADGET_TRANSLATION_REVIEW_MODEL", "other:tag")
+    assert resolve_review_model() == "other:tag"
 
 
 def test_review_model_env_overrides_config(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({"translation": {"review_model": "qwen3.6:latest"}}), encoding="utf-8")
+    cfg.write_text(json.dumps({"translation": {"review_model": "qwen3.8:latest"}}), encoding="utf-8")
     monkeypatch.setenv("GADGET_CONFIG", str(cfg))
     clear_cache()
-    assert resolve_review_model() == "qwen3.6:latest"
-    monkeypatch.setenv("GADGET_TRANSLATION_REVIEW_MODEL", "qwen3.6:35b")
-    assert resolve_review_model() == "qwen3.6:35b"
+    assert resolve_review_model() == "qwen3.8:latest"
+    monkeypatch.setenv("GADGET_TRANSLATION_REVIEW_MODEL", "qwen3.8:27b")
+    assert resolve_review_model() == "qwen3.8:27b"
 
 
 def test_review_disabled_by_env(monkeypatch, caplog):
@@ -108,15 +122,36 @@ def test_review_skipped_when_model_not_pulled(monkeypatch, caplog):
     assert "not pulled" in caplog.text
 
 
-def test_match_review_tag_accepts_bare_qwen36():
-    assert _match_review_tag("qwen3.6", ["qwen3.6:35b"]) == "qwen3.6:35b"
-    assert _match_review_tag("qwen3.6:latest", ["qwen3.6:latest"]) == "qwen3.6:latest"
-    assert _match_review_tag("qwen3.6", ["llama3:latest"]) is None
+def test_match_review_tag_accepts_bare_qwen38():
+    assert _match_review_tag("qwen3.8", ["qwen3.8:27b"]) == "qwen3.8:27b"
+    assert _match_review_tag("qwen3.8:latest", ["qwen3.8:latest"]) == "qwen3.8:latest"
+    assert _match_review_tag("qwen3.8", ["llama3:latest"]) is None
+
+
+def test_review_call_pins_model_and_disables_thinking(monkeypatch):
+    """Without reasoning_effort=none, qwen3.x spends the whole 1024-token budget in
+    <think> and returns empty content — the review then silently no-ops."""
+    seen = {}
+    monkeypatch.setenv("OPENAI_REASONING_EFFORT", "high")
+    monkeypatch.setenv("OLLAMA_MODEL", "some-other-model")
+
+    def fake_call(prompt, **kw):
+        seen["model"] = os.environ.get("OLLAMA_MODEL")
+        seen["effort"] = os.environ.get("OPENAI_REASONING_EFFORT")
+        return '{"fields": []}'
+
+    monkeypatch.setattr("common.llm.call_llm_raw", fake_call)
+    # _real_call_review_llm, bound at import, bypasses the autouse _forbid_llm patch
+    assert _real_call_review_llm("p", "qwen3.8:27b") == '{"fields": []}'
+    assert seen == {"model": "qwen3.8:27b", "effort": "none"}
+    # ambient env restored, not clobbered
+    assert os.environ["OPENAI_REASONING_EFFORT"] == "high"
+    assert os.environ["OLLAMA_MODEL"] == "some-other-model"
 
 
 def test_review_skipped_when_llm_raises(monkeypatch, caplog):
     monkeypatch.setattr(
-        "common.translation.frontmatter.resolve_review_tag", lambda: "qwen3.6:latest",
+        "common.translation.frontmatter.resolve_review_tag", lambda: "qwen3.8:latest",
     )
 
     def boom(prompt, model):
@@ -131,7 +166,7 @@ def test_review_skipped_when_llm_raises(monkeypatch, caplog):
 
 def test_review_applies_json_corrections(monkeypatch):
     monkeypatch.setattr(
-        "common.translation.frontmatter.resolve_review_tag", lambda: "qwen3.6:latest",
+        "common.translation.frontmatter.resolve_review_tag", lambda: "qwen3.8:latest",
     )
     monkeypatch.setattr(
         "common.translation.frontmatter._call_review_llm",
@@ -146,7 +181,7 @@ def test_review_applies_json_corrections(monkeypatch):
 
 def test_review_keeps_english_proper_noun_on_zh(monkeypatch):
     monkeypatch.setattr(
-        "common.translation.frontmatter.resolve_review_tag", lambda: "qwen3.6:latest",
+        "common.translation.frontmatter.resolve_review_tag", lambda: "qwen3.8:latest",
     )
 
     def fake_llm(prompt, model):
@@ -171,7 +206,7 @@ def test_review_prompt_states_policy():
 
 def test_english_gate_keeps_original_if_review_still_chinese(monkeypatch):
     monkeypatch.setattr(
-        "common.translation.frontmatter.resolve_review_tag", lambda: "qwen3.6:latest",
+        "common.translation.frontmatter.resolve_review_tag", lambda: "qwen3.8:latest",
     )
     monkeypatch.setattr(
         "common.translation.frontmatter._call_review_llm",
