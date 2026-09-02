@@ -17,6 +17,11 @@
 # EXTEND: to add a new onboarding, write step_<name>(cfg, ctx) in
 # scripts/onboard.py, add it to STEPS, and add a <name>: section here.
 
+link:
+  enabled: true                         # (optional) create the ~/.gadget handle for this checkout; default: true
+  path: ~/.gadget                       # (optional) symlink → this repo, so `cd ~/.gadget` works from any ssh login
+  private: true                         # (optional) chmod 700 the repo root (shared servers); POSIX only; default: true
+
 ssh:
   enabled: true                         # (optional) run the SSH step on this server? default: true
   hosts:                                # (optional) omit/empty to skip SSH entirely
