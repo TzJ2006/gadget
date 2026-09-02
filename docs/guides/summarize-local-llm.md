@@ -7,8 +7,10 @@ against a **local Ollama server** instead of a cloud API — no `ANTHROPIC_API_K
 - **Default runtime: Windows-native Ollama.** WSL2 works identically (see the comparison
   below) but Windows is the standard because it's simpler to keep running (tray service,
   no distro idle-shutdown) and the summarize client runs natively in the same place.
-- **Model:** `gemma4:26b` — Gemma4-26B, 4-bit GGUF (~18 GB). Runs **100% on GPU**. A
-  `num_ctx`-enlarged variant `gemma4-sum` is what summarize actually points at.
+- **Model:** `gemma4:26b` — Gemma4-26B, 4-bit GGUF (~18 GB), 256K declared context.
+  Runs **100% on GPU**. summarize points straight at this tag: there is **no
+  `-sum` variant any more** (Ollama 0.33 auto-sizes the context window — measured
+  65536 for the bare tag, exactly what the old variant hardcoded).
   (Swapped in 2026-09-02, replacing `qwen3.8:27b` / `qwen3.8-sum`, which had itself
   replaced `qwen3.6:35b` — 35B-A3B MoE, ~23 GB. The benchmark table below was measured
   on that oldest model; the JSON-shape notes below were measured on qwen3.8. Neither
@@ -36,9 +38,9 @@ Everything runs in **base conda** (py3.13) — it already has `openai` and the e
    It installs a background service (tray icon) that auto-starts and listens on `:11434`.
    Verify: `ollama --version` and `curl http://localhost:11434/api/version`.
 2. **Pull the model** (~18 GB): `ollama pull gemma4:26b`
-3. **Create the summarize-tuned variant** (larger context) — from Git Bash:
+3. **Check the context window** — from Git Bash:
    ```bash
-   bash scripts/serve_local_llm.sh        # creates gemma4-sum (num_ctx 65536)
+   bash scripts/serve_local_llm.sh        # pulls, then fails if context < 65536
    ```
 4. **Point summarize at it and run** — from Git Bash, in `tools/`:
    ```bash
@@ -51,7 +53,7 @@ Everything runs in **base conda** (py3.13) — it already has `openai` and the e
    ```
    > PowerShell equivalent for the env vars:
    > ```powershell
-   > $env:OLLAMA_MODEL="gemma4-sum"; $env:OPENAI_REASONING_EFFORT="none"
+   > $env:OLLAMA_MODEL="gemma4:26b"; $env:OPENAI_REASONING_EFFORT="none"
    > ```
    > The `ollama` backend defaults to `http://127.0.0.1:11434/v1` and is keyless, so
    > no base-url/key vars are needed for the localhost case.
@@ -72,7 +74,7 @@ Both speak the OpenAI protocol and share the same HTTP core; they differ only in
 
 | Env var | Backend | Purpose |
 |---------|---------|---------|
-| `OLLAMA_MODEL` | ollama | Served model id, e.g. `gemma4-sum`. Falls back to `OPENAI_MODEL`. |
+| `OLLAMA_MODEL` | ollama | Served model id, e.g. `gemma4:26b`. Falls back to `OPENAI_MODEL`. |
 | `OLLAMA_BASE_URL` | ollama | Endpoint override; defaults to `http://127.0.0.1:11434/v1`. Falls back to `OPENAI_BASE_URL`. |
 | `OPENAI_BASE_URL` | openai | Endpoint for the `openai` backend (real OpenAI if unset). |
 | `OPENAI_MODEL` | openai | Served model id (local servers don't use `gpt-4o`). |
@@ -180,10 +182,17 @@ with `OLLAMA_TRANSLATION_MODEL` (ollama) or `GADGET_TRANSLATION_MODEL` (in-proce
 
 ## Tuning knobs
 
-- **`num_ctx`** (the `gemma4-sum` variant): 65536 measured **17/32 GB, 100% GPU** (`ollama ps`)
-  on the previous `qwen3.8-sum` — ~15 GB of headroom, HY-MT2 co-resident with room to spare.
-  Not re-measured on gemma4; re-check `ollama ps` after the swap. Raise for bigger chunks
-  (costs KV-cache VRAM). `NUM_CTX=... bash scripts/serve_local_llm.sh`.
+- **Context window**: no longer a repo-side knob. Ollama 0.33 auto-sizes it (measured
+  65536 for the bare `gemma4:26b` tag — what the retired `-sum` variant hardcoded), and
+  the **`/v1` OpenAI-compat endpoint the chat backend uses ignores per-request
+  `options.num_ctx`** (verified 2026-09-02: sent 8192, runner stayed at 65536). So the
+  only lever is the SERVER's `OLLAMA_CONTEXT_LENGTH`. `serve_local_llm.sh` reads the
+  loaded `context_length` back from `/api/ps` and **fails** below `MIN_CTX` (65536)
+  rather than letting summarize silently truncate a ~52k-token chunk. The translation
+  path is different — it uses native `/api/chat`, where `OLLAMA_TRANSLATION_NUM_CTX`
+  (default 8192) does apply per request.
+  For reference, 65536 measured **17/32 GB, 100% GPU** on the previous `qwen3.8-sum`;
+  not re-measured on gemma4.
 - **`OPENAI_REASONING_EFFORT=none`**: disables thinking — faster, but **measurably degrades
   summary quality**, so it is deliberately not the default and not emitted by
   `serve_local_llm.sh`. On qwen3.8 with the constrained schema, same prompt: thinking on gave
