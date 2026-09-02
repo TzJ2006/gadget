@@ -95,7 +95,6 @@ test/
 
 # Binary tools
 pdfsizeopt/
-.devcompanion/
 !ai-companion/.devcompanion/
 !ai-companion/.devcompanion/**
 
@@ -111,3 +110,9 @@ node_modules/
 .ruff_cache/
 tools/website/content/Resume.md
 tools/website/content/Resume.zh.md
+
+# >>> AI Dev Companion (managed)
+# 3a tests-preserving (aidev init / HistoryStore; installer may replace this block)
+.devcompanion/*
+!.devcompanion/tests/
+# <<< AI Dev Companion

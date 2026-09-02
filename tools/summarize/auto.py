@@ -185,6 +185,12 @@ def cmd_auto(args) -> None:
     workers_args = ["--workers", str(workers)]
     py = sys.executable
 
+    # 0. Remote export over SSH (config: summarize.ssh_hosts), pull their logs here
+    if not getattr(args, "no_ssh", False):
+        from .ssh_pull import pull_remote_logs
+        from .daily_helpers import _DEFAULT_LOGS_DIR
+        pull_remote_logs(_DEFAULT_LOGS_DIR, extra_args=api_args + force_args)
+
     # 1. Daily export (all unexported dates)
     _run([py, "-m", "summarize", "daily", "export"] + api_args + force_args)
 
