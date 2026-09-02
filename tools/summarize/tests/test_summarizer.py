@@ -52,6 +52,50 @@ def test_normalize_report_prefers_renamed_top_over_decoy_child():
     assert "task_list" in r  # the real (renamed) report body is preserved, not dropped
 
 
+def test_normalize_report_renests_bare_daily_overview():
+    # qwen3.8 sometimes answers one level too deep: daily_overview's own contents
+    # as the whole report. Re-nest so the overview renders and summary is filled.
+    r = _normalize_report({
+        "global": {"what": "Cross-device day", "how": "h", "impact": "i"},
+        "devices": {"my-pc": {"what": "w", "how": "h", "impact": "i"}},
+    })
+    assert r["summary"] == "Cross-device day"
+    assert r["daily_overview"]["devices"]["my-pc"]["what"] == "w"
+    # devices-only (no global) falls back to the first device's `what`
+    r2 = _normalize_report({"devices": {"my-pc": {"what": "only device", "how": "h"}}})
+    assert r2["summary"] == "only device"
+    # a real report that merely CONTAINS daily_overview is left alone
+    intact = {"summary": "real", "daily_overview": {"global": {"what": "x"}}}
+    assert _normalize_report(intact) == intact
+
+
+def test_finalize_report_retries_a_structurally_wrong_answer():
+    from summarize.summarizer import _finalize_report
+
+    bad = {"global": {"what": "overview only"}, "devices": {}}
+    good = {"summary": "real", "tasks": [{"name": "t"}]}
+
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        return bad if len(calls) == 1 else good
+
+    assert _finalize_report(flaky) == good
+    assert len(calls) == 2
+
+    # a good first answer is never re-rolled (a retry would cost a whole merge call)
+    calls.clear()
+    assert _finalize_report(lambda: calls.append(1) or good) == good
+    assert len(calls) == 1
+
+    # both attempts wrong -> salvaged, not blank, and no third call
+    calls.clear()
+    out = _finalize_report(lambda: calls.append(1) or dict(bad))
+    assert len(calls) == 2
+    assert out["summary"] == "overview only"
+
+
 def test_normalize_report_unwraps_to_richest_child():
     # pure wrapper whose real report sits under a non-envelope key alongside a decoy
     r = _normalize_report({

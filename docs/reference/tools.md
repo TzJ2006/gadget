@@ -6,7 +6,7 @@ extra) so `common` and the tool packages are importable. Config resolution is
 **CLI flag > env var > config.json > default** everywhere.
 
 > Default LLM backend is `ollama` (local, keyless — needs a running Ollama with
-> `qwen3.6:35b`), **not** a cloud key. Switch with `--api` or `GADGET_LLM_BACKEND`.
+> `gemma4:26b`), **not** a cloud key. Switch with `--api` or `GADGET_LLM_BACKEND`.
 
 ---
 

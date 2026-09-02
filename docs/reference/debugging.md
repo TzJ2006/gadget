@@ -47,7 +47,7 @@ Base: `outputs/cache/` (`paths.py:10`). `DiskCache` stores
 
 ## Hidden side effects (know these before you debug)
 
-1. **`create_engine()` evicts the resident Ollama chat model.** When the chosen translation engine is **not** `OllamaEngine`, `common/engine.py:864-865` calls `_free_ollama_vram()`, which POSTs `keep_alive:0` for every resident model — unloading e.g. `qwen3.6:35b`. The next summarize chat call then cold-reloads (~8 s). Fires on any deploy/translate step using llamacpp/transformers/vllm. To avoid: `GADGET_TRANSLATION_BACKEND=ollama`, or `GADGET_KEEP_OLLAMA=1` to keep the chat model resident regardless of backend.
+1. **`create_engine()` evicts the resident Ollama chat model.** When the chosen translation engine is **not** `OllamaEngine`, `common/engine.py:864-865` calls `_free_ollama_vram()`, which POSTs `keep_alive:0` for every resident model — unloading e.g. `gemma4:26b`. The next summarize chat call then cold-reloads (~8 s). Fires on any deploy/translate step using llamacpp/transformers/vllm. To avoid: `GADGET_TRANSLATION_BACKEND=ollama`, or `GADGET_KEEP_OLLAMA=1` to keep the chat model resident regardless of backend.
 2. **`apply_env_from_config()` mutates `os.environ` at startup** (`config.py:122-130`) for the whole run — affects `common.llm`/`common.engine` even in subcommands you didn't expect.
 3. **`deploy.log` is truncated every run** (opened `w`, `daily.py:881`) and lives under `outputs/reports/logs/` — easy to miss.
 4. **`_finalized` flags**: export marks past-date logs finalized (`daily.py:193-200`), merge marks past-date reports finalized (`:711`). Once set, re-running export/merge **silently skips** that date unless `--force`.

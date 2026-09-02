@@ -46,7 +46,7 @@ OPENAI_MODELS = {
 OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1"
 
 # The default backend for every chat/reasoning call (summarize, research). Ollama
-# runs Qwen3.6-35B locally; override per-call with --api / config default_api, or
+# runs Gemma4-26B locally; override per-call with --api / config default_api, or
 # globally with GADGET_LLM_BACKEND.
 # `... or "ollama"` (not a default arg) so an exported-but-empty env falls back to
 # the real default rather than tripping the unknown-backend guard below.
@@ -59,7 +59,7 @@ LLM_BACKENDS = ("ollama", "anthropic", "openai", "claude_cli")
 
 # The abstract model names (sonnet/opus/haiku) mean nothing to Ollama; it serves
 # real tags. When OLLAMA_MODEL/OPENAI_MODEL are unset, fall back to this tag.
-DEFAULT_OLLAMA_CHAT_MODEL = "qwen3.6:35b"
+DEFAULT_OLLAMA_CHAT_MODEL = "gemma4:26b"
 
 
 def _clean_env() -> dict:
@@ -88,7 +88,7 @@ def _openai_client():
 
 def _openai_model(default: str) -> str:
     """Resolve the served model name: OPENAI_MODEL env wins (local servers serve
-    under their own id, e.g. ``qwen3.6:35b``), else the caller's default."""
+    under their own id, e.g. ``gemma4:26b``), else the caller's default."""
     return os.environ.get("OPENAI_MODEL") or default
 
 
@@ -96,7 +96,7 @@ def _openai_extra_body() -> Optional[dict]:
     """Extra request-body params for local reasoning models.
 
     Set ``OPENAI_REASONING_EFFORT=none`` to switch off a reasoning model's
-    ``<think>`` phase (e.g. Qwen3.6 served by Ollama/vLLM) so it emits the answer
+    ``<think>`` phase (e.g. Qwen3.8 served by Ollama/vLLM) so it emits the answer
     directly instead of burning the token budget thinking. Unset → no effect, so
     real OpenAI calls are untouched.
     """
@@ -163,15 +163,50 @@ def _chat_raw(client, model: str, prompt: str, timeout: int, max_tokens: int) ->
         raise RuntimeError(f"OpenAI-compatible API call failed: {e}") from e
 
 
-def _chat_json(client, model: str, config: "LLMCallConfig") -> dict:
-    """Shared OpenAI-compatible chat call returning parsed JSON."""
+def _schema_from_tools(tools: Optional[list[dict]]) -> Optional[dict]:
+    """The JSON schema a caller already declared for the Anthropic tool-use path,
+    with every top-level property promoted to ``required`` for local decoding.
+
+    Reusing the tool schema means there is no second schema to keep in sync. The
+    promotion matters as much as the schema: constrained decoding makes a local
+    model emit exactly what is required and stop, so the declared-optional
+    sections get skipped — measured on a daily report, `required: [date, summary,
+    tasks]` yielded a 434-char stub, all-required yielded 5–6 KB with 8–9 of 9
+    sections filled (a richer report than unconstrained decoding produced).
+    Sections with nothing to say still come back, as ``[]``. Nested ``required``
+    lists are left alone; only the top level was ever dropped.
+    """
+    if not tools:
+        return None
+    schema = tools[0].get("input_schema")
+    if not isinstance(schema, dict):
+        return None
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return schema
+    return {**schema, "required": list(properties)}
+
+
+def _chat_json(client, model: str, config: "LLMCallConfig",
+               schema: Optional[dict] = None) -> dict:
+    """Shared OpenAI-compatible chat call returning parsed JSON.
+
+    With *schema*, ask for schema-constrained decoding instead of merely-valid
+    JSON. Local models need this: qwen3.8 answers `{"global": ..., "devices": ...}`
+    — the *contents* of one nested field — as the whole report on roughly half of
+    daily-merge calls under plain ``json_object``, silently emptying every other
+    section. Constrained decoding also measured ~4x faster on that call.
+    """
     logger.info("Calling OpenAI-compatible API (%s, timeout=%ds)...", model, config.timeout)
     t0 = time.monotonic()
+    response_format = ({"type": "json_schema",
+                        "json_schema": {"name": "report", "schema": schema}}
+                       if schema else {"type": "json_object"})
     response = client.chat.completions.create(
         model=model,
         max_tokens=config.max_tokens,
         messages=[{"role": "user", "content": config.prompt}],
-        response_format={"type": "json_object"},
+        response_format=response_format,
         timeout=config.timeout,
         extra_body=_openai_extra_body(),
     )
@@ -333,8 +368,16 @@ def call_openai(config: LLMCallConfig) -> dict:
 
 
 def call_ollama(config: LLMCallConfig) -> dict:
-    """Call a local Ollama server (OpenAI protocol) and return parsed JSON dict."""
-    return _chat_json(_ollama_client(), _ollama_model(config.openai_model), config)
+    """Call a local Ollama server (OpenAI protocol) and return parsed JSON dict.
+
+    Ollama supports schema-constrained decoding, so the caller's tool schema is
+    enforced rather than suggested — see ``_chat_json``. Real OpenAI is left on
+    plain ``json_object``: its ``json_schema`` mode is strict-only and would
+    reject these schemas (no ``additionalProperties: false``, partial
+    ``required``), and the cloud models honor the prompt anyway.
+    """
+    return _chat_json(_ollama_client(), _ollama_model(config.openai_model), config,
+                      schema=_schema_from_tools(config.anthropic_tools))
 
 
 def call_claude_cli(config: LLMCallConfig) -> dict:

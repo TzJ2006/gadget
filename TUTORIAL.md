@@ -138,12 +138,12 @@ pip install -e ".[translator]"         # Gradio translator
 
 Bilingual content has its backend auto-selected by `common.engine.create_engine()`, and **does not go through `--api`**:
 
-- Ollama (`OllamaEngine`, **default**) — no extra deps; auto-preferred when the tag is pulled (`ollama pull hf.co/tencent/Hy-MT2-1.8B-GGUF`)
+- Ollama (`OllamaEngine`, **default**) — no extra deps; translates with the same served chat tag (`gemma4:26b`), so no second model to pull
 - `pip install -e ".[translation]"` → torch + transformers (`TransformersEngine`, Windows fallback)
 - Linux: optionally `pip install vllm>=0.8` → `VLLMEngine` (faster batch inference)
 - `pip install -e ".[translation-gguf]"` → `LlamaCppEngine` (low-memory GGUF, no PyTorch)
 
-Default model `tencent/Hy-MT2-1.8B` (GGUF variant `tencent/Hy-MT2-1.8B-GGUF`), auto-downloaded on first run. Override via:
+The Ollama backend translates with the chat tag (`OLLAMA_TRANSLATION_MODEL` > `OLLAMA_MODEL` > `gemma4:26b`). The in-process fallbacks use `tencent/Hy-MT2-1.8B` (GGUF variant `tencent/Hy-MT2-1.8B-GGUF`), auto-downloaded on first run. Override via:
 
 - Model: `GADGET_TRANSLATION_MODEL` environment variable or `--model` CLI flag
 - Backend: `GADGET_TRANSLATION_BACKEND` (`ollama` / `vllm` / `transformers` / `llamacpp`)

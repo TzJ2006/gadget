@@ -55,7 +55,7 @@ python scripts/sync.py config --init
 |--------|------|----------|----------|
 | `rclone` | Google Drive 同步个人数据 | `sync.py`, `summarize/remote.py` | `shutil.which("rclone")` 或 config 中的 `rclone_path` |
 | `hugo` | 静态站点生成和部署 | `website/update.sh`, `website/update.ps1`, `common/hugo.py` | `shutil.which("hugo")` |
-| `ollama` | 本地 LLM 服务 — 默认聊天后端（Qwen3.6-35B）与默认翻译后端（tag `hf.co/tencent/Hy-MT2-1.8B-GGUF` 已 pull 时自动优先） | `common/llm.py`, `common/engine.py` | `OLLAMA_BASE_URL`（默认 `http://127.0.0.1:11434`） |
+| `ollama` | 本地 LLM 服务 — 默认聊天后端（Gemma4-26B）与默认翻译后端（翻译复用同一个聊天 tag） | `common/llm.py`, `common/engine.py` | `OLLAMA_BASE_URL`（默认 `http://127.0.0.1:11434`） |
 | `torch` + `transformers` | 本地翻译推理引擎回退（`tencent/Hy-MT2-1.8B`；默认后端为 Ollama） | `common/engine.py`, `website/translate_content.py`, `website/translate_site_batch.py` | 通过 `pip install -e ".[translation]"` 安装；模型首次运行自动下载 |
 | `bash` | Shell 脚本执行 | `common/hugo.py`, 所有 `*.sh` 脚本 | Linux/macOS 系统自带；Windows 需 Git Bash |
 
@@ -227,7 +227,7 @@ rclone config
 | `tencent/Hy-MT2-1.8B` | 中英双向翻译（用于 Hugo 内容双语化） | 首次运行自动从 HuggingFace 下载 | `~/.cache/huggingface/hub/`（Ollama 后端存于 `~/.ollama`） |
 
 **推理后端**:
-- **默认**: `OllamaEngine`（Ollama tag `hf.co/tencent/Hy-MT2-1.8B-GGUF` 已 pull 时自动优先，与本地聊天模型共享 Ollama 服务）
+- **默认**: `OllamaEngine`（直接复用本地聊天模型的 tag `gemma4:26b`，与聊天共享同一个 Ollama runner，不额外占显存）
 - **Windows 回退**: `TransformersEngine`（`AutoModelForCausalLM` + `apply_chat_template`，左填充批量生成）
 - **Linux 回退**: `VLLMEngine`（`vllm.LLM.generate`，高性能离线批量推理）
 - **低内存回退**: `LlamaCppEngine`（GGUF，无需 PyTorch）

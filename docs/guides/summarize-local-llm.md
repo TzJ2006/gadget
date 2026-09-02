@@ -7,19 +7,22 @@ against a **local Ollama server** instead of a cloud API — no `ANTHROPIC_API_K
 - **Default runtime: Windows-native Ollama.** WSL2 works identically (see the comparison
   below) but Windows is the standard because it's simpler to keep running (tray service,
   no distro idle-shutdown) and the summarize client runs natively in the same place.
-- **Model:** `qwen3.6:35b` — Qwen3.6-35B-A3B, a 35B-total / 3B-active hybrid Mamba+attention
-  MoE, 4-bit GGUF (~23 GB). Runs **100% on GPU**. A `num_ctx`-enlarged variant `qwen3.6-sum`
-  is what summarize actually points at.
+- **Model:** `gemma4:26b` — Gemma4-26B, 4-bit GGUF (~18 GB). Runs **100% on GPU**. A
+  `num_ctx`-enlarged variant `gemma4-sum` is what summarize actually points at.
+  (Swapped in 2026-09-02, replacing `qwen3.8:27b` / `qwen3.8-sum`, which had itself
+  replaced `qwen3.6:35b` — 35B-A3B MoE, ~23 GB. The benchmark table below was measured
+  on that oldest model; the JSON-shape notes below were measured on qwen3.8. Neither
+  has been re-run on gemma4.)
 - **Host:** single RTX 5090 (32 GB, Blackwell SM_120).
 - **Serving:** Ollama 0.31 — bundles its own CUDA (`cuda_v13`), so there is **no
   CUDA-toolkit / nvcc / kernel-JIT setup** (that's why we use Ollama and not vLLM here;
   see [Why Ollama, not vLLM](#why-ollama-not-vllm)).
 
-Translation (the HY-MT model) now **also runs through Ollama by default** — `common.engine`
-adds an `OllamaEngine` that calls the same local server (native `/api/chat`) for
-`tencent/Hy-MT2-1.8B`. It's auto-selected when Ollama has the model pulled
-(`ollama pull hf.co/tencent/Hy-MT2-1.8B-GGUF`), and falls back to the in-process
-llama.cpp GGUF engine otherwise. Force a backend with `GADGET_TRANSLATION_BACKEND`
+Translation **also runs through Ollama by default**, and as of 2026-09-02 on the **same
+model as chat** — `common.engine`'s `OllamaEngine` calls the same local server (native
+`/api/chat`) with the served chat tag, so there is one model on the GPU instead of two.
+It falls back to the in-process llama.cpp GGUF engine (dedicated MT model
+`tencent/Hy-MT2-1.8B`) when Ollama is unreachable. Force a backend with `GADGET_TRANSLATION_BACKEND`
 (`ollama`/`llamacpp`/`vllm`/`transformers`). See [Translation on Windows](#translation-on-windows).
 
 ---
@@ -32,10 +35,10 @@ Everything runs in **base conda** (py3.13) — it already has `openai` and the e
 1. **Install Ollama for Windows** — download the installer from <https://ollama.com/download>.
    It installs a background service (tray icon) that auto-starts and listens on `:11434`.
    Verify: `ollama --version` and `curl http://localhost:11434/api/version`.
-2. **Pull the model** (~23 GB): `ollama pull qwen3.6:35b`
+2. **Pull the model** (~18 GB): `ollama pull gemma4:26b`
 3. **Create the summarize-tuned variant** (larger context) — from Git Bash:
    ```bash
-   bash scripts/serve_local_llm.sh        # creates qwen3.6-sum (num_ctx 65536)
+   bash scripts/serve_local_llm.sh        # creates gemma4-sum (num_ctx 65536)
    ```
 4. **Point summarize at it and run** — from Git Bash, in `tools/`:
    ```bash
@@ -48,7 +51,7 @@ Everything runs in **base conda** (py3.13) — it already has `openai` and the e
    ```
    > PowerShell equivalent for the env vars:
    > ```powershell
-   > $env:OLLAMA_MODEL="qwen3.6-sum"; $env:OPENAI_REASONING_EFFORT="none"
+   > $env:OLLAMA_MODEL="gemma4-sum"; $env:OPENAI_REASONING_EFFORT="none"
    > ```
    > The `ollama` backend defaults to `http://127.0.0.1:11434/v1` and is keyless, so
    > no base-url/key vars are needed for the localhost case.
@@ -69,7 +72,7 @@ Both speak the OpenAI protocol and share the same HTTP core; they differ only in
 
 | Env var | Backend | Purpose |
 |---------|---------|---------|
-| `OLLAMA_MODEL` | ollama | Served model id, e.g. `qwen3.6-sum`. Falls back to `OPENAI_MODEL`. |
+| `OLLAMA_MODEL` | ollama | Served model id, e.g. `gemma4-sum`. Falls back to `OPENAI_MODEL`. |
 | `OLLAMA_BASE_URL` | ollama | Endpoint override; defaults to `http://127.0.0.1:11434/v1`. Falls back to `OPENAI_BASE_URL`. |
 | `OPENAI_BASE_URL` | openai | Endpoint for the `openai` backend (real OpenAI if unset). |
 | `OPENAI_MODEL` | openai | Served model id (local servers don't use `gpt-4o`). |
@@ -79,9 +82,50 @@ Both speak the OpenAI protocol and share the same HTTP core; they differ only in
 `tools/summarize/onboarding.py` preflight accepts `--api ollama` (keyless local) and
 `OPENAI_BASE_URL` in place of a key for `--api openai`.
 
+### Schema-constrained decoding (ollama only)
+
+`call_ollama` sends the caller's existing Anthropic tool schema as
+`response_format: {"type": "json_schema", ...}`, so Ollama constrains decoding to that
+shape. `call_openai` deliberately stays on plain `json_object` (cloud `json_schema` is
+strict-only and would reject these schemas, and the cloud models follow the prompt anyway).
+
+This is not cosmetic. Under plain `json_object`, qwen3.8 answers the daily merge **one level
+too deep** on roughly half of runs — `{"global": ..., "devices": ...}`, i.e. the contents of
+the `daily_overview` field, as the whole report. Valid JSON, wrong level, and every other
+section (tasks, problems, learnings) reads empty. Measured over 5 real merges: 2 correct,
+3 truncated to the overview.
+
+`_schema_from_tools` also promotes **every** top-level property to `required`. Constrained
+decoding otherwise makes the model emit exactly the declared-required fields and stop —
+on the daily schema (`required: [date, summary, tasks]`) that produced a 434-char stub.
+All-required, same prompt:
+
+| Mode | Output | Sections filled |
+|------|-------:|----------------:|
+| `json_object` (unconstrained) | 5,677 chars | 7 / 9 |
+| `json_schema`, original `required` | 434 chars | 3 / 9 |
+| `json_schema`, all-required | 5,093–6,460 chars | 8–9 / 9 |
+
+Sections with nothing to report still come back, as `[]`.
+
+The constraint helps a lot but is **not** a cure: on real merges qwen3.8 still escaped it on
+1 of 3 clean runs (vs 3 of 5 unconstrained). Two backstops sit behind it in
+`tools/summarize/summarizer.py`:
+
+- `_finalize_report` retries the merge **once** when the answer has no report-shaped keys.
+  Sampling is the only difference between a good and a bad answer, so a retry costs one merge
+  call (~2 min, chunk summaries already computed) and only on runs that already failed.
+- `_renest_overview` then re-nests a bare `daily_overview` payload and lifts `global.what` into
+  `summary`, so a doubly-unlucky run — or any non-ollama backend — degrades to a working
+  overview instead of a blank report. Tasks/problems/learnings are genuinely absent from such a
+  response and cannot be recovered.
+
 ---
 
 ## Verified test result (2026-06-26 daily merge) + WSL vs Windows
+
+> Measured on the **previous** model, `qwen3.6:35b` / `qwen3.6-sum` (~23 GB MoE). Kept as the
+> WSL-vs-Windows host comparison, which is model-independent. Not re-run on `qwen3.8:27b`.
 
 Ran `daily merge` over 4 device logs (15 conversations, 1,469 messages, 472,328 chars).
 summarize hierarchically chunked it into **4 segments + 1 merge = 5 LLM calls**. Both hosts
@@ -118,11 +162,12 @@ default 32,768 context would silently truncate it.
 Bilingual content (`common.bilingual` / `common.translation` / `common.engine`) uses a local
 inference engine. `create_engine()` prefers Ollama, then falls back by what's installed:
 
-- **Ollama (default, when available):** if the local server has the HY-MT2 model pulled
-  (`ollama pull hf.co/tencent/Hy-MT2-1.8B-GGUF`), `create_engine()` selects **`OllamaEngine`**,
-  which translates over the same `/api/chat` server as summarize — **no extra process VRAM**,
-  no PyTorch/llama-cpp needed. Model tag: `OLLAMA_TRANSLATION_MODEL` (default
-  `hf.co/tencent/Hy-MT2-1.8B-GGUF`).
+- **Ollama (default, when available):** `create_engine()` selects **`OllamaEngine`**, which
+  translates over the same `/api/chat` server as summarize, using the **same served chat
+  model** — **no extra process VRAM**, nothing extra to pull, no PyTorch/llama-cpp needed.
+  Model tag: `OLLAMA_TRANSLATION_MODEL` > `OLLAMA_MODEL` > `gemma4:26b`. Point
+  `OLLAMA_TRANSLATION_MODEL` at `hf.co/tencent/Hy-MT2-1.8B-GGUF` to go back to the
+  dedicated MT model (it is ~1.5 GB and co-resides cheaply).
 - **Fallback — in-process:** if Ollama lacks the model, `create_engine()` uses `llama-cpp-python`
   (`LlamaCppEngine`, GGUF) if installed, else vLLM (Linux) / transformers. Default model
   **`tencent/Hy-MT2-1.8B-GGUF`**, auto-downloaded from HuggingFace on first translate.
@@ -135,12 +180,21 @@ with `OLLAMA_TRANSLATION_MODEL` (ollama) or `GADGET_TRANSLATION_MODEL` (in-proce
 
 ## Tuning knobs
 
-- **`num_ctx`** (the `qwen3.6-sum` variant): 65536 uses ~28.6/32 GB. Raise for bigger chunks
-  (costs KV-cache VRAM); drop toward 40960 if you OOM. `NUM_CTX=... bash scripts/serve_local_llm.sh`.
+- **`num_ctx`** (the `gemma4-sum` variant): 65536 measured **17/32 GB, 100% GPU** (`ollama ps`)
+  on the previous `qwen3.8-sum` — ~15 GB of headroom, HY-MT2 co-resident with room to spare.
+  Not re-measured on gemma4; re-check `ollama ps` after the swap. Raise for bigger chunks
+  (costs KV-cache VRAM). `NUM_CTX=... bash scripts/serve_local_llm.sh`.
 - **`OPENAI_REASONING_EFFORT=none`**: disables thinking — faster, but **measurably degrades
   summary quality**, so it is deliberately not the default and not emitted by
-  `serve_local_llm.sh`. Only set it if you accept the quality trade-off. (`max_tokens` is 8192,
-  so the think phase fits; if `content` comes back empty with `finish_reason: length`, raise it.)
+  `serve_local_llm.sh`. On qwen3.8 with the constrained schema, same prompt: thinking on gave
+  5,093–6,460 chars / 8–9 of 9 sections in 67–113 s; thinking off gave 2,376–2,526 chars /
+  6 of 9 in 43–49 s. Roughly half the report for half the time. Only set it if you accept that
+  trade-off — note the repo-root `config.json` template ships `"reasoning_effort": "none"`.
+  (`max_tokens` is 8192, so the think phase fits; if `content` comes back empty with
+  `finish_reason: length`, raise it.)
+  The **frontmatter review** call (`common/translation/frontmatter.py`) is the one exception:
+  it pins `none` internally, because it is a short structured-JSON edit where the think phase
+  ate the whole 1024-token budget and returned empty — 19 s of nothing vs 0.2 s of valid JSON.
 - **Keep-alive**: Ollama unloads a model after 5 min idle. Translation/OCR requests now send
   `keep_alive` (default `30m`, override with `OLLAMA_KEEP_ALIVE`) per request; the chat model
   goes through the OpenAI-compat path which can't set it — for qwen residency across long
@@ -150,7 +204,7 @@ with `OLLAMA_TRANSLATION_MODEL` (ollama) or `GADGET_TRANSLATION_MODEL` (in-proce
 - **Translation concurrency**: `GADGET_TRANSLATION_CONCURRENCY` (default 4) — concurrent chunk
   requests batch inside Ollama for ~2.2× wall-clock; `1` restores sequential.
 - **Translation context**: `OLLAMA_TRANSLATION_NUM_CTX` (default 8192) keeps HY-MT2 at ~3.6GB
-  so it **co-resides** with the 24GB chat model (no more ~10s evict/reload per
+  so it **co-resides** with the chat model (no more ~10s evict/reload per
   summarize↔translate switch). Chunkers cap zh chunks at 5000 chars to fit.
 - **`chunk_text` max_chars** (150,000 in `common/llm.py`) ≈ ~40k tokens/chunk for these dev logs;
   stays under `num_ctx 65536` with headroom for the prompt + output.
@@ -183,7 +237,7 @@ conda activate AI && pip install -e /mnt/d/Github/gadget openai
 # 1. install Ollama (needs sudo) + start the systemd service
 curl -fsSL https://ollama.com/install.sh | sh
 # 2. pull the model + create the variant
-ollama pull qwen3.6:35b
+ollama pull gemma4:26b
 bash /mnt/d/Github/gadget/scripts/serve_local_llm.sh
 # 3. run (from tools/)
 cd /mnt/d/Github/gadget/tools

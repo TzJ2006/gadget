@@ -76,7 +76,7 @@ gadget/
 
 ### Summarize — AI 对话日报/周报/月报
 
-自动读取你每天与 AI 的对话记录（Claude Code / Codex / Cursor Agent / ChatGPT / 通用 JSON），调用 LLM API 生成结构化日报、周报和月度总结。多设备工作流：在每台设备上导出对话 log，通过云盘同步或手动拷贝汇总，生成最终日报；积累足够日报后可继续生成周报和月度趋势总结。通过 [ccusage](https://github.com/ryoppippi/ccusage) 20.x 的逐源命名空间命令（`ccusage claude`、`ccusage codex`、`ccusage gemini`…）自动发现并统计所有 agent CLI 的 token 用量和费用。AI 总结后端四选一，统一通过 `--api` 切换：`ollama`（默认——本地 Ollama，无需 key，Qwen3.6-35B）、`claude_cli`（复用 Claude Code CLI 登录态，无需 API key）、`anthropic`、`openai`。
+自动读取你每天与 AI 的对话记录（Claude Code / Codex / Cursor Agent / ChatGPT / 通用 JSON），调用 LLM API 生成结构化日报、周报和月度总结。多设备工作流：在每台设备上导出对话 log，通过云盘同步或手动拷贝汇总，生成最终日报；积累足够日报后可继续生成周报和月度趋势总结。通过 [ccusage](https://github.com/ryoppippi/ccusage) 20.x 的逐源命名空间命令（`ccusage claude`、`ccusage codex`、`ccusage gemini`…）自动发现并统计所有 agent CLI 的 token 用量和费用。AI 总结后端四选一，统一通过 `--api` 切换：`ollama`（默认——本地 Ollama，无需 key，Gemma4-26B）、`claude_cli`（复用 Claude Code CLI 登录态，无需 API key）、`anthropic`、`openai`。
 
 ```bash
 python -m summarize daily export                                   # Phase 1: 导出所有未导出日期
@@ -107,7 +107,7 @@ python tools/research/research_scout.py citations 2301.12597               # 引
 python tools/research/research_scout.py deploy                              # 部署报告到 Hugo
 ```
 
-所有 LLM 功能支持 `--api` 切换后端：`ollama`（默认——本地 Ollama，无需 key，Qwen3.6-35B）、`claude_cli`（无需 API key）、`anthropic`、`openai`。
+所有 LLM 功能支持 `--api` 切换后端：`ollama`（默认——本地 Ollama，无需 key，Gemma4-26B）、`claude_cli`（无需 API key）、`anthropic`、`openai`。
 
 详细分步操作见 [TUTORIAL.zh.md — Research](TUTORIAL.zh.md#research) 与源文档 [tools/research/TUTORIAL.md](../tools/research/TUTORIAL.md)。
 
@@ -209,15 +209,15 @@ Hugo 站点内容直接写入 `tools/website/content|static`（已无单独的 `
 - Node.js 18+（仅独立仓库 `../ai-companion/` 需要）
 - 各工具的具体依赖见对应目录的 `requirements.txt`
 - common 包 + summarize / research / benchmark / website extras：`pip install -e ".[all]"`（`all` **不含** `translator`；需另装 `pip install -e ".[translator]"`）
-- 网站/翻译使用本地推理引擎（默认 Ollama；Linux 兜底 vLLM，Windows 兜底 transformers），模型 `tencent/Hy-MT2-1.8B` 首次运行自动下载
+- 网站/翻译使用本地推理引擎（默认 Ollama，直接复用同一个 `gemma4:26b` 聊天模型；Linux 兜底 vLLM，Windows 兜底 transformers，用 `tencent/Hy-MT2-1.8B`，首次运行自动下载）
 
 ## 注意事项
 
 - GPU 基准测试会自动检测 CUDA / Apple MPS / Intel XPU
 - `tokens/` 目录存放 API 密钥与 onboarding sheet，已 gitignore，切勿提交其内容
 - 所有生成文件输出到 `outputs/` 目录，已 gitignore
-- 四个 LLM 后端统一通过 `--api` 参数切换：`ollama`（默认，本地 Qwen3.6-35B）、`claude_cli`、`anthropic`、`openai`
-- 翻译链路不走 `--api`，而是使用 `GADGET_TRANSLATION_BACKEND` 选择的本地推理引擎：`ollama`（模型已 pull 时默认，走本地 Ollama 服务）→ `llamacpp`/`vllm`/`transformers`（进程内），模型 `tencent/Hy-MT2-1.8B`
+- 四个 LLM 后端统一通过 `--api` 参数切换：`ollama`（默认，本地 Gemma4-26B）、`claude_cli`、`anthropic`、`openai`
+- 翻译链路不走 `--api`，而是使用 `GADGET_TRANSLATION_BACKEND` 选择的本地推理引擎：`ollama`（默认，走本地 Ollama 服务，复用聊天 tag `gemma4:26b`）→ `llamacpp`/`vllm`/`transformers`（进程内，模型 `tencent/Hy-MT2-1.8B`）
 - 跨设备数据同步使用 `python scripts/sync.py push/pull`（需配置 rclone）
 - 永远不要 `git add` 自动生成内容、rclone 同步的数据、构建产物（`build/`、`gadget.egg-info/`）或 `tools/website/` 下的部署/主题仓库
 - 各工具配置统一在仓库根 `config.json`（已 gitignore；从 `config.example.json` 复制）。可用 `GADGET_CONFIG` 覆盖路径。
