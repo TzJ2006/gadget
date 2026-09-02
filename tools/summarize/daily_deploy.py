@@ -241,7 +241,7 @@ def _config_init():
     if api:
         cfg["default_api"] = api
 
-    model = input("本地模型名 (OLLAMA_MODEL，如 gemma4-sum，留空跳过): ").strip()
+    model = input("本地模型名 (OLLAMA_MODEL，如 gemma4:26b，留空跳过): ").strip()
     if model:
         cfg["model"] = model
 
