@@ -932,3 +932,16 @@
 - 2026-09-02 17:41  Edit C:/Users/tongt/.claude/projects/D--GitHub-gadget/memory/MEMORY.md
 - 2026-09-02 19:18  Edit config.json
 - 2026-09-02 19:18  Edit config.json
+- 2026-09-02 21:49  Write outputs/reports/enbench.py
+- 2026-09-02 21:52  Write outputs/reports/gen_post.py
+- 2026-09-02 22:19  Write scripts/serve_local_llm.sh
+- 2026-09-02 22:19  Edit config.json
+- 2026-09-02 22:19  Edit config.example.json
+- 2026-09-02 22:20  Edit tools/summarize/daily_deploy.py  → I-024 把报告作为中英双语文章发到博客上
+- 2026-09-02 22:20  Edit common/tests/test_translation_review.py
+- 2026-09-02 22:20  Edit docs/ecl/gadget-features.yaml
+- 2026-09-02 22:20  Edit docs/guides/summarize-local-llm.md
+- 2026-09-02 22:21  Edit docs/guides/summarize-local-llm.md
+- 2026-09-02 22:21  Edit docs/guides/summarize-local-llm.md
+- 2026-09-02 22:21  Edit docs/guides/summarize-local-llm.md
+- 2026-09-02 22:21  Edit docs/guides/summarize-local-llm.md

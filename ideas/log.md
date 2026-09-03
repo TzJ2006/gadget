@@ -329,3 +329,8 @@
   `FEAT-gadget-19`，并依赖一个 MCP server（`FEAT-gadget-16`）、`workflow/`、`skills/`；
   而 `docs/ecl/gadget-features.yaml`（2026-08-14）明确记录这些都已从仓库移除。
   这两份 ECL 文件是过期的，不应作为下一轮的输入。
+- 2026-09-02 23:18  Edit ideas/graph.yaml
+- 2026-09-02 23:24  Edit ideas/graph.yaml
+- 2026-09-02 23:24  Edit ideas/graph.yaml
+- 2026-09-02 23:24  Edit ideas/graph.yaml
+- 2026-09-02 23:24  Edit ideas/graph.yaml

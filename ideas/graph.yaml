@@ -4,5 +4,59 @@ overview: >
   （运行 /ccscan 填写）
 
 endpoints: []
+next_id: 2
 
-ideas: []
+ideas:
+  - id: I-001
+    name: "工具生成物和自带引擎不进版本库"
+    status: todo
+    needs: []
+    what: >
+      把开发工具写进仓库、但不属于项目源码的四类目录挡在版本库外，并从索引里摘掉：
+      .devcompanion/（companion 生成的测试语料）、.companion/（引擎本体 companion.mjs
+      与 FORMAT.md，456KB）、.agents/、.cursor/。规则追加在 .gitignore 里 companion
+      自己那个 managed 块之后。因为涉及的三个 commit 还没 push，用 amend 把它们从那个
+      commit 里摘掉，而不是新加一个删除 commit。
+      唯一的例外是 .devcompanion/tests/char/ 下那 2 个手写测试
+      （test_char_parsers.py、test_char_common_pure.py，含真断言），它们继续跟踪。
+    why: >
+      这四个目录现在既没被跟踪也没被忽略，任何一次 `git add -A` 都会把它们整个扫进
+      历史——已经发生过一次：HEAD 那个 commit 493 文件 / 15,410 行，其中约 11,500 行
+      是工具生成物，而 .devcompanion/tests 那 474 个文件的内容是 543 条
+      `assert False  # TODO: implement`，跑起来必挂，不是测试。
+      更要紧的是「以后再删」没用：git 历史会永久留着，一旦 push 就只剩改写历史 + 强推。
+      仓库自己的约定（AGENTS.md：生成物一律落 outputs/）本来就说了它们不该在这里。
+    expected: >
+      `git ls-files .devcompanion .companion .agents .cursor` 只剩
+      .devcompanion/tests/char/ 下那 2 个手写测试；
+      `git status --porcelain` 里看不到这四个目录；
+      HEAD 那个 commit 从 493 文件 / 15,410 行降到约 16 文件 / 4,000 行；
+      push 之后 GitHub 上不存在这四个目录，且历史里从未出现过。
+    how: >
+      在 .gitignore 的 managed 块之后追加规则，`git rm -r --cached` 摘掉已被跟踪的
+      .devcompanion 再把 char/ 那 2 个加回来，然后 amend 那个尚未推送的 commit，最后 push。
+      .devcompanion 那条要写成 `.devcompanion/*` 而不是 `.devcompanion/`：git 不会
+      下探被排除的目录，父级留着才可能用 `!` 把 char/ 重新放回来。
+    why_this_way: >
+      追加在 managed 块之后而不是改块内：块头自己写了「installer may replace this
+      block」，改在里面下次重装就没了；而 gitignore 是后一条匹配覆盖前一条，追加在
+      后面反而压得住它的 `!.devcompanion/tests/`。
+      用 amend 而不是新起一个删除 commit：这几个 commit 还没 push，这是唯一能让这
+      11k 行压根没进过历史的时机，错过就只剩 filter-repo + 强推。
+      不动 ideas/graph*.yaml 和 ideas/log*.md：那是人写的 idea 图本体，属于源码。
+    code:
+      - file: .gitignore
+        symbol: companion-and-tool-artifacts
+    verify:
+      command: git ls-files .devcompanion .companion .agents .cursor
+      pass: "只有 .devcompanion/tests/char/ 下的 2 个手写测试"
+    future: >
+      堵住之后，下次任何工具往仓库里写东西都会立刻在 `git status` 里现形，
+      而不是等到某次 `git add -A` 之后才在 diff 行数里被发现。
+    log:
+      - date: "2026-09-02"
+        by: new
+        note: "创建"
+      - date: "2026-09-02"
+        by: ccthink
+        note: "补齐八问字段；code 指向 .gitignore，等待批准后进 doing"
