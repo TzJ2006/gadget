@@ -1,0 +1,1193 @@
+version: 1
+project: gadget
+overview: >
+  一个个人开发工具箱单仓。原料有四种：各台机器上的 AI 对话记录、各大论文库的新论文、
+  本机硬件的实测算力、人手写的文章与图片视频。它们走同一条六步主路——取素材 → 理解 →
+  成稿 → 双语 → 落站 → 发布——最后变成公开站点 tzj2006.github.io 上自己保持最新的
+  中英双语页面。所有大模型调用与翻译都跑在本机 Ollama 上，不需要任何云端密钥。
+  主路之外只有两样东西：一个直接调用翻译核心的本地网页，和一份只追加的跑分 CSV 账本。
+  底座只有三件，每一步都用：仓库根一个 config.json、一套原子落盘加内容哈希缓存、
+  一个本地模型入口。分层规则不变：共享代码只放 common/，工具之间零 import，
+  common/ 从不反向依赖 tools/。许可为 GPL-3。
+
+endpoints: [I-072, I-077, I-081]
+next_id: 84
+
+steps:
+  - name: 共用底座
+    blurb: 把读配置、安全落盘、调本地模型这三件每一步都要做的事，各收成一处，全仓只有一份。
+  - name: 取素材
+    blurb: 把各台机器上的对话记录、各大论文库的新论文、本机硬件的实测数字，都变成同一种形状的素材。
+  - name: 读懂并写成稿
+    blurb: 让本地大模型把素材读成一份结构可靠的结果，再按版式渲染成人能读的报告。
+  - name: 翻成两种语言并发到站上
+    blurb: 把报告和手写文章翻成中英两份、逐项检查、压好媒体，再构建并推送到公开站点。
+  - name: 一条命令跑完全程
+    blurb: 定时自动跑完从取素材到发布的整条链，不需要人记住任何命令的顺序。
+  - name: 别人装上就能用
+    blurb: 让任何人把这个仓库下载下来、装一次，就能单独使用其中任何一个工具。
+
+ideas:
+  # ─────────────────────────── 共用底座 ───────────────────────────
+  - id: I-061
+    step: 共用底座
+    name: "所有配置只放在仓库根的一个文件里，而且共享代码自己就读得到"
+    status: doing
+    needs: []
+    what: >
+      运行期配置只有一个来源：仓库根 config.json，按 llm / translation / summarize /
+      research / sync 五节分；路径可用 GADGET_CONFIG 覆盖，取值顺序固定为
+      命令行参数 > 环境变量 > 该节 > 硬编码默认值。common/ 里的代码直接调 load_section
+      读它，不再由哪个工具把配置值灌进环境变量再绕回来。
+    why: >
+      今天 common/llm.py 读不到配置，是靠 tools/summarize/config.py 的 _ENV_FROM_CONFIG
+      把 model 桥接成 OLLAMA_MODEL 环境变量绕进去的。结果是「换个模型」要先知道这条桥
+      的存在，而且这条桥只有 summarize 有——research 或 translator 单独跑时同一个键
+      根本不生效。配置节也从六个缩到五个：research_scout 与 research 是同一个工具
+      （而 config.example.json 里其实还有第六节 translation，AGENTS.md 没记）；
+      translator 那 11 个环境变量旋钮也该进 config，而不是自成一套。
+      还有一处是「机制服务机制」：进程内缓存配了一个手动的 clear_cache()，
+      于是「读到的是不是最新的」变成每个调用方的责任——
+      test_config.py:55-64 还把这个读到旧值的行为当成预期写进了测试。
+    expected: >
+      只改 config.json 的 llm.chat_model、不设任何环境变量，summarize / research /
+      translator 三个入口都换到新模型；全仓 grep 不到 _ENV_FROM_CONFIG；
+      删掉 ~/.config 下的旧文件后一切照常。
+    how: >
+      把 common/translation/frontmatter.py:257 已经在用的「函数体内
+      from common.config import load_section」这个写法推广到 common/llm.py，
+      删掉 tools/summarize/config.py 里的环境变量桥；
+      并把 common/config.py:35 那个进程内缓存改成按（路径, 修改时间）取键——
+      这样 clear_cache() 和它的约 20 处调用点可以一起删掉。
+    why_this_way: >
+      仓里已经有一个能用且在用的先例（frontmatter.py 的 resolve_review_model），
+      抄它是最短路径；局部 import 而不是模块顶层，是因为 common/config.py 与
+      common/llm.py 不能在顶层互相依赖。不引入 pydantic-settings 这类配置库——
+      为了一个模型名加一个依赖是纯负债。
+    code:
+      - file: common/llm.py
+        symbol: resolve_chat_model
+      - file: tools/summarize/config.py
+        symbol: _ENV_FROM_CONFIG
+    verify:
+      command: python -m pytest common/tests/test_config.py common/tests/test_llm_model.py
+      pass: "exit 0"
+    future: >
+      新工具只要加一节就接进同一套解析顺序；「今天用的哪个模型」变成一个可以打日志、
+      可以落在报告签名里的值。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: "合并自 I-001 与 I-051 的配置那一半；同时把配置节从七个并到五个。"
+
+  - id: I-062
+    step: 共用底座
+    name: "原子落盘加一个内容哈希缓存，管住全仓所有「内容没变就别重做」"
+    status: doing
+    needs: []
+    what: >
+      两样东西：atomic_write（先写临时文件再替换）和一个按内容哈希取键的磁盘缓存。
+      全仓所有「上次算过就别再算」的判断都走这一个缓存，唯一的例外是写进站点的文件——
+      它们把源内容指纹盖在文件自己的头里，因为产物必须能自证来历。
+    why: >
+      今天同一个判断有七套实现、七种存放格式：站点文件里的 src-hash 注释
+      （bilingual.py:32）、块缓存自带的 _chunk_meta（llm.py:479）、DiskCache
+      （cache.py:23）、配置的进程内缓存（config.py:35）、load_json_config 的记忆字典
+      （io.py:33）、.last_build 时间戳（publish.py:138，而且实现了两遍——preflight
+      也有一份，两份对「生成文件算不算」的判断还不一致）、.translation_state.json
+      （translate_site_batch.py:313），外加发布前 git diff --cached 那第五道判断
+      （publish.py:311）。最刺眼的一条：**DiskCache 在 common/ 内部没有任何调用方**——
+      两条最热的跳过路径（块缓存、src-hash 标记）各自另写了一套格式。
+      两个状态对不上的时候没人判断得了哪个对：2026-08-04 那次九篇中英文逐字相同就是这一类。
+      而时间戳判据比哈希判据更弱：touch 一下就会重压一遍，改完又改回去反而不会；
+      更糟的是 .last_build 只在推送成功之后才更新（publish.py:374），
+      所以预检中止或构建失败时，这一轮已经压好的媒体会留在旧的那一侧，下一轮再压一遍。
+    expected: >
+      .last_build 与 .translation_state.json 两个文件都不存在了，媒体压缩与双语配对
+      都由内容哈希决定；进程在写入中途被杀时目标文件要么旧要么新、不会是半截；
+      同一份输入第二次跑命中缓存、不发起任何推理；失败的结果不进缓存。
+    how: >
+      atomic_write / content_hash 不变。DiskCache 只差一样东西就能接住那些自制格式：
+      put/get 多一个 meta 字典（约 6 行）——块缓存手搓的 _chunk_meta 信封存的就是
+      {global_hash, total_chunks}。加上它之后把块缓存、.last_build、
+      .translation_state.json 三处逐个换成 DiskCache；
+      站点文件的 src-hash 标记保留，但它唯一的职责变成「产物自证来历」，不再兼任缓存。
+    why_this_way: >
+      留两种机制而不是一种，是因为它们答的是两个问题：缓存答「这次要不要算」，
+      文件里的标记答「盘上这个文件是从哪份源内容来的」。后者必须跟着产物走，
+      否则删一次缓存目录就会把整站重译一遍。其余三个状态存放点答的都是第一个问题，
+      所以并掉。
+    code:
+      - file: common/cache.py
+        symbol: skip_if_unchanged
+      - file: common/io.py
+        symbol: atomic_write
+    verify:
+      command: python -m pytest common/tests/test_cache.py common/tests/test_bilingual_skip.py
+      pass: "exit 0"
+    future: >
+      任何新的「贵调用」或新的重型构建步骤挂上同一个封装就有了增量语义，
+      不必各自发明一个状态文件。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          合并自 I-002、I-013 的 .last_build 判据、I-014 的状态文件、I-023 的
+          source_hash、I-026/I-027 的缓存闸门、I-011 的跳过判据。
+          实测依据：grep 到 15 个非测试文件在各自实现这件事。
+
+  - id: I-063
+    step: 共用底座
+    name: "打本机 Ollama 只有一个客户端、「这次用哪个模型」只有一个解析器；要的模型没下载就当场报错"
+    status: doing
+    needs: [I-061]
+    what: >
+      收拢的是**被建了两遍的那一层**，不是上面两个选择。
+      一个 Ollama 客户端（今天有两个：OpenAI SDK 与标准库 urllib，各抄一份地址优先级）；
+      一个 tag 解析器 resolve_ollama_tag(requested=None)，优先级为
+      显式参数 > OLLAMA_MODEL > config 对应节 > 默认值，而且**必须认它的参数**
+      （今天 ollama 那条会把调用方传的 model 直接丢掉）；解析出 tag 之后问一次
+      /api/tags，不在里面就抛错并列出本机可用 tag，Ollama 不可达时不拦。
+      在这一层之上，两个选择各自保留、互不混淆：
+      「聊天走哪个提供方」留 ollama 与 openai 两个（删 claude_cli 与 anthropic），
+      「翻译用哪个本机运行时」留 ollama 与 transformers 两个（删 vLLM 与 llama.cpp，
+      以及只服务后三个的抽象基类）。
+      **并且停止为翻译覆盖 num_ctx**：详见下面「为什么这样实现」——那个旋钮现在是在帮倒忙。
+      keep_alive 与固定 4 路并发保留。
+    why: >
+      今天是两套并行的模型栈、八个后端：聊天四个（ollama / anthropic / openai /
+      claude_cli），翻译四个（ollama / vLLM / llama.cpp / transformers，engine/ 共 966 行，
+      其中 540 行是三个非 Ollama 后端加一层抽象基类）。它们解决的是同一件事——
+      「在哪跑这个模型」。更具体的三处：
+      （一）同一个本机 Ollama 服务有两个客户端——common/llm.py:107-129 走 OpenAI SDK，
+      common/engine/ollama.py:114-261 走标准库 urllib，各自抄了一份
+      OLLAMA_BASE_URL > OPENAI_BASE_URL > 127.0.0.1 的优先级；
+      （二）「这次用哪个模型」有五个解析器、五条优先级链（llm.py:89 与 123、
+      engine/base.py:79 与 87、frontmatter.py:247），只有最后一个读 config；
+      （三）ollama 那条会把调用方传进来的 model 参数直接丢掉（llm.py:123-129），
+      所以 json_utils 里那条写在文档上的 haiku→sonnet→opus 升级链在默认后端上是空转。
+      另外翻译那侧的默认 Ollama tag 其实就是聊天 tag（engine/base.py:22，
+      由 resolve_ollama_translation_model 解析），所以按默认配置 HY-MT2 从来不会被加载——
+      想法图的总览和 I-006 的 expected 都还写着「pull 了 HY-MT2 就自动选 Ollama」。
+    expected: >
+      全仓只剩一处硬编码的默认聊天模型名，改它一处全仓生效；
+      写错一个 tag 立刻报错并列出本机可用 tag，而不是走到 openai SDK 那层才炸；
+      frontmatter 复核不再被静默跳过；ollama ps 显示两个模型同时驻留。
+    how: >
+      common/llm.py 留 call_llm_raw / call_llm 两个函数与 ollama + openai 两个后端，
+      删 anthropic 与 claude_cli 分支；common/engine/ 留 ollama.py 与 transformers.py，
+      删 vllm.py、llamacpp.py 与为四后端而存在的 base.py 抽象；
+      create_engine 缩成一个 if；把 frontmatter 的 _match_review_tag 提到
+      common/engine/ollama.py 作共享 helper，frontmatter 留 re-export shim。
+    why_this_way: >
+      **刻意不把「聊天选提供方」和「翻译选运行时」合成一个开关**——审计时被质疑过这一点，
+      质疑是对的：前者选的是「跟哪个服务说话」（要结构化 JSON 整形，要三套云端 SDK），
+      后者选的是「哪个本机运行时加载这一个模型文件」。它们是两个问题。
+      真正被建了两遍的是下面那一层：同一个 Ollama 服务两个客户端、同一个问题五个 tag 解析器。
+      所以这个节点收的是那一层，上面两个选择各留两个选项。
+      留两个翻译运行时而不是一个，是因为「这台机器没装 Ollama 也要能翻译」是真实需求；
+      留 transformers 而不是 vLLM 或 GGUF，因为它是唯一纯 pip、不要额外进程与编译的；
+      llamacpp 连批量都没有（顺序循环），它给不了 Ollama 给不了的东西。
+      删 claude_cli 是因为它是对一个命令行的子进程调用，而且「取纯文本」与「取 JSON」
+      各写了一遍。删 base.py 的抽象基类是因为两个实现不需要一层继承来共享三个方法名。
+      提取 match_tag 时**不留 re-export shim**：核过了，_match_review_tag 在定义之外
+      只有两处引用（frontmatter.py:316 与一处测试），AGENTS.md 那条「shim 必须存活」
+      说的是对外发布过的 re-export，不是私有小 helper。
+      最后一条是本轮审计里最值得单独写出来的：**「两个模型共驻一块显卡」这个前提，
+      已经被一行代码取消了**——base.py:22 写着
+      DEFAULT_TRANSLATION_MODEL_OLLAMA = DEFAULT_OLLAMA_CHAT_MODEL，
+      也就是翻译用的就是聊天那个模型，显存上只有一个模型，没有谁挤谁。
+      但 I-008 为那个前提造的全部机制都还在，而其中一个现在是在帮倒忙：
+      ollama.py:177 仍然把 num_ctx 压到 8192，而聊天那条运行时是按 65536 加载的
+      （serve_local_llm.sh 的 MIN_CTX，并且在 :88-95 显式检查——因为 /v1 接口会忽略
+      单次请求的 num_ctx），原生接口却会认它。结果是每次「总结↔翻译」切换都逼 Ollama
+      重载一次运行时——正是这个想法声称要省掉的那约 10 秒，现在每次切换都在付。
+      所以这里停掉 num_ctx 覆盖，不是省事，是修 bug。
+    code:
+      - file: common/engine/ollama.py
+        symbol: resolve_ollama_tag
+      - file: common/engine/ollama.py
+        symbol: match_tag
+      - file: common/llm.py
+        symbol: LLM_BACKENDS
+      - file: common/engine/__init__.py
+        symbol: create_engine
+    verify:
+      command: python -m pytest common/tests/test_dispatch.py common/tests/test_engine_ollama.py common/tests/test_llm_model.py
+      pass: "exit 0"
+    future: >
+      「试一个新本地模型」的成本降到改一行加跑一天日报肉眼对比；
+      日后想按任务分模型（长归并用大的、复核用小的）只是多一个参数。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          合并自 I-003、I-006、I-008、I-051、I-052、I-053。
+          删掉的能力已逐条列在 ideas/proposal-simplified.md 的「行为会变的地方」里。
+
+  - id: I-064
+    step: 共用底座
+    name: "把一堆素材交给本地模型，拿回一份结构可靠的结果——切块、归并、修复、重试都在这一个函数里"
+    status: doing
+    needs: [I-063]
+    what: >
+      一个函数负责「素材进、合法结构出」：按字符预算切块 → 逐块摘要并按块内容哈希缓存 →
+      归并（能塞进一次调用就一次归并完，塞不下才分组递归——不是两两归并，
+      想法图 I-005 的「两两」是错的）→ 对本地后端把调用方的 schema 转成约束解码并把顶层属性全部提升为 required →
+      解析失败走修引号、交给模型重排的修复梯 → 拆掉多余信封层、把只返回概览的回答套回
+      报告结构、把该是列表的裸字符串包起来 → 给结果打一个内容充实度分 → 分为零重试一次 →
+      仍不行抛错，绝不返回一份看似成功的空报告。
+    why: >
+      还有一件更要紧的：这整条抢救链**今天只保护日报**——_finalize_report 的调用点只有
+      summarizer.py:460 与 503，周报月报走的是不带抢救的 timed_llm_call，
+      只靠渲染器里的类型判断兜着。所以把它收进 common/ 不只是去重，
+      是让周报月报第一次获得日报已有的那层保护。
+      今天这件事分散在五层、四个文件：common/llm.py 的约束解码、
+      common/json_utils.py 的修复梯、tools/summarize/summarizer.py 的信封拆解与重试、
+      tools/summarize/formatter.py 的列表兜底、tools/research/scout/evaluate.py 的
+      两道 is_usable 闸门。五层挡的是同一件事——本地模型会在不抛异常的情况下
+      返回一份形状不对的答案。分散的后果是 research 那一侧各写了一份，
+      而且两侧的判据不一样：summarize 看内容充实度分，research 看「是不是全是默认值」。
+    expected: >
+      47 万字符的一天日志仍然切成 4 块加 1 次归并；解析失败的块不进缓存；
+      全是默认值的筛选结果不进缓存；顶层键被改名时能从同义词里恢复而不被薄诱饵骗走；
+      结构分为零时触发一次重试；全部块都失败时显式抛错。
+    how: >
+      把 summarizer.py 的 _unwrap_envelope / _renest_overview / _normalize_report /
+      _report_content_score 与 evaluate.py 的 _screening_is_usable / _deep_eval_is_usable
+      一起上提到 common/llm.py，合成一个 call_llm_structured(材料, schema, prompt)；
+      summarize 与 research 两侧都改成调它，各自只留自己的 schema 与 prompt。
+      三处顺手的收拢：约束解码那 23 行**一个字不动**（它是唯一「防止」而不是「事后补救」
+      的机制，也是唯一有实测表和测试的）；修复梯只留两步（try_parse_json 的三级非 LLM 修复
+      + 一次交给模型重排），把 repair_json_with_llm 里那条 haiku→sonnet→opus 升级链删掉
+      ——默认后端会丢掉 model 参数，所以它今天就是把同一个调用发三遍；
+      chunk_text 多一个 length_of 回调，summarize 里那份 chunk_conversations 的抄写随之消失；
+      超时判定那 6 行抽成一个 helper（今天在 llm.py:463 / 563 / 585 抄了三遍，
+      而且每份都写着 except (subprocess.TimeoutExpired, Exception)——那等于 except Exception）。
+    why_this_way: >
+      这五层每一层都有实测来历（docs/guides/summarize-local-llm.md 的全 required 对照表、
+      daily_overview 逃逸记录、两个 is_usable 的 docstring），一层都不能删——
+      删的是它们被复制成两套、散在四个文件里这件事。判据统一成「内容充实度分」
+      而不是「是不是默认值」，因为后者要为每种 schema 各写一次默认值长什么样。
+    code:
+      - file: common/llm.py
+        symbol: call_llm_structured
+      - file: common/json_utils.py
+        symbol: repair_json_with_llm
+    verify:
+      command: python -m pytest common/tests/test_llm_schema.py tools/summarize/tests/test_offschema.py tools/research/tests/test_pipeline_contracts.py
+      pass: "exit 0"
+    future: >
+      换一个更小的本地模型从「一换就崩」变成可以尝试的事；
+      新的结构化产出直接复用同一条链，不必各自写容错。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: "合并自 I-004、I-005、I-020、I-027 的两道缓存闸门，以及 json_utils 的修复梯。"
+
+  # ─────────────────────────── 取素材 ───────────────────────────
+  - id: I-065
+    step: 取素材
+    name: "把五种 AI 工具的对话记录和 token 用量，抽成同一种形状的素材"
+    status: doing
+    needs: [I-061]
+    what: >
+      从本机各个 AI 命令行工具的历史里按日期抽出对话——Claude Code、Codex、Cursor、
+      ChatGPT 导出、通用 JSON——同时通过 ccusage 逐个来源抓 token 用量，
+      两样都归一成同一种素材形状（带设备名、日期、来源）；也能反向枚举本机哪些天有记录。
+    why: >
+      原料散在五种互不相同的私有格式里，路径还随操作系统变（含 WSL 下读 Windows 侧）；
+      token 用量那一侧，ccusage 20.x 的统一报表把所有来源压成一个合并块，拆不出各来源的数。
+      不先统一成一种形状，后面每一步都要处理五种分支。
+    expected: >
+      给定日期能从多个项目目录里合并出对话；Cursor 的子 agent 记录被剔除；
+      时间戳缺失时回落到文件修改时间；目录不存在时返回空而不是抛错；
+      单个来源的用量抓取失败只跳过它、不影响其余来源。
+    how: >
+      tools/summarize/parsers.py 每种来源一个 parse_*，由 collect_conversations 汇总；
+      tools/summarize/usage.py 逐源命名空间抓取并归一。两者产出同一种素材记录。
+      两处顺手的收拢：discover_all_dates（parsers.py:202-297）今天是对同样三棵目录树的
+      **第二次完整遍历 + 第二次时间戳解析**——改成走一遍返回 {日期: [对话]}，
+      「有哪些天」就是它的键；以及 _ensure_ccusage_global（usage.py:112-140）
+      今天会**静默在用户机器上跑 npm install -g ccusage@latest** 再静默回落到 npx，
+      改成一条说清「请运行哪条命令」的报错——装全局包不该是一次日报生成的副作用。
+    why_this_way: >
+      五个 parse_* 函数是真实边界上的真实差异，不是抽象过度——这是全仓唯一一处
+      「每个来源一个函数」站得住的地方，因为五种格式确实互不相同。
+      不为它们造注册表或插件层：collect_conversations 里一个列表就够。
+    code:
+      - file: tools/summarize/parsers.py
+        symbol: collect_conversations
+      - file: tools/summarize/usage.py
+        symbol: fetch_source_usage
+    verify:
+      command: python -m pytest tools/summarize/tests/test_parsers.py tools/summarize/tests/test_usage.py
+      pass: "exit 0"
+    future: >
+      接一个新的 AI 命令行工具只要加一个 parse_* 并挂上；ccusage 支持的新 agent
+      会自动出现在报表里。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: "合并自 I-017 与 I-021 —— 两者都是「把一种外部记录变成素材」，归一成同一种形状。"
+
+  - id: I-066
+    step: 取素材
+    name: "从三个论文库检索新论文、排除已经看过的；一句自然语言也能变成同一份检索条件"
+    status: doing
+    needs: [I-061, I-062]
+    what: >
+      按项目关键词从 arXiv / bioRxiv / PubMed 检索近期论文，支持按会议、按作者；
+      结果按（项目，日期，来源）缓存并排除该项目已见过的论文编号。
+      一句自然语言（"找某人最近的机器人操作论文"）经一次模型调用变成同一份检索条件，
+      校验通过后走完全相同的检索路径——它是同一个函数的另一种填参方式，不是另一条流水线。
+    why: >
+      每天重检索同一批关键词会把上周读过的论文再推一遍；而记住各子命令的参数形状有成本，
+      不同问题也天然对应不同来源（生物问题不该去 arXiv 找）。
+    expected: >
+      缓存命中时不发起网络请求；硬失败不写缓存、真空结果才写；已知编号不再出现；
+      自然语言解析不出来时给出可读的失败原因，而不是空跑一次检索；
+      同一句话解析出的检索条件与手写参数走同一个 search_source。
+    how: >
+      tools/research/scout/search.py 的 search_source 套缓存与去重；
+      scout/ask.py 缩成 parse_ask_intent + validate_ask_plan 两个函数，
+      产出的就是 search_source 的参数，删掉 route_search 这一层分派。
+    why_this_way: >
+      把 ask 降级成「另一种填参方式」而不是另一个模式，是因为它执行的检索与
+      report 那条完全相同——留一层 route_search 意味着以后每加一个来源要在两处挂。
+      None 与空列表的区分保留：硬失败返回 None、真空结果返回 []，只缓存后者。
+    code:
+      - file: tools/research/scout/search.py
+        symbol: search_source
+      - file: tools/research/scout/ask.py
+        symbol: parse_ask_intent
+    verify:
+      command: python -m pytest tools/research/tests/test_pipeline_contracts.py
+      pass: "exit 0"
+    future: >
+      再接一个论文库只要写一个 search_* 并挂上，缓存、去重与自然语言入口自动生效。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: "合并自 I-026 与 I-028；ask 从「一个模式」降级为「同一个检索的另一种填参方式」。"
+
+  - id: I-067
+    step: 取素材
+    name: "测出本机各精度档的实际算力，结果只往一份 CSV 账本里追加"
+    status: doing
+    needs: []
+    what: >
+      自动识别 NVIDIA / Apple / Intel 的显卡，在 FP64 / FP32 / FP16 / BF16 各精度档上
+      跑矩阵乘，按显存自动选规模、计时前后显式同步；预热加中位数加去异常值的统计；
+      结果以追加模式写进 benchmark_results.csv——永不覆盖、永不去重。
+      这份 CSV 就是成稿那一步的素材，跑分是主路上唯一不经过大模型的一支。
+    why: >
+      单次计时在有后台负载的机器上能差出两倍；而跑分的价值在于横跨多台硬件、
+      多个时间点累积对比，一旦重写那份 CSV 就丢掉了历史，而它不在版本控制的保护范围里。
+      不显式同步的显卡计时量到的是提交队列的时间，不是计算时间。
+    expected: >
+      连续跑两次后 CSV 行数是两次之和、旧行一字不动；
+      没装深度学习框架的机器上 --info 仍能列出检测到的硬件而不是抛找不到模块的错；
+      不支持的精度档被跳过并说明原因、不中断其余档；显存越大自动选的矩阵越大。
+    how: >
+      tools/benchmark/benchmark/ 下的 core.py（计时与落盘）、detect.py（分厂商探测）、
+      gpu.py（逐精度档测量）不变；本节点要补的是这个工具的第一个 tests/ 目录。
+    why_this_way: >
+      追加写是 AGENTS.md 的硬规则，理由是它天然支持多硬件累积排行榜。
+      探测与实测刻意分开（--info 可能检测到 OpenCL 但不跑 OpenCL）——
+      探测得到不等于能测。
+    code:
+      - file: tools/benchmark/benchmark/core.py
+        symbol: RobustTimer
+      - file: tools/benchmark/benchmark/detect.py
+        symbol: get_gpu_info
+    verify:
+      command: cd tools/benchmark && python -m pytest tests
+      pass: "exit 0"
+    future: >
+      公共排行榜积累够多机器之后可以回答「这张卡值不值」这类问题。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          合并自 I-033 与 I-034 —— 计时、探测、落盘是同一件事的三个部分，
+          拆成两个想法没有带来任何判断上的区分。
+
+  - id: I-068
+    step: 取素材
+    name: "各台机器把素材推到同一个远端目录、汇总机拉下来——全仓只有这一条跨机通道"
+    status: todo
+    needs: [I-061, I-065]
+    what: >
+      一条通道，而且它是**可选的**：每台机器导完自己的素材就 rclone 推到远端按类目分的目录，
+      汇总机 rclone 拉下来再往下走主路；而汇总那一步只认「素材目录里现在有哪些文件」，
+      没有配远端也照样跑（本机一台的素材就出一份本机的报告）。
+      类目（对话记录 / 站点 / 论文 / 跑分 / 备份）与远端配置都在 config.json 的 sync 节里；
+      失败必须显式报出来。
+    why: >
+      今天同一件事有三套实现：scripts/sync.py 的 rclone 同步（约 600 行）、
+      tools/summarize/remote.py 里另一套自带重试参数的 rclone（257 行，
+      而且现有的想法图里没有任何想法认领它）、tools/summarize/ssh_pull.py 的 ssh 加 scp。
+      第三套是坏的：ssh_pull.py:73 的 scp 源写成 outputs/logs/*.json，
+      而远端导出实际落在 outputs/logs/summarize/（daily_helpers.py:9），
+      少一层目录所以一个文件都拉不到；tests/test_ssh_pull.py:16,18 断言的正是这条错路径，
+      把这个缺陷锁进了测试——验证是绿的，功能是坏的。
+      而最贵的那一套反过来是**强制的**：没配 summarize.rclone_remote 时
+      _rclone_download_logs 返回空（remote.py:197-200），_cmd_merge_sync_all 随即
+      以「没有日志」退出 0（而且 onboarding.py:84-101 把「配好 rclone 远端」
+      做成了 auto 的硬性前置）。也就是说今天**不开云盘账号就出不了日报**，
+      哪怕所有素材都在本机。这不是传输方式的问题，是汇总那一步把传输当成了前提。
+    expected: >
+      汇总机跑完之后本机素材目录里真的多出每台远端机器的文件——这是唯一算数的判据；
+      未配置远端时给出可读提示而不是静默成功；--dry-run 只列出将要传的文件；
+      全仓 grep 不到第二份 rclone 参数表，也 grep 不到 scp。
+    how: >
+      scripts/sync.py 保留为唯一入口，把 remote.py 的重试参数合并进它的参数表后删掉
+      remote.py；删掉 ssh_pull.py 与锁住它那条错路径的测试；
+      summarize 的 auto 改成调同一个 sync 入口。
+    why_this_way: >
+      选 rclone 而不是 ssh，是因为 rclone 这条已经被 onboard 配好、已经在用、
+      并且顺带解决了「远端机器此刻没开机」——推到远端目录是异步的，
+      ssh 拉取要求两台机器同时在线。坏掉的那条顺势消失，不必单独修。
+    code:
+      - file: scripts/sync.py
+        symbol: sync_dirs
+      - file: tools/summarize/remote.py
+        symbol: _rclone_download_logs
+    verify:
+      command: python -m pytest scripts/tests/test_sync.py
+      pass: "exit 0"
+    future: >
+      加一台新机器的成本降到「填一行配置 + 跑一次定时任务」；
+      新工具产出的新目录只要进类目表就自动被同步。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          合并自 I-018 的跨设备那一半、I-019、I-037，外加图里没人认领的
+          tools/summarize/remote.py。I-019 的缺陷已独立复核过（逐行对比
+          ssh_pull.py:73 与 daily_helpers.py:9），确认图里的记录是对的。
+
+  # ─────────────────────── 读懂并写成稿 ───────────────────────
+  - id: I-069
+    step: 读懂并写成稿
+    name: "对选中的论文做四项深读：全文写作手法、审稿共识与分歧、学者画像、引用关系"
+    status: doing
+    needs: [I-064, I-066]
+    what: >
+      在基本检索与评分之上的一层可选深读，四项各自独立、缺哪一项其余照常产出：
+      下载全文分析写作结构与发表策略；匹配到 OpenReview 的抓审稿意见并汇总共识与分歧；
+      给一位学者拉论文与引用数据写研究轨迹、算影响力分级、按共著模式推断师生关系；
+      给一篇论文拉前向引用与参考文献加一段影响力解读。
+    why: >
+      只读摘要能知道一篇论文讲什么，读不出它为什么被接收；审稿意见里的共识与争议
+      是公开却很少有人系统读的信号；判断一个组值不值得申请靠的是研究轨迹和学生去向，
+      人工拼一次要一两个小时。
+    expected: >
+      全文与分析结果按内容缓存、第二次不重下不重算；解析 PDF 的库缺失时降级而不是崩；
+      匹配不到审稿记录时少那一段、其余齐全；抓主页时拒绝内网地址、非网页协议
+      与危险重定向，抓不到主页时退回纯共著推断；同名的不同学者能被分开。
+    how: >
+      tools/research/scout/insight.py 与 tools/research/analysis.py /
+      homepage_discovery.py / student_discovery.py 的现有实现不变，
+      改的只是它们的模型调用改走 I-064 那一个函数，并补上测试。
+    why_this_way: >
+      四项放一个想法里而不是四个，是因为它们对架构提的是同一个要求——
+      「可选、失败只少一段、结果都要缓存」。抓主页那条的内网地址防护必须原样保留：
+      主页地址来自模型输出与第三方数据，是一条跟着不可信输入走的网络请求。
+    code:
+      - file: tools/research/scout/insight.py
+        symbol: run_insight_analysis
+      - file: tools/research/homepage_discovery.py
+        symbol: _is_safe_url
+    verify:
+      command: python -m pytest tools/research/tests
+      pass: "exit 0"
+    future: >
+      写作指南随论文积累变厚，成为投稿前的自查清单；画像攒起来能横向比较不同组的节奏。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: "合并自 I-029、I-030、I-031 —— 三者都是「可选的深一层分析」，对主路的要求完全一致。"
+
+  - id: I-070
+    step: 读懂并写成稿
+    name: "一套渲染器按五种版式出 Markdown，版式定义是数据不是代码"
+    status: todo
+    needs: [I-064, I-079]
+    what: >
+      一个 render(版式, 结果) 负责全部成稿：日报、周报、月报、研究周报、跑分页五种版式。
+      每种版式是一份数据——板块清单、每个板块的字段、缺字段时怎么降级——
+      不是一份各自的 Python 文件。周报与月报只是「汇总窗口不同 + 版式不同」的同一次调用。
+      用量数字渲染成一张纯 HTML/CSS 卡片嵌进 Markdown；跑分那一版另出一张可交互网页。
+    why: >
+      今天五种版式是五份代码，而且其中两份大面积重复：weekly_summary.py（831 行）
+      与 monthly_summary.py（952 行）有 397 行逐字相同、相似度 0.45，
+      而它们上面本来就压着一个 period_report.py（410 行）说是放共享件的。
+      这次去重曾经被提过一次，因为「没有单元覆盖、回归风险高」被拒绝合并——
+      所以它真正的前置是测试，不是又一次重构。
+      另外今天有三套画图实现（matplotlib 的 PNG、手拼的 HTML 卡片、plotly 的网页），
+      前两套说的是同一组数字——而且 PNG 那套**已经是死代码**：
+      charts.generate_daily_chart（227 行 + matplotlib + 中文字体设置）没有任何活调用方，
+      但 weekly_summary.py:741 与 monthly_summary.py:875 还在探测那个 PNG 文件、
+      period_report.py:152-157 还在把它拷进站点——一段在等一个没人写的文件的代码。
+      除此之外这个工具里还有四处同样形状的重复：日报的 Hugo 部署有三份实现
+      （daily_merge.py:204、daily_merge.py:461、daily_deploy.py:117），
+      「这一份算过了吗」写了五遍，weekly 与 monthly 各有一对影子缓存包装函数没有调用方。
+    expected: >
+      周报与月报走同一个函数、只有版式数据不同，两份 Python 文件合成一份；
+      日报缺任意一个被消费的字段时渲染不抛异常、缺的那段明确缺席而不是错位成空白；
+      该是列表的字段里出现裸字符串时被容纳；多台设备的用量按来源汇总与逐条相加一致；
+      不再依赖 matplotlib。
+    how: >
+      把 weekly_summary.py / monthly_summary.py 的共同部分并进 period_report.py
+      并改名为 report.py，版式差异抽成模块级的字典；删掉 charts.py，
+      用量只保留 usage_card.py 那张 HTML 卡片；跑分的 plotly 网页留在 benchmark 里不动。
+      另外「一份报告变成站点上的双语文章」今天有**四个发布器**
+      （period_report.generate_period_hugo_post、formatter.generate_hugo_post 这层壳、
+      research 的 scout/report.generate_hugo_post、benchmark 的 publish），
+      四个都是「拼 frontmatter 字符串 → 解析站点内容目录 → write_bilingual」，
+      只差标题、关键词、摘要和相对路径——收成 common/ 里一个
+      publish_report_post(站点, 相对路径, 标题, 日期, 关键词, 摘要, 正文)，四个调用方只填参数。
+      收拢这一步顺带会暴露一个今天没人发现的问题：
+      content/benchmark.zh.md 是一份固定文件，没有任何代码再生成它——跑分中文页一直是陈旧的。
+    why_this_way: >
+      版式做成数据而不是代码，是因为用户明确要求能增删板块、换叙事方式——
+      那是每几周就要动一次的东西，动数据不动代码才便宜。
+      删 matplotlib 那一套而不是删 HTML 卡片：卡片没有任何外部依赖、在站点上更好看，
+      而 PNG 那一套本来就是「装了才画、没装就跳过」的可选件，说明它从来不是必需的。
+    code:
+      - file: tools/summarize/report.py
+        symbol: render
+      - file: tools/summarize/usage_card.py
+        symbol: render_usage_card
+    verify:
+      command: cd tools && python -m pytest summarize/tests
+      pass: "exit 0"
+    future: >
+      再加一个季度报或年度报只是加一份版式数据；换一种叙事方式不用碰渲染代码。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          合并自 I-022、I-023、I-032、I-035 的渲染那一半、I-047 的结构定义。
+          实测依据：difflib 比对 weekly 与 monthly 两份文件，397 行逐字相同。
+
+  - id: I-071
+    step: 读懂并写成稿
+    name: "先定下报告好不好的判据，并留一份改动之前的基线样本"
+    status: todo
+    needs: []
+    what: >
+      一份报告质量评分表（连贯 / 一致 / 相关 / 流畅四维，加「自己回顾时有没有用」
+      与「稳定性：板块覆盖数、空段率、重复率」两维），加一组用现行措辞重新生成的
+      基线样本（约三个日报日、两个周、一个月，开关思考各跑一遍），
+      外加一页现状缺陷清单——哪些板块是空的、哪些是泛的、哪些在重复。
+    why: >
+      不定判据，「更好」就是感觉；不留基线，改完无从对照。
+      而 config.json 当前的 reasoning_effort=none 是实测会让报告从九段里填满八九段
+      掉到只填六段的减配模式——这个变量不先控制住，会把思考开关的锅算到措辞头上。
+    expected: >
+      评分表文档存在且用户认可它的维度；基线目录里每个样本日期有开/关思考两版；
+      缺陷清单指名道姓列出现状问题，不是泛泛而谈。
+    how: >
+      评分表写成一份 Markdown；基线用现有命令行跑（加 --no-cache），不写新代码；
+      缺陷清单人工读样本得出。
+    why_this_way: >
+      一次性的工作不值得自动化——搭一套评估流水线给六个样本打分是过度工程。
+    code:
+      - file: docs/guides/report-quality-rubric.md
+        symbol: rubric
+    verify:
+      manual: "打开 docs/guides/report-quality-rubric.md，维度与锚点描述认可；outputs/reports/baseline/ 下每个样本日期有开/关思考两版的 json 与 md；缺陷清单非空。"
+      signed_off: null
+    future: >
+      这份判据之后可以用于任何新报告种类的验收；缺陷清单直接喂给下一个节点。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: "原样保留 I-046 —— 它是唯一一个「先有判据才能谈改进」的前置，不能并进别处。"
+
+  - id: I-072
+    step: 读懂并写成稿
+    name: "终点：按判据重写三种报告的措辞，新旧逐项对照、用户签字才算完成"
+    status: todo
+    needs: [I-070, I-071]
+    what: >
+      按新版式重写日报、周报、月报的生成措辞与字段说明（每个字段写成一句微提示，
+      不是裸字段名），归并那一步显式加上「识别重复条目并合并、保留具体细节不许上抽象层」；
+      给报告缓存加一个版式版本号，版本不匹配视为未命中；
+      最后用同一批样本日期重新生成，按判据逐维人工对照打分，用户读过签字。
+    why: >
+      报告是给用户自己复盘用的，用户本人对照读过认可才算数——没有这一步，前面全是自嗨。
+      现行措辞的字段说明全是占位符式空话，而字段说明是实测有效的嵌入式微提示，
+      是白送的提升空间；另外缓存这件事比想法里写的更糟：周月报的缓存键只哈希日报内容，
+      只改措辞时完全不失效；而**日报最终结果的缓存干脆只按日期取键、一个哈希都没有**，
+      所以改完措辞重跑会直接拿到旧报告冒充新产出——验证阶段会被自己骗过去。
+    expected: >
+      新措辞生成的报告在判据的每一维上都不低于基线，且至少两维明显更好；
+      只改措辞重跑能真正触发重算（版本号不匹配即未命中）；
+      周报读完能回答「这周重心在哪、下周该干嘛」，月报能回答「模式和趋势」；
+      reasoning_effort 的最终取值落进 config.json 并记下理由；用户在本节点签字。
+    how: >
+      措辞借「单遍提高信息密度」的写法与仓内已有的行内举例风格；
+      字段说明写成微提示、概览字段排最前（模型从左往右生成）；
+      缓存版本号复用已有的缓存元数据模式。
+    why_this_way: >
+      全部手法来自已验证来源（仓内先例加文献），不发明新机制；
+      保留重试与结构修复那一层——它们挡的是采样随机性，措辞再好也需要；
+      不引入让模型自查报告的节点，那是下一轮的事。
+    code:
+      - file: tools/summarize/report.py
+        symbol: DAILY_PROMPT
+      - file: docs/guides/report-quality-rubric.md
+        symbol: comparison
+    verify:
+      manual: "对照文档里每个样本每一维都有新旧分数；cd tools && python -m pytest summarize/tests 全绿；在活 Ollama 上跑一次 test_daily_e2e.py 通过；用户在此签字。"
+      signed_off: null
+    future: >
+      对照打分本身会产出下一轮的素材——哪一维最弱，下一轮就先攻哪一维。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          合并自 I-047 的措辞部分、I-048、I-049、I-050。
+          原来五个节点（I-046 到 I-050）描述的是一件事的五个阶段，不是五个想法；
+          现在是两个：一个定判据（I-071），一个做并签字（本节点）。
+
+  # ─────────────── 翻成两种语言并发到站上 ───────────────
+  - id: I-073
+    step: 翻成两种语言并发到站上
+    name: "翻译时保住代码和链接，翻完校验语言，成对写出并把源内容指纹盖在文件里"
+    status: doing
+    needs: [I-062, I-063]
+    what: >
+      一个 write_bilingual(源内容, 落点) 管完整条：把代码块、链接、站点短代码换成占位符，
+      按语言选切块上限（中文 5000 字符、英文 7000）切开，调本地翻译模型，
+      还原占位符，再过三道校验（长度不足原文一成五、输出与输入几乎相同、正文仍是源语言，
+      判定只看散文、跳过代码与内嵌 HTML），通过了才写出 foo.md 与 foo.zh.md 一对、
+      各自盖上源内容指纹。标题与标签只往英文方向翻，由那条确定性的单向闸门保证
+      （不再额外跑一次模型复查，理由见下）。
+      失败重试三次，仍失败则记进失败日志且不盖指纹——下次会重试。
+      哪一侧变了由指纹回答，不再另存一份同步状态文件；指纹里除了源内容哈希还带上
+      「配方版本」（标记版本 + 翻译模型 tag + 措辞版本），这样换模型或改措辞会自己失效，
+      不必有人去手改源码里的版本号。语言判定全仓只留一个（common 的 wrong_language，
+      只看散文、剥掉被保护的片段），所有入口都调它。
+    why: >
+      今天这条链被拆成五个想法、四个文件，而且有两个各自记账的状态：
+      文件里的指纹和 translate_site_batch.py 的 .translation_state.json。
+      两者不一致时没人判断得了哪个是对的。
+      另有三处同形状的散落：「这段文字是不是该有的语言」有**四个判定实现**，
+      而让判定变正确的那次修改（只看散文、别被 CSS 稀释）只落进了其中两个；
+      指纹的唯一失效办法是有人去手改 bilingual.py:25 的 _MARKER_VERSION
+      （force=True 刻意**不**重译，docstring 写明了），所以 I-072 换措辞之后
+      需要一个人改源码才叫得动整站重译；
+      而 frontmatter 的模型复核那条，为了把模型名和 reasoning 设置绕过
+      「会丢掉 model 参数」的解析器，在调用前后改了一次进程环境变量。
+      2026-08-04 的事故正是这一类：
+      模型原样回吐输入、当时的校验只看长度，于是中文原文被当成英文页写出去还盖上了指纹，
+      之后每次部署都跳过它，九篇日报中英文逐字相同。
+      另外站点审计那条（scripts/language.py）与这里用的是同一个判定函数，
+      说明判定本身已经是共享的，只有记账没收拢。
+    expected: >
+      源内容不变时第二次运行不发起任何推理；变了两份都重译；
+      翻译失败时不盖指纹、下次会重试；中译英失败时绝不把中文内容写到英文路径上；
+      含代码块的文档翻完后代码逐字不变；英文页的标题与标签全为英文，
+      而中文页上原本是英文的标签一字不动；.translation_state.json 不再存在。
+    how: >
+      common/bilingual.py 作为唯一入口，内部依次调 common/translation/ 下的
+      protect / document / frontmatter；tools/website/translate_site_batch.py 瘦成
+      「扫出成对文件、逐对调 write_bilingual」，删掉 plan_pair 与状态文件那一套。
+    why_this_way: >
+      判定放在「结果落盘之前」而不是「模型返回之后」，是因为它判的是结果、
+      不关心是谁产生的——站点批量翻译、日报发布、翻译网页三个入口共用同一道闸门。
+      标签单向翻译是刻意的：中文页共用英文标签体系，逐页翻译会把一个标签裂成若干近义词。
+      指纹带版本号，是因为被坏翻译冻住的页面必须能一次性失效；把版本号换成「配方版本」，
+      是因为手改源码才能失效这件事会在换模型那一轮直接咬人。
+      **删掉 frontmatter 的模型复核那一条，是本节点唯一一处删能力，理由摆在这里供你否决：**
+      真正保证「英文页标题标签是英文」的是那条确定性的单向闸门 _gate_english，不是复核；
+      复核每有 frontmatter 的页面就多一次模型调用，还要改一次进程环境变量才能把模型名传进去；
+      而它的默认模型长期没 pull、于是长期静默关闭——**没有人发现**，这本身就是它
+      没在交付什么的证据。如果你认为它值得留，它可以留，代价是上面那两样都得留着。
+    code:
+      - file: common/bilingual.py
+        symbol: write_bilingual
+      - file: common/translation/document.py
+        symbol: validate_translated_output
+    verify:
+      command: python -m pytest common/tests/test_bilingual_skip.py common/tests/test_translation_language.py common/tests/test_translation_chunking.py common/tests/test_translation_review.py
+      pass: "exit 0"
+    future: >
+      任何要发双语的新内容类型只调这一个函数，就自动获得跳过、重试、校验与失败日志；
+      扩到第三种语言只要再定义一个文件名形状。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          合并自 I-007、I-009、I-010、I-011、I-014。
+          I-014 的 .translation_state.json 被删掉：它与文件里的指纹回答的是同一个问题。
+
+  - id: I-074
+    step: 翻成两种语言并发到站上
+    name: "写进站点内容树只有一道门：生成的盖标记，人写的一律拒绝"
+    status: done
+    needs: [I-062]
+    what: >
+      所有生成的站点内容都经同一个函数写进 tools/website/content|static，
+      每个文件盖 gadget_generated: true。写入前先判归属：目标路径上是没有标记的人写文件
+      就抛错停下；强制覆盖前先备份并记一笔账。归属只认文件里的标记，不认目录约定。
+    why: >
+      生成内容和手写文章住在同一棵内容树里，而那棵树是不进版本库的——
+      一次路径写错就能悄悄把一篇手写博客替换成自动日报，覆盖了找不回来。
+    expected: >
+      写生成文件成功且带标记；同路径已有生成文件可直接覆盖；
+      同路径是人写文件则抛错；即使在生成目录里，显式标了人写的文件也拦得住；
+      强制覆盖会在 outputs/backups/ 留一份，内容完全相同则不产生多余备份。
+    how: >
+      common/site_staging.py 与 common/website_backup.py 合成一份 common/site.py
+      （两者一共 293 行，且只被彼此和落站调用），对外只露 write_site_content /
+      copy_site_static 两个函数。另外三件事要一起做：
+      （一）归属只认文件里的 gadget_generated 标记，只经 classify_file 一个入口读；
+      tools/website/generated_paths.py 降级成纯性能捷径（省去读几千个文件），
+      由 publish / preflight / translate_site_batch **统一 import** 并用同一套匹配语义
+      ——今天三个消费者三种语义，而 publish.py:128-135 还额外按文件名匹配，
+      所以任何子目录下叫 benchmark.md 的文件都被当成生成物，publish.py:49-55 更是
+      干脆把那两个元组复制了一遍；
+      （二）删掉 _append_manifest / record_blocked 那本账——强制覆盖留一份带时间戳的副本
+      到 outputs/backups/ 就够，账本没有第二个读者；
+      （三）标记只留 gadget_generated: true 一种拼写（今天有三种），
+      src-hash 只负责跳过。
+    why_this_way: >
+      只认标记不认目录，因为目录会被人挪；两份文件合成一份，因为「判归属」和「落盘」
+      是同一个动作的两半，分两个模块意味着每次新增一种产物要读两份代码。
+      「这个文件是不是我们的、能不能动」今天被回答了五次（标记分类 + 三种路径匹配语义
+      + publish 自己复制的那份），这是本轮最典型的一处——不同答案之间的分歧已经
+      造成了实际后果：预检与发布对「子目录里的 benchmark.md 算不算生成物」判断不同。
+      降级路径清单而不是删掉它，是因为它确实省了读几千个文件的时间——它只是不该是答案。
+    code:
+      - file: common/site.py
+        symbol: write_site_content
+      - file: common/site.py
+        symbol: classify_file
+    verify:
+      command: python -m pytest common/tests/test_site_ownership.py
+      pass: "exit 0"
+    future: >
+      新的生成器（新报告种类、新图表页）接进来就自动继承这套归属与备份保护，
+      站点侧不区分它来自哪个工具。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: "原样保留 I-012 的能力；只把 site_staging.py 与 website_backup.py 两份文件并成一份。"
+
+  - id: I-075
+    step: 翻成两种语言并发到站上
+    name: "一条发布链：补齐双语对 → 压改动过的媒体 → 预检 → 构建 → 推送，预检阻断就停"
+    status: doing
+    needs: [I-073, I-074]
+    what: >
+      一条固定顺序的发布链：先把内容树里缺的那一侧补齐，再压缩内容哈希变了的图片与视频
+      （图片走 pngquant、视频走 HandBrakeCLI，并发跑），再跑预检，
+      再清空并构建 Hugo，最后提交推送部署仓。预检五项分三档：
+      frontmatter 不合法是阻断级（页面构建不出来），未压缩图片与失效链接是警告级（不挡发布），
+      缺双语对与正文语言不对是可修级（就地补）。阻断级出现就中止，不产出半成品站点。
+    why: >
+      发布一次要按顺序做五件事，任何一步顺序错了结果就不对（先构建后压图等于发布了未压缩的图）；
+      而 Hugo 会把问题原样构建出去，等发现时错误内容已经在公开站点上，
+      部署仓是独立的 git 仓库、回滚要跨仓操作。
+      这一步今天最具体的两个毛病都来自「同一件事做了两遍」：
+      （一）预检的可修档（preflight_check.py:309-351）是补齐双语对的**第二份实现**，
+      而第一份（translate_site_batch 的 plan_pair，publish.py 第 1 步）四步之前刚跑过；
+      第二份还不写状态文件，所以它补出来的那一对下一轮会被当成没翻过再翻一遍。
+      （二）三档分级里的警告档其实是空转：preflight_check.py:487 返回
+      「有警告就 2、否则 0」，而 publish.py:359-362 只区分退出码 1——
+      所以退出码 2 和 0 完全等价，「警告」这一档除了打印字以外对流水线没有任何影响。
+      三档 tier、Issue.level 字段和退出码 2 可以一起删掉。
+      另外增量判据是 .last_build 的时间戳，而且这个判据实现了两遍
+      （publish._newer_files 与 preflight.find_modified_files），两份对「生成文件算不算」
+      的判断还不一致；「这个文件是不是生成的」也有两套答案——一套查路径清单
+      （preflight_check.py:73-81），一套查文件里的标记（translate_site_batch.py:169-175），
+      而 publish.py:128-135 那份还额外按文件名匹配，所以任何叫 benchmark.md 的文件
+      不管在哪都被当成生成物。顺带说清一件图上没有记的事：Hugo 构建本身是全量的——
+      public/ 每轮都清空重建，所以上面这些增量判据省的只是翻译和压缩的时间，不是构建的时间。
+    expected: >
+      预检出现阻断级问题时整条链中止、public/ 不被改动；
+      只有警告时继续构建；两次连续发布之间没有新增媒体时压缩步骤零工作量；
+      跑完后部署仓里是新构建的站点并已推送；.last_build 文件不再存在。
+    how: >
+      tools/website/publish.py 的 main 顺序调用各步，每步带计时；
+      update.sh 与 update.ps1 仍然只是选好解释器再调它。四处具体的改法：
+      （一）改动集合在 publish.py 里**只算一次**，用参数传给预检——今天
+      publish._newer_files 与 preflight.find_modified_files 各算一遍，
+      而且两份对「生成物算不算」的判断还不一致；
+      （二）第 1 步的翻译与第 5 步的预检从子进程改成进程内函数调用：
+      引擎缓存是按进程的，所以今天只要预检动了手就要第二次加载翻译模型；
+      压缩也从「每个文件一个子进程」改成函数调用（大批量媒体今天会 fork 上百个进程）；
+      （三）压缩成功后立刻记下已压路径，而不是等推送成功才前移时间边界——
+      今天在预检中止或构建失败之后重跑，会对已经压过的图片**再有损压一次**，
+      画质逐次退化；
+      （四）预检只留两种结果：会让 Hugo 构建出坏页面的（frontmatter 解析不了、缺 title）
+      退 1 中止，其余打印一行退 0。
+    why_this_way: >
+      顺序与判据收进一份 Python 而不是两份 shell 脚本，是因为两个平台各写一份
+      就会各错一次。预检的分档理由是「会不会让页面构建不出来」，不是严重程度的主观排序。
+      预检只碰手写内容：自动修一个生成文件会让它和自己的指纹失去同步，
+      下次又被当成变了而重译。
+    code:
+      - file: tools/website/publish.py
+        symbol: main
+      - file: tools/website/preflight_check.py
+        symbol: main
+    verify:
+      command: python -m pytest tools/website/tests
+      pass: "exit 0"
+    future: >
+      任何新的内容生成器只要把文件写进内容树，就自动被这条链翻译、压缩、检查、发布。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          合并自 I-013、I-015、I-016、I-024 的部署那一半。
+          原来的八步缩到五步：预翻译并进补齐双语对，更新时间戳随 .last_build 一起删掉。
+
+  - id: I-076
+    step: 翻成两种语言并发到站上
+    name: "侧门：一个本地网页，贴文字或传文件当场翻完"
+    status: done
+    needs: [I-073]
+    what: >
+      一个本地网页：贴文字或传文件（md / txt / pdf / docx / 图片）翻译并保留 Markdown 结构，
+      PDF 与图片走文字识别，docx 用标准库解压读 XML；源语言选自动时按中文字符比例判断，
+      目标选自动时在中英之间翻转；模型常驻内存。它只调第四步的翻译核心，
+      不经过取素材、理解、成稿、落站、发布中的任何一步。
+    why: >
+      不是所有需要翻译的东西都在站点里。一份要读的 PDF、一段要发的文字，
+      也应该能用同一个本地模型翻，而不用把内容发去云端。它也是调试翻译质量最快的入口。
+    expected: >
+      空输入不触发任何推理；docx 走标准库而不是文字识别管线；
+      文字识别子进程失败时抛出可读的错误而不是让界面卡死；
+      它与站点批量翻译用的是同一份翻译核心——改一处两边同时生效。
+    how: >
+      tools/translator/core.py 负责语言判定、文件转 Markdown 与调翻译，
+      app.py 用 Gradio 接线。翻译那一步调 common/translation。
+    why_this_way: >
+      把它明确画成侧门而不是主路上的一支，是因为它的输入输出都不落盘、不进站点——
+      混进主路只会让主路看起来有一个从不产出页面的分叉。
+      docx 刻意不走文字识别：它本来就是压缩包里的 XML，标准库解析又快又准。
+      要修的两处都是「界面说的和实际发生的不一样」：
+      模型下拉框列的是 HuggingFace 仓库名（models.py:12-17），
+      而默认那条会被解析成已服务的聊天 tag、选别的又会掉出自动选 Ollama 的闸门、
+      于是悄悄把聊天模型卸掉——改成直接列 /api/tags 拿到的本机 tag，选什么就真用什么；
+      另外 marker 那条文字识别分支依赖一个手搭的 conda 环境，
+      如果你没在用就删掉（Ollama 的视觉那条已经覆盖 PDF 与图片）。
+    code:
+      - file: tools/translator/core.py
+        symbol: translate_file
+      - file: tools/translator/app.py
+        symbol: build_ui
+    verify:
+      command: python -m pytest tools/translator/tests/test_core.py
+      pass: "exit 0"
+    future: >
+      翻译能力最直接的展示面；想加一种输入格式只改 core.py 的一个分支。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: "原样保留 I-036，位置从「本机翻译」改成主路旁边的侧门，说清它只借用翻译那一步。"
+
+  # ─────────────────── 一条命令跑完全程 ───────────────────
+  - id: I-077
+    step: 一条命令跑完全程
+    name: "终点：一条命令跑完从取素材到发布的整条链，日报、周报、月报、研究周报、跑分页都由它产出"
+    status: doing
+    needs: [I-065, I-066, I-067, I-068, I-069, I-070, I-073, I-074, I-075]
+    what: >
+      一条命令按固定顺序跑完：拉各机素材 → 本机取素材 → 逐天补齐没算过的日报 →
+      补齐缺失或过期的周报与月报 → 产出研究周报与跑分页 → 最后发布一次。
+      开跑前的就绪检查不通过就直接退出、不做任何工作；收尾释放显存。
+      中间不再用环境变量推迟发布——发布本来就只在最后调一次。
+    why: >
+      手动跑要记住六个子命令和它们的顺序，还要自己判断哪些周、哪些月需要重算。
+      能放进定时任务的东西才会真的每天发生。
+      今天这条链靠 GADGET_DEFER_HUGO_UPDATE=1 让中间各步别构建站点、最后再构建一次——
+      那个环境变量存在的唯一原因是每一步各自会去发布，顺序收进一处之后它就没有意义了。
+    expected: >
+      就绪检查不过时零工作量退出；缺失与过期的周月报被识别并重算、已最新的跳过并打日志；
+      整条链里 Hugo 只构建一次；跑完后公开站点上出现当天的日报、
+      以及到期的周报月报研究周报；全仓 grep 不到 GADGET_DEFER_HUGO_UPDATE。
+    how: >
+      tools/summarize/auto.py 的 cmd_auto 仍用子进程驱动各子命令
+      （失败一步不污染同一个进程的状态），但发布只在最后调一次 tools/website/publish.py。
+    why_this_way: >
+      子进程而不是直接 import，是因为每个子命令都是独立的命令行入口；
+      发布收到最后一次，是因为每份报告都触发一次全站构建的成本是分钟级的。
+      这一个终点取代原来的三个（自维护博客、日报流水线、研究周报）——
+      它们是同一条链的三种素材，不是三个终点。
+    code:
+      - file: tools/summarize/auto.py
+        symbol: cmd_auto
+    verify:
+      command: python -m pytest tools/summarize/tests/test_onboarding.py
+      pass: "exit 0"
+    future: >
+      这条链一旦稳定，报告就变成基础设施——后面所有「回看历史」的功能都有数据可用。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          合并自 I-016、I-025、I-032 三个原终点，外加 I-018 的编排那一半。
+          三者都是「一条命令跑完一条链并发布」，区别只在素材来自哪里。
+
+  # ─────────────────── 别人装上就能用 ───────────────────
+  - id: I-078
+    step: 别人装上就能用
+    name: "新机器填一张表跑一条命令就配好，跑一次冒烟就知道有没有弄坏哪个入口"
+    status: doing
+    needs: [I-061, I-068]
+    what: >
+      两件事收在一处：填一张 YAML 表、跑一次 scripts/onboard.py 自动完成
+      ssh 配置、命令行工具安装与鉴权、pip extras、各工具配置、rclone 初始化，最后自检；
+      以及一条 bash scripts/smoke.sh 对所有工具跑 --help / --info / import 检查，
+      不调模型、不联网、不写盘，缺依赖的项标跳过而不是失败。
+    why: >
+      新机器接进来要做十几件互相依赖的事，凭记忆做一遍必然漏掉一两项，
+      而漏掉的那项通常要等到某天流水线失败才被发现。
+      另一侧，单元测试是纯打桩的，测不到「这个命令行还能不能启动」——
+      而重构最容易打断的正是 import 链和参数接线。
+    expected: >
+      --dry-run 打印将要做的事而不动系统；每一步可单独跑；重复运行是幂等的；
+      在只装了基础依赖的环境里冒烟结果是若干通过加少量跳过、零失败；
+      任何一个工具的入口 import 断了就会失败。
+    how: >
+      scripts/onboard.py 的六步不变；scripts/smoke.sh 靠 grep stderr 里的
+      ModuleNotFoundError 把「缺依赖」与「真坏了」分开。
+    why_this_way: >
+      装机与冒烟放一个想法里，是因为它们是同一件事的两头——装完就该冒烟，
+      冒烟失败就回去看装机哪一步没成。权限收紧只做到仓库根为止：
+      脚本不去改它没创建的上层目录。
+    code:
+      - file: scripts/onboard.py
+        symbol: STEPS
+      - file: scripts/smoke.sh
+        symbol: smoke
+    verify:
+      command: python -m pytest scripts/tests/test_onboard.py && bash scripts/smoke.sh
+      pass: "exit 0 且 0 failed"
+    future: >
+      加一台新机器的成本降到「填一行 + 跑一次」；任何重构后先跑冒烟，
+      三十秒内知道有没有把某个工具的入口弄坏。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: "合并自 I-039 与 I-040 —— 装机与冒烟是同一件事的两头。"
+
+  - id: I-079
+    step: 别人装上就能用
+    name: "不需要网络、显卡或任何密钥就能跑通的测试基线，并给四块没测过的代码定一条覆盖下限"
+    status: todo
+    needs: []
+    what: >
+      每个模块自带 tests/ 目录，重依赖（模型、外部接口、子进程）一律用标准库打桩，
+      没有仓库级统一运行器。在这个基线上接一个覆盖率量具，
+      并给四块今天没有覆盖的代码各定一条不许跌破的下限：
+      跑分的账本与硬件探测（这个工具至今连 tests/ 目录都没有）、
+      学者画像与论文深读、周月报渲染、媒体增量压缩。
+      门槛挂在模块集合上而不是工具目录上，给出一条低于门槛就失败的命令。
+    why: >
+      这些工具的真实依赖是显卡、本地模型服务和外部接口。如果测试需要它们就等于没有测试。
+      而冒烟只能证明「能启动、能解析」，证明不了「算得对」。
+      缺测试正在阻止重构：周月报那次去重改动就是因为「没有单元覆盖、回归风险高」
+      被拒绝合并的——也就是说这个节点是 I-070 的真正前置。
+      门槛必须按块定：跑分里的图表与网页生成有 600 行，是全仓最不值得测的代码之一，
+      按工具目录定一个总数会逼人去测不该测的东西。
+    expected: >
+      在没有网络、没有显卡、没有任何密钥的机器上各套件全绿
+      （唯一例外是需要活 Ollama 的那个端到端测试，它自动跳过）；
+      一条命令能对指定模块集合跑出覆盖率，低于门槛时退出码非零；
+      门槛值有明确的存放位置，改门槛不用改任何测试；
+      四块区域各自不低于自己那条线。
+    how: >
+      按现有约定就近建目录（先建 tools/benchmark/tests/），
+      用标准库打桩 torch 与文件系统，优先锁「失败时的降级路径」而不是顺利路径——
+      降级路径恰恰是最不会在作者本机上被触发的那部分。
+    why_this_way: >
+      原来这件事被拆成了八个节点（一个汇合点加一个量具加六个区域）。
+      八个节点里没有一个包含独立的设计判断——它们是一份工作分解，不是八个想法。
+      量具与门槛确实是前置，但它和「把测试写出来」是同一件事的前后脚，
+      分两个节点只会让图上多一层。
+    code:
+      - file: tools/benchmark/tests/test_core.py
+        symbol: test_csv_append_only
+      - file: pyproject.toml
+        symbol: coverage-thresholds
+    verify:
+      command: python -m pytest common/tests scripts/tests && cd tools && python -m pytest summarize/tests research/tests website/tests translator/tests/test_core.py benchmark/tests
+      pass: "exit 0"
+    future: >
+      有了量具，「这次重构有没有把覆盖打薄」变成一个能当场回答的问题；
+      被搁置的那几处去重才有可能真的做。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          合并自 I-041、I-044、I-054、I-055、I-056、I-057、I-058、I-059、I-060
+          —— 九个节点并成一个。这是原图里最明显的一处过度拆分。
+
+  - id: I-080
+    step: 别人装上就能用
+    name: "文档中英各一份，给人读的和给 agent 读的分开写"
+    status: doing
+    needs: []
+    what: >
+      面向人的文档中英各一份：根目录 README.md 与 TUTORIAL.md，
+      docs/ 下 README.zh.md 与 TUTORIAL.zh.md；
+      面向 agent 的协议放 AGENTS.md（每个工具目录一份），CLAUDE.md 只做转发。
+    why: >
+      使用者读中文更快，而开源出去要英文；两份文档如果都写成大而全就会各自漂移。
+      而 agent 需要的是可执行的命令与硬规则，不是叙述性的教程。
+    expected: >
+      README 是简介、TUTORIAL 是分步操作，中英两侧结构一一对应；
+      每个 tools/<tool>/AGENTS.md 都能独立回答「怎么跑、怎么验证、有哪些坑」。
+    how: >
+      根文档收总览与入口，各工具的细节留在自己目录的文档里，
+      docs/ 存设计文档与历史归档。本轮简化落地后这几份文档都要跟着改。
+    why_this_way: >
+      CLAUDE.md 只 @AGENTS.md 转发，避免同一套规则在两个文件里各写一遍。
+    code:
+      - file: AGENTS.md
+        symbol: agent-protocol
+      - file: docs/README.zh.md
+        symbol: overview-zh
+    verify:
+      manual: "对照 README.md 与 docs/README.zh.md 的目录，确认章节一一对应；随机挑一个 tools/<tool>/AGENTS.md，按里面的命令能跑通该工具的 --help 与测试。"
+      signed_off: null
+    future: >
+      文档结构稳定后，新工具接进来只要补一份 AGENTS.md 和两侧 README 的一段。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: "原样保留 I-042。"
+
+  - id: I-081
+    step: 别人装上就能用
+    name: "终点：任何人下载下来装一次，就能单独使用五个工具中的任何一个"
+    status: doing
+    needs: [I-076, I-077, I-078, I-079, I-080]
+    what: >
+      任何人 clone 后 pip install -e ".[all]" 就能单独使用五个工具中的任何一个；
+      分层规则不被破坏（工具之间零 import、common/ 不反向依赖 tools/）；
+      向后兼容的 re-export shim 保持存活；许可已发布。
+    why: >
+      这些工具是逐个长出来的，很容易长成一坨互相 import 的泥球——
+      那样就只有本机能跑，也不可能把其中一个单独给别人用。
+    expected: >
+      在一台干净机器上装完后冒烟全部通过（缺可选依赖的项跳过）；
+      grep 不到任何一个工具 import 另一个工具；
+      research/cache.py 与 research_scout.py 这两个 shim 仍可 import。
+    how: >
+      pyproject.toml 按工具切分可选依赖（翻译网页那套 GUI 依赖刻意不在 all 里），
+      共享能力一律进 common/，跨工具协作只走子进程或读配置。
+    why_this_way: >
+      hub-and-spoke 是 AGENTS.md 的硬规则；翻译网页不进 all 是因为它拉一整套 GUI 依赖，
+      而绝大多数使用场景（服务器、定时任务）根本不需要界面。
+    code:
+      - file: pyproject.toml
+        symbol: optional-dependencies
+      - file: AGENTS.md
+        symbol: architecture-rules
+    verify:
+      command: bash scripts/smoke.sh
+      pass: "0 failed"
+    future: >
+      一旦分层守住，把其中任何一个工具单独拆出去发布都只是搬目录的事。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          原样保留 I-043 的能力，但前置从十四条减到五条 —— 原来的十四条里
+          有九条是现在已经并进别处的节点。
+
+  # ─────────────────────── 搁置 ───────────────────────
+  - id: I-082
+    step: 别人装上就能用
+    name: "把仓库拆成公开的工具代码仓和私有的个人数据仓"
+    status: blocked
+    needs: [I-081]
+    what: >
+      通用工具代码放公开仓，密钥、个人内容、私人笔记留在私有仓，两仓之间用同步做桥。
+    why: >
+      现在整个仓库是私有的，所以工具代码也没法给别人用；
+      而直接公开会连带泄露密钥与私人内容。
+    expected: >
+      公开仓里（含完整 git 历史）扫不到任何密钥与私人内容；
+      私有内容仍能被本地流水线正常读到。
+    how: >
+      硬阻塞是 git 历史清理还没做。清理策略、两仓同步桥与持续集成需要单独一轮讨论。
+    why_this_way: >
+      用户已经决定「先把别的做完，拆仓单独再做」；而拆分前必须先清理历史，
+      否则公开仓一发布就泄露。
+    code:
+      - file: docs/ecl/cross-project-live-dag.yaml
+        symbol: deferred_ideas.IDEA-split-repos
+    verify:
+      manual: "在公开仓的完整 git 历史上跑一次密钥扫描，确认零命中；再在私有仓侧确认流水线仍能读到密钥与数据。"
+      signed_off: null
+    future: >
+      拆完之后这些工具才真的可以被别人下载来用，而不只是被装到本机。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          原样保留 I-045，仍是 blocked。它不被任何终点依赖 —— 这是预期的，
+          它挂在「别人装上就能用」之后，只是没有哪个终点需要它。
+
+  - id: I-083
+    step: 别人装上就能用
+    name: "把跨项目进度总览页搬去 ai-companion，本仓只保留它写进站点的那道门"
+    status: blocked
+    needs: [I-074]
+    what: >
+      带密码保护的跨项目进度总览页不再由本仓生成。它搬进 ../ai-companion
+      （那张图的数据与生成脚本本来就在那边），生成完的静态文件经本仓的落站那道门
+      写进站点 static，再由发布链发到 /dag/。本仓这一侧只剩「它是又一个内容生成器」。
+    why: >
+      今天它的入口是 scripts/sync.py --category dag —— 一个 rclone 同步工具里
+      藏着一条调用隔壁仓库 TypeScript 脚本的发布链（sync.py:526-608）。
+      这是全仓唯一一处向仓库外面伸手的代码，而它伸向的那个仓库在别人的检出里可能不存在
+      （在当前这个检出里就不存在，所以这条命令今天只会报错退出）。
+      更要紧的是它**会被自己的依赖删掉**：产物 tools/website/static/dag/ 在 .gitignore:43，
+      也不在 sync.py 的 website 同步类目里，所以它只存在于生成它的那台机器上；
+      而发布链会清空 public/ 整站重建再 git add -A 推送——
+      于是任何一台没有 static/dag/ 的机器，下一次发布就把线上的 /dag/ 删掉。
+      能力本身是真的（切换项目时要一眼看到全局进度），不该删；
+      但它放错了地方——它是 ai-companion 的产物，gadget 只是它的发布渠道。
+    expected: >
+      scripts/sync.py 里不再有 dag 类目，也不再 import 任何 ai-companion 的路径；
+      站点 /dag/ 仍然先出现密码框、输对后能看到各项目簇；
+      总览页的生成与加密全部发生在 ai-companion 一侧。
+    how: >
+      从 scripts/sync.py 删掉 sync_dag（526-608）、DAG_BUILD_SCRIPT / DAG_STAGE_DIR
+      （50-57）与 --category dag 的特判（635-647）——那两步（跑 ai-companion 的 stage、
+      再跑 update.sh）让 ai-companion 自己做。gadget 侧真正需要的只剩一句约定：
+      static/dag/ 和别的 static 一样被发布。还需要单独一轮讨论定的是
+      「那个目录怎么到每台机器上」——不解决这件事，/dag/ 仍然会被下一台机器的发布删掉。
+      本节点在那轮讨论之前保持 blocked。
+    why_this_way: >
+      不直接删掉能力，因为用户明确在 docs/ecl/cross-project-live-dag.yaml 里
+      决定过要部署它；也不原样留着，因为「一个 rclone 工具里藏着一条跨仓库发布链」
+      是这张图里最说不清归属的一处。把它降级成「又一个内容生成器」之后，
+      本仓的落站那道门对它和对日报是同一个待遇。
+    code:
+      - file: scripts/sync.py
+        symbol: sync_dag
+    verify:
+      manual: "在一台没有 ../ai-companion 的机器上跑 scripts/sync.py 的全部类目，确认零报错零警告；在有 ai-companion 的机器上跑它那侧的生成命令，确认站点 /dag/ 照常更新。"
+      signed_off: null
+    future: >
+      本仓与 ai-companion 的边界一旦说清，本仓的想法图自己也能作为一簇出现在那张总览里。
+    log:
+      - date: "2026-09-12"
+        by: ccthink
+        note: >
+          原 I-038。状态从 doing 改成 blocked，并把它从主路上摘下来 ——
+          这是本轮唯一一条「能力保留但换仓库」的提议，需要用户先拍板。
