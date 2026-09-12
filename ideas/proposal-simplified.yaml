@@ -238,6 +238,11 @@ ideas:
       报告结构、把该是列表的裸字符串包起来 → 给结果打一个内容充实度分 → 分为零重试一次 →
       仍不行抛错，绝不返回一份看似成功的空报告。
     why: >
+      「别把一次失败冻成缓存里的权威结果」这条纪律也被发明了四次，四种形状：
+      检索用 None 与空列表的返回约定、筛选与深评用结果形状闸门、
+      insight 用「成功才写」、common 的块缓存用「拒绝 parse_error」——
+      收成一个 cache_if(结果, 可用吗)，所有阶段共用一个闸门，
+      硬失败直接抛异常，而不是返回一个每个调用方都要记得判一次的特殊值。
       还有一件更要紧的：这整条抢救链**今天只保护日报**——_finalize_report 的调用点只有
       summarizer.py:460 与 503，周报月报走的是不带抢救的 timed_llm_call，
       只靠渲染器里的类型判断兜着。所以把它收进 common/ 不只是去重，
@@ -349,9 +354,14 @@ ideas:
       自然语言解析不出来时给出可读的失败原因，而不是空跑一次检索；
       同一句话解析出的检索条件与手写参数走同一个 search_source。
     how: >
-      tools/research/scout/search.py 的 search_source 套缓存与去重；
+      收成一个 collect_papers(项目, 检索条件)，检索条件是
+      {多源关键词 | 按作者 | 按会议} 三者之一——今天这段「会议/作者/多源 + 缓存」
+      的分支**写了三遍**（cli.py:134-214 的 cmd_search、cli.py:363-391 的 cmd_report、
+      ask.py:208-243 的 route_search），而且**已经漂移**：
+      ask.py:238 带注释地给会议检索传 project=None，另两份传 project。
       scout/ask.py 缩成 parse_ask_intent + validate_ask_plan 两个函数，
-      产出的就是 search_source 的参数，删掉 route_search 这一层分派。
+      产出的就是那份检索条件，于是 route_search、create_project_from_query、
+      list 里 status=='ask' 的过滤与 --all、以及零结果时 rmtree 那个分支一次性全部消失。
     why_this_way: >
       把 ask 降级成「另一种填参方式」而不是另一个模式，是因为它执行的检索与
       report 那条完全相同——留一层 route_search 意味着以后每加一个来源要在两处挂。
@@ -489,8 +499,17 @@ ideas:
       与危险重定向，抓不到主页时退回纯共著推断；同名的不同学者能被分开。
     how: >
       tools/research/scout/insight.py 与 tools/research/analysis.py /
-      homepage_discovery.py / student_discovery.py 的现有实现不变，
-      改的只是它们的模型调用改走 I-064 那一个函数，并补上测试。
+      homepage_discovery.py / student_discovery.py 的现有实现基本不变，
+      模型调用改走 I-064 那一个函数（顺带补上三处漏掉的修复——
+      insight.py:190、239、301 是全工具唯一三个不跟修复的模型调用点，
+      而它们正好是最贵的那条路），并补上测试。
+      引用那一支两份实现合成一份：analyze_citations（evaluate.py:347-415）与
+      cmd_citations（cli.py:495-603）连「至少 5 次引用」的闸门和取前十的切片都相同，
+      底层 get_paper_citations / get_paper_references 又是两个只差一个词的 38 行函数。
+      学者画像的发布改走 I-070 那一个发布器——今天它走的是 write_site_content
+      而不是 write_bilingual（output.py:223-264），所以**画像页一直没有中文孪生页**。
+      三个加权打分器（论文综合分、学者分级、学生候选人）按「有好默认值就别加旋钮」
+      统一成硬编码，删掉 scoring_config 的每次重读与 set_top_venues 那个全局改写。
     why_this_way: >
       四项放一个想法里而不是四个，是因为它们对架构提的是同一个要求——
       「可选、失败只少一段、结果都要缓存」。抓主页那条的内网地址防护必须原样保留：
