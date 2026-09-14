@@ -51,8 +51,11 @@ def test_generate_batch_builds_request_and_parses(monkeypatch):
     assert seen["body"]["model"] == "hf.co/tencent/Hy-MT2-1.8B-GGUF"
     assert seen["body"]["options"]["num_predict"] == 256
     assert seen["body"]["options"]["temperature"] == engine.SAMPLING_DEFAULTS["temperature"]
-    # co-residency default: small enough to live beside the 24GB chat model
-    assert seen["body"]["options"]["num_ctx"] == 8192
+    # No num_ctx by default: translation runs on the chat model itself, so a
+    # pinned context that differs from the runner's loaded one (65536) made
+    # Ollama reload on every summarize↔translate switch. Inheriting it is what
+    # removes that churn, so the key must be absent, not merely large.
+    assert "num_ctx" not in seen["body"]["options"]
     # request-level residency: don't idle-unload after Ollama's 5-minute default
     assert seen["body"]["keep_alive"] == "30m"
 
@@ -101,9 +104,7 @@ def test_generate_batch_sequential_rollback_knob(monkeypatch):
     assert eng.generate_batch(["a", "b", "c"]) == ["tr:a", "tr:b", "tr:c"]
 
 
-def test_oversized_prompt_bumps_num_ctx(monkeypatch):
-    """An unchunked oversized prompt grows num_ctx for that request instead of
-    letting Ollama silently left-truncate it at the 8192 default."""
+def _capture(monkeypatch):
     seen = {}
 
     def fake_urlopen(req, timeout=None):
@@ -111,11 +112,48 @@ def test_oversized_prompt_bumps_num_ctx(monkeypatch):
         return _FakeResp({"response": "ok"})
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    return seen
+
+
+def test_oversized_prompt_unpinned_leaves_context_alone(monkeypatch, caplog):
+    """Unpinned, an oversized prompt warns but must NOT set num_ctx.
+
+    Setting num_ctx is precisely what makes Ollama reload the runner, so
+    "fixing" an unchunked prompt that way would reintroduce the ~10s churn on
+    every such request. The loaded context governs; the caller gets told.
+    """
+    seen = _capture(monkeypatch)
     monkeypatch.delenv("OLLAMA_TRANSLATION_NUM_CTX", raising=False)
+    eng = engine.OllamaEngine("hf.co/tencent/Hy-MT2-1.8B-GGUF")
+
+    with caplog.at_level("WARNING"):
+        eng.generate_batch(["中" * 12000])  # ~8.5k tokens est + 4096 predict
+
+    assert "num_ctx" not in seen["body"]["options"]
+    assert "probably not chunking" in caplog.text
+
+
+def test_oversized_prompt_bumps_a_pinned_num_ctx(monkeypatch):
+    """With an explicit pin, the old grow-for-this-request behaviour stands.
+
+    A dedicated MT model that really must stay small beside the chat model
+    still gets the context it needs rather than silent left-truncation.
+    """
+    seen = _capture(monkeypatch)
+    monkeypatch.setenv("OLLAMA_TRANSLATION_NUM_CTX", "8192")
     eng = engine.OllamaEngine("hf.co/tencent/Hy-MT2-1.8B-GGUF")
 
     eng.generate_batch(["中" * 12000])  # ~8.5k tokens est + 4096 predict > 8192
     assert seen["body"]["options"]["num_ctx"] == 16384
+
+
+def test_pinned_num_ctx_is_sent_verbatim(monkeypatch):
+    seen = _capture(monkeypatch)
+    monkeypatch.setenv("OLLAMA_TRANSLATION_NUM_CTX", "8192")
+    eng = engine.OllamaEngine("hf.co/tencent/Hy-MT2-1.8B-GGUF")
+
+    eng.generate_batch(["short"])
+    assert seen["body"]["options"]["num_ctx"] == 8192
 
 
 def test_factory_selects_ollama_when_backend_env_set(monkeypatch):
