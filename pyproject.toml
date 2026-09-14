@@ -21,6 +21,10 @@ translation = ["torch>=2.0.0", "transformers>=4.40.0,<5.0.0"]
 translation-gguf = ["llama-cpp-python>=0.2.0", "huggingface-hub>=0.20.0"]
 translator = ["gradio>=6", "pymupdf", "gadget[translation-gguf]"]
 website = ["Pillow>=10.0.0", "PyYAML", "gadget[translation]"]
+# The baseline suites are pure-mock, so the runner is the only thing they need.
+# Without this extra `pip install -e .` leaves pytest absent and every test
+# command in AGENTS.md fails on a fresh clone with ModuleNotFoundError.
+dev = ["pytest>=7.0.0"]
 all = ["gadget[summarize,research,benchmark,website]"]
 
 [tool.setuptools]
