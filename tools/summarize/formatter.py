@@ -127,7 +127,6 @@ def generate_markdown(report: dict, target_date: date,
                       chart_filename: Optional[str] = None) -> str:
     """将结构化报告渲染为 Markdown 日报。"""
     _coerce_report_lists(report)   # tolerate LLM emitting list items as bare strings
-    _chart = chart_filename
     lines = []
     lines.append(f"# Daily Report — {target_date.isoformat()}\n")
 
@@ -326,6 +325,13 @@ def generate_markdown(report: dict, target_date: date,
         if card:
             lines.append("## Token Usage\n")
             lines.append(card + "\n")
+
+            # Site-absolute path: generate_period_hugo_post copies the PNG to
+            # static/images/daily/, which Hugo serves at /images/daily/.
+            if chart_filename:
+                lines.append(
+                    f"![AI Usage · {target_date.isoformat()}]"
+                    f"(/images/daily/{chart_filename})\n")
 
     # 如果有解析错误，展示原始响应
     if report.get("parse_error"):

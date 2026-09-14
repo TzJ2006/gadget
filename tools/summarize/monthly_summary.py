@@ -663,6 +663,11 @@ def generate_monthly_markdown(report: dict, year: int, month: int,
         if card:
             lines.append(card + "\n")
 
+        # Site-absolute path: generate_period_hugo_post copies the PNG to
+        # static/images/monthly/, which Hugo serves at /images/monthly/.
+        if chart_filename:
+            lines.append(f"![AI Usage · {month_str}](/images/monthly/{chart_filename})\n")
+
         peak = combined_summary.get("peak_day")
         if peak:
             lines.append(f"**Peak Day:** {peak['date']} — "
@@ -818,8 +823,12 @@ def cmd_generate(args):
     if is_past_month:
         report["_finalized"] = True
 
-    # 渲染 Markdown（usage 卡片内嵌，无需图表文件）
-    markdown = generate_monthly_markdown(report, year, month)
+    # 渲染 Markdown（内嵌 usage 卡片 + 逐源用量图表）
+    # matplotlib 缺失时 _generate_chart 返回 None，报告照常生成、只是没有图。
+    chart_path = _generate_chart(usage_by_source, year, month)
+    markdown = generate_monthly_markdown(
+        report, year, month,
+        chart_filename=chart_path.name if chart_path else None)
 
     # 保存
     save_monthly_report(report, markdown, year, month, reports_dir)
@@ -829,6 +838,7 @@ def cmd_generate(args):
         hugo_site = require_hugo_site(args)
 
         generate_monthly_hugo_post(markdown, year, month, hugo_site,
+                                   chart_path=chart_path,
                                    api=args.api, force=force,
                                    overwrite_human=getattr(args, "overwrite_human", False))
 
