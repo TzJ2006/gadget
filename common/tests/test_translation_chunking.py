@@ -1,8 +1,10 @@
 """zh-aware chunk ceiling — chunks must fit the Ollama translator's num_ctx.
 
-A 7000-char zh chunk is ~4.5k tokens; with the 4096-token output budget it
-overflows the 8192 default num_ctx and Ollama silently left-truncates the
-prompt. chunk_ceiling caps zh chunks at 5000 chars (EN stays at 7000).
+A 7000-char zh chunk is ~4.5k tokens; with the 4096-token output budget that is
+~8.6k, which overflows a modestly-sized runner context and Ollama then silently
+left-truncates the prompt. chunk_ceiling caps zh chunks at 5000 chars (~3.3k
+tokens; EN stays at 7000) so a chunk fits regardless of how the runner was
+loaded — the engine no longer pins a num_ctx of its own.
 """
 
 from common import translation

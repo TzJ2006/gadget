@@ -36,6 +36,12 @@ def _estimate_tokens(text: str) -> int:
     return int(cjk * 0.7 + (len(text) - cjk) * 0.35) + 64
 
 
+# The widest chunk common.translation.chunk_ceiling emits is 5000 CJK chars
+# (≈3.5k tokens) plus the 4096-token output budget. Anything materially above
+# that reached us without going through a chunker, which is worth one warning.
+_UNCHUNKED_PROMPT_WARN_TOKENS = 8192
+
+
 def _ollama_tags(host: str, timeout: int = 3) -> list[str] | None:
     """Locally-pulled model tags from GET /api/tags. None if the server is unreachable."""
     import json
@@ -165,16 +171,22 @@ class OllamaEngine(TranslationEngine):
             "repeat_penalty": SAMPLING_DEFAULTS["repetition_penalty"],
             "num_predict": max_new_tokens,
         }
-        # 8192 fits every chunk the pipeline sends (EN chunks capped at 7000 chars
-        # ≈ 1.8k tokens, zh chunks at 5000 chars ≈ 3.3k tokens — see
-        # common.translation.chunk_ceiling) plus the 4096 output budget. Raise via
-        # env if you feed oversized chunks from outside the pipeline's chunkers.
-        # ponytail: known ceiling — translation now shares the chat model, and a
-        # num_ctx that differs from the one the chat runner was loaded with makes
-        # Ollama reload the runner on each summarize↔translate switch (~10s). Set
-        # OLLAMA_TRANSLATION_NUM_CTX to the chat variant's num_ctx if that churn
-        # shows up; the cost is KV-cache VRAM on every translate call.
-        options["num_ctx"] = int(os.environ.get("OLLAMA_TRANSLATION_NUM_CTX", "8192"))
+        # No num_ctx by default. The pipeline's chunks all fit comfortably (EN
+        # capped at 7000 chars ≈ 1.8k tokens, zh at 5000 ≈ 3.3k — see
+        # common.translation.chunk_ceiling) plus the 4096 output budget, so
+        # there is nothing to gain by pinning one.
+        # Resolved 2026-09-13: translation now runs on the chat model itself
+        # (base.py DEFAULT_TRANSLATION_MODEL_OLLAMA = DEFAULT_OLLAMA_CHAT_MODEL),
+        # so there is no second model to leave room for — and pinning a num_ctx
+        # that differs from the one the runner was loaded with (65536, enforced
+        # by scripts/serve_local_llm.sh MIN_CTX because /v1 ignores per-request
+        # num_ctx) was making Ollama reload on every summarize↔translate switch.
+        # Sending no num_ctx inherits the loaded context and removes the churn.
+        # Set OLLAMA_TRANSLATION_NUM_CTX to pin it again for a dedicated MT model
+        # that really does need to stay small beside the chat model.
+        pinned = os.environ.get("OLLAMA_TRANSLATION_NUM_CTX", "").strip()
+        if pinned:
+            options["num_ctx"] = int(pinned)
 
         # Ollama decodes concurrent requests in one batched pass (n_seq ≥ 8
         # measured for HY-MT2), so 4 workers ≈ 2.2× wall-clock on real chunk sets
@@ -206,16 +218,27 @@ class OllamaEngine(TranslationEngine):
         import urllib.request
 
         # Belt-and-braces: the chunkers cap chunk sizes so prompt + num_predict
-        # fits num_ctx, but an oversized prompt from an unchunked caller would be
-        # silently left-truncated by Ollama. Grow the context for THIS request
-        # instead (may briefly evict co-resident models — rare by design).
+        # fits the context, but an oversized prompt from an unchunked caller
+        # would be silently left-truncated by Ollama.
         est_total = _estimate_tokens(prompt) + int(options.get("num_predict") or 0)
-        if est_total > options.get("num_ctx", 0):
-            bumped = min(32768, 1 << (est_total - 1).bit_length())
+        if "num_ctx" in options:
+            # A pinned context is ours to grow for this one request.
+            if est_total > options["num_ctx"]:
+                bumped = min(32768, 1 << (est_total - 1).bit_length())
+                logger.warning(
+                    "Prompt estimated at %d tokens exceeds num_ctx=%d — raising to %d "
+                    "for this request", est_total, options["num_ctx"], bumped)
+                options = {**options, "num_ctx": bumped}
+        elif est_total > _UNCHUNKED_PROMPT_WARN_TOKENS:
+            # Unpinned: the runner's loaded context governs and we do not know it
+            # here. Setting num_ctx to "fix" this is what forces a reload, so say
+            # the prompt looks unchunked and let the loaded context do its job.
             logger.warning(
-                "Prompt estimated at %d tokens exceeds num_ctx=%d — raising to %d "
-                "for this request", est_total, options.get("num_ctx", 0), bumped)
-            options = {**options, "num_ctx": bumped}
+                "Prompt estimated at %d tokens — larger than any chunk "
+                "common.translation.chunk_ceiling produces (%d). The caller is "
+                "probably not chunking; Ollama will truncate if it exceeds the "
+                "context the model was loaded with.",
+                est_total, _UNCHUNKED_PROMPT_WARN_TOKENS)
 
         if self._raw_hy:
             body = {
