@@ -65,10 +65,9 @@ extra) so `common` and the tool packages are importable. Config resolution is
   - `python scripts/sync.py status`
   - `python scripts/sync.py push --category summarize`
   - `python scripts/sync.py config --init`
-  - Special: `python scripts/sync.py --category dag` (no subcommand — generates + deploys the encrypted DAG site).
 - **Config**: repo-root `config.json` section `sync` (`rclone_remote`, `rclone_path`); if absent, derives from summarize config. Override path with `GADGET_CONFIG`. Init: `python scripts/sync.py config --init`.
 - **Outputs**: no local dir — rclone-copies local trees ↔ remote (summarize logs/reports/images, research projects+cache, benchmark data, website content, etc.).
-- **Gotchas**: needs the `rclone` binary on PATH (else hard exit). `status` does **network I/O** (`rclone check`, compare-only, no writes). The `dag` category is not a GDrive sync — it needs `STATICRYPT_PASSWORD`, Node/npx/tsx, and the sibling `../ai-companion` repo, and it triggers `update.sh`.
+- **Gotchas**: needs the `rclone` binary on PATH (else hard exit). `status` does **network I/O** (`rclone check`, compare-only, no writes).
 - Evidence: `scripts/sync.py:42-44,65-113,533-553,594-655`.
 
 ---

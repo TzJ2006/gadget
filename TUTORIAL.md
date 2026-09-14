@@ -243,22 +243,6 @@ python scripts/sync.py bootstrap --dry-run
 
 `bootstrap` proceeds in order: write a minimal `sync` section into repo-root `config.json` → verify remote connectivity (`rclone lsd`) → pull the config files → (optionally `--include-tokens`) pull tokens → pull all data directories. `--remote` defaults to `gdrive:gadget`.
 
-#### Special category `dag` (generate + deploy, not a GDrive sync)
-
-The `dag` category has different semantics from rclone sync — it "generates + deploys the DAG site". It can only be used at the top level, without a subcommand:
-
-```bash
-STATICRYPT_PASSWORD='<your-password>' python scripts/sync.py --category dag
-python scripts/sync.py --category dag --dry-run     # Only print the commands to be run and the target paths
-```
-
-It will:
-
-1. Run `npx tsx ../ai-companion/scripts/build-dag-site.ts stage` (generate the overview + per-project detail pages → StatiCrypt encryption → land in `tools/website/static/dag/`), with the password passed in via the `STATICRYPT_PASSWORD` environment variable (never hardcoded);
-2. Trigger the website publish (`tools/website/update.sh`, Hugo build and push to the `/dag/` path).
-
-On `--dry-run`, it only prints the commands to be run, without actually generating or deploying.
-
 ---
 
 ### One-time Machine Onboarding: `scripts/onboard.py`
