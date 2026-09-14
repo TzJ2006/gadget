@@ -10,6 +10,7 @@ pip install -e ".[translator]" # Gradio GUI extra (gradio + translation-gguf); n
 bash scripts/smoke.sh          # read-only smoke net across all tools (--help/--info/imports; no LLM, network, or writes)
 
 # Tests — per-module pytest suites, no repo-wide runner; baseline suites are pure-mock (no network/GPU/keys)
+pip install -e ".[dev]"        # the test runner itself; no extra is needed for the pure-mock suites
 python -m pytest common/tests scripts/tests
 cd tools && python -m pytest summarize/tests research/tests website/tests translator/tests/test_core.py
 python -m pytest tools/summarize/tests/test_config.py                # single file

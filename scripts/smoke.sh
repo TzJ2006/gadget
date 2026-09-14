@@ -7,7 +7,13 @@
 #
 # Exit: non-zero if any check FAILS. Missing optional deps SKIP (don't fail).
 # ponytail: dep-missing is detected by grepping stderr for ModuleNotFoundError;
-#           good enough for a smoke net. Upgrade to importlib probes if it lies.
+#           good enough for a smoke net. It did lie once: the pattern also had
+#           a bare 'not found', which matched any message containing those
+#           words — a missing file, a broken binary, a tool reporting "config
+#           not found" — and reported the real breakage as SKIP, which nobody
+#           goes on to read. Every check below invokes $PY with a module, so a
+#           genuinely absent optional dependency always surfaces as
+#           ModuleNotFoundError; anything else is a failure.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,7 +27,7 @@ run() {
   out="$(cd "$ROOT/$wd" && "$@" 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ]; then
     printf 'PASS  %s\n' "$label"; pass=$((pass+1))
-  elif printf '%s' "$out" | grep -qiE 'ModuleNotFoundError|No module named|not found'; then
+  elif printf '%s' "$out" | grep -qiE 'ModuleNotFoundError|No module named'; then
     local why; why="$(printf '%s' "$out" | grep -oiE "No module named '?[A-Za-z0-9_.]+'?" | head -1)"
     printf 'SKIP  %s  (%s)\n' "$label" "${why:-missing dep/binary}"; skip=$((skip+1))
   else
