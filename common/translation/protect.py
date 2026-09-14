@@ -212,7 +212,8 @@ def detect_language(text: str) -> str:
 
 def chunk_ceiling(text: str) -> int:
     """Hard chunk-size cap (chars) so a chunk + 4096 output tokens fits the
-    Ollama translator's num_ctx (default 8192 \u2014 see OllamaEngine).
+    context the Ollama runner was loaded with (see OllamaEngine, which sends no
+    num_ctx of its own so the loaded context governs).
 
     CJK runs ~0.65 tokens/char, so a 7000-char zh chunk (~4.5k tokens) would
     overflow and get silently left-truncated; 5000 chars (~3.3k tokens) fits.
