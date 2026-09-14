@@ -14,7 +14,9 @@ from common.json_utils import (
 from research.llm import call_llm
 
 from research.scout.config import (
+    CACHE_DIR,
     EVAL_CACHE_DIR,
+    MAX_CITATION_ANALYSIS,
     MAX_HIGH_RELEVANCE,
     TOP_PAPERS_IN_REPORT,
     DEFAULT_LANGUAGE,
@@ -105,6 +107,18 @@ def _deep_eval_cache_key(project: dict, papers: list[dict],
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _citation_cache_key(project: dict, papers: list[dict],
+                        api: str = "ollama") -> str:
+    """Stage 3 citation analysis cache key."""
+    content = json.dumps({
+        "stage": "citations",
+        "project_id": project["id"],
+        "api": api,
+        "paper_ids": [_paper_id(p) for p in papers],
+    }, sort_keys=True)
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
 def _load_eval_cache(cache_key: str) -> dict | None:
     """Try to load evaluation cache."""
     cache_path = EVAL_CACHE_DIR / f"{cache_key}.json"
@@ -144,6 +158,23 @@ def _deep_eval_is_usable(evaluated_papers: list[dict]) -> bool:
     if not evaluated_papers:
         return False
     return any(e.get("composite_score", 0) for e in evaluated_papers)
+
+
+def _citation_is_usable(analyses: dict[str, dict]) -> bool:
+    """Quality gate: don't cache citation analysis if nothing came back.
+
+    Stage 3's failure signature is different from stages 1-2: Semantic Scholar
+    returning nothing, or the LLM read coming back empty, leaves an entry with
+    no counts and no prose. Caching that would freeze a transient API outage
+    into the project's authoritative answer.
+    """
+    if not analyses:
+        return False
+    return any(
+        a.get("total_forward_citations") or a.get("total_references")
+        or a.get("influence_analysis")
+        for a in analyses.values()
+    )
 
 
 # ─── Paper formatting ───────────────────────────────────────────────
@@ -415,6 +446,54 @@ def analyze_citations(paper: dict, api: str = "ollama",
     }
 
 
+def _run_citation_stage(project: dict, ranked_papers: list[dict],
+                        api: str, timeout: int, use_cache: bool) -> dict[str, dict]:
+    """Stage 3: citation impact for the strongest papers, cached behind a gate.
+
+    ``ranked_papers`` comes out of Stage 2 sorted by composite_score descending,
+    so the slice really is the top N. Returns {paper_id: analysis}.
+    """
+    top_n = resolve_param(None, project, "max_citation_analysis", MAX_CITATION_ANALYSIS)
+    targets = ranked_papers[:top_n]
+    if not targets:
+        return {}
+
+    cache_key = _citation_cache_key(project, targets, api)
+    if use_cache:
+        cached = _load_eval_cache(f"citations_{cache_key}")
+        if cached and "analyses" in cached:
+            logger.info("Stage 3 引用分析缓存命中 (%d 篇)", len(cached["analyses"]))
+            return cached["analyses"]
+
+    from common.cache import DiskCache
+    s2_cache = DiskCache(CACHE_DIR) if use_cache else None
+    s2_key = load_scout_config().get("semantic_scholar_api_key", "")
+
+    analyses: dict[str, dict] = {}
+    logger.info("Stage 3: 引用影响分析 (%d 篇高分论文)...", len(targets))
+    for i, paper in enumerate(targets):
+        pid = _paper_id(paper)
+        logger.info("  [%d/%d] 分析引用: %s", i + 1, len(targets), pid)
+        try:
+            analysis = analyze_citations(paper, api=api, timeout=timeout,
+                                         cache_obj=s2_cache, api_key=s2_key)
+        except Exception as e:  # one dead paper must not lose the other four
+            logger.warning("  引用分析失败 %s: %s", pid, e)
+            continue
+        if analysis:
+            analyses[pid] = analysis
+            logger.info("    引用: %d, 参考文献: %d",
+                        analysis.get("total_forward_citations", 0),
+                        analysis.get("total_references", 0))
+
+    if use_cache:
+        if _citation_is_usable(analyses):
+            _save_eval_cache(f"citations_{cache_key}", {"analyses": analyses})
+        else:
+            logger.warning("引用分析结果疑似失败 (无引用数、无参考文献、无分析文本)，跳过缓存")
+    return analyses
+
+
 def evaluate_papers_for_project(project: dict, papers: list[dict],
                                 api: str = "ollama",
                                 timeout: int = 600,
@@ -496,6 +575,16 @@ def evaluate_papers_for_project(project: dict, papers: list[dict],
 
     if evaluated_papers is None:
         evaluated_papers = []
+
+    # Stage 3: Citation impact analysis. This lived as an inline loop in the CLI,
+    # so the "three-stage pipeline" only ever ran two stages here — and the one
+    # round with no cache entry and no quality gate was the most expensive one.
+    citation_analyses = _run_citation_stage(
+        project, evaluated_papers, api, timeout, use_cache)
+    for paper in evaluated_papers:
+        analysis = citation_analyses.get(_paper_id(paper))
+        if analysis:
+            paper["citation_analysis"] = analysis
 
     return {
         "high_relevance": evaluated_papers,
