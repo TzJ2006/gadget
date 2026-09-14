@@ -39,8 +39,6 @@ tools/website/.last_build
 tools/website/.translation_state.json
 tools/website/.verify-public*/
 tools/website/static/images/
-# DAG site — generated + StatiCrypt-encrypted by sync.py --category dag (rebuilt each deploy)
-tools/website/static/dag/
 !tools/website/static/images/icon.png
 !tools/website/static/images/icon2.png
 tools/website/static/videos/

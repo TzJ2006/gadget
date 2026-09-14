@@ -7,27 +7,16 @@
     python scripts/sync.py status            # 显示差异
     python scripts/sync.py config --init     # 初始化配置
     python scripts/sync.py bootstrap --remote gdrive:gadget  # 新设备一键初始化
-    python scripts/sync.py --category dag    # 生成并部署 DAG 站 (非 GDrive 同步)
 
 选项:
     --dry-run                        # 预览，不实际传输
-    --category <name>                # 只同步某一类 (summarize/website/research/benchmark/backups/dag; test = benchmark 旧名)
+    --category <name>                # 只同步某一类 (summarize/website/research/benchmark/backups; test = benchmark 旧名)
     --include-config                 # push 时同时备份配置文件
     --include-tokens                 # push/bootstrap 时包含 tokens/ 目录
-
-特殊类目 dag:
-    dag 类目语义不同于 rclone 同步——它「生成 + 部署 DAG 站」，而非 GDrive 同步。
-    `python scripts/sync.py --category dag` 会:
-      1. 运行 `npx tsx ../ai-companion/scripts/build-dag-site.ts stage`
-         (生成 overview + 各项目详情页 → 加密 → 落 tools/website/static/dag/)，
-         密码经环境变量 STATICRYPT_PASSWORD 传入；
-      2. 触发 website 发布 (tools/website/update.sh)。
-    `--dry-run` 时仅打印将运行的命令与目标路径，不实际执行。
 """
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -46,15 +35,6 @@ from common import config as gadget_config
 CONFIG_FILE = gadget_config.DEFAULT_CONFIG_PATH
 
 
-# DAG site — generated + deployed (not a GDrive-synced category).
-# ai-companion is now a separate repo checked out as a sibling (../ai-companion);
-# override with AI_COMPANION_ROOT if it lives elsewhere.
-# ponytail: sibling-dir assumption; AI_COMPANION_ROOT env is the escape hatch.
-_AI_COMPANION_ROOT = Path(
-    os.environ.get("AI_COMPANION_ROOT", GADGET_ROOT.parent / "ai-companion")
-).expanduser()
-DAG_BUILD_SCRIPT = _AI_COMPANION_ROOT / "scripts" / "build-dag-site.ts"
-DAG_STAGE_DIR = GADGET_ROOT / "tools" / "website" / "static" / "dag"
 WEBSITE_DIR = GADGET_ROOT / "tools" / "website"
 WEBSITE_UPDATE_SCRIPT = WEBSITE_DIR / "update.sh"
 
@@ -519,89 +499,6 @@ def cmd_config(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# DAG site — generate + deploy (not a GDrive sync category)
-# ---------------------------------------------------------------------------
-
-
-def sync_dag(*, dry_run: bool = False) -> bool:
-    """Generate the encrypted DAG site and deploy it via the website pipeline.
-
-    Unlike the rclone categories, this does not touch Google Drive. It:
-      1. Runs `npx tsx ../ai-companion/scripts/build-dag-site.ts stage` — assembles
-         the overview + per-project detail pages, encrypts each with StatiCrypt
-         (password from STATICRYPT_PASSWORD), and stages them into
-         website/static/dag/ for Hugo to publish at /dag/.
-      2. Runs website/update.sh — Hugo build + push to tzj2006.github.io.
-
-    Returns True on success. With dry_run=True it only prints what would run and
-    always returns True (no generation/deploy is performed).
-    """
-    stage_cmd = ["npx", "tsx", str(DAG_BUILD_SCRIPT), "stage"]
-    deploy_cmd = ["bash", str(WEBSITE_UPDATE_SCRIPT)]
-
-    if dry_run:
-        print("=== DAG: 生成 + 部署 (dry-run) ===\n")
-        print("将执行 (步骤 1/2 — 生成 + 加密 DAG 站):")
-        print(f"  $ STATICRYPT_PASSWORD=*** {' '.join(stage_cmd)}")
-        print(f"  → 加密产物落地: {DAG_STAGE_DIR}/ (overview index.html + 各项目 <name>.html)")
-        print("\n将执行 (步骤 2/2 — 发布 website):")
-        print(f"  $ {' '.join(deploy_cmd)}  (cwd={WEBSITE_DIR})")
-        print(f"  → Hugo 构建并推送 (发布站点的 /dag/ 路径)")
-        print("\n[dry-run] 以上为预览，未实际生成或部署。")
-        return True
-
-    print("=== DAG: 生成 + 部署 ===\n")
-
-    # Step 0:密码必须来自环境变量，绝不硬编码。
-    password = os.environ.get("STATICRYPT_PASSWORD")
-    if not password:
-        print("[error] 未设置环境变量 STATICRYPT_PASSWORD。")
-        print("  DAG 站每个页面都会用该密码做 StatiCrypt 加密，请先设置后再运行，例如:")
-        print("    STATICRYPT_PASSWORD='<your-password>' python scripts/sync.py --category dag")
-        return False
-
-    if not DAG_BUILD_SCRIPT.is_file():
-        print(f"[error] 找不到 DAG 构建脚本: {DAG_BUILD_SCRIPT}")
-        return False
-
-    # Step 1: 生成 + 加密 → website/static/dag/
-    print(f"--- 生成 DAG 站 (→ {DAG_STAGE_DIR}/) ---\n")
-    print(f"  $ {' '.join(stage_cmd)}")
-    try:
-        result = subprocess.run(stage_cmd, cwd=str(GADGET_ROOT), text=True, timeout=600)
-    except subprocess.TimeoutExpired:
-        print("  [error] DAG 站生成超时")
-        return False
-    except OSError as e:
-        print(f"  [error] 无法运行 npx/tsx (是否已安装 Node.js?): {e}")
-        return False
-    if result.returncode != 0:
-        print(f"  [error] DAG 站生成失败 (退出码 {result.returncode})")
-        return False
-
-    # Step 2: 发布 website
-    if not WEBSITE_UPDATE_SCRIPT.is_file():
-        print(f"[error] 找不到 website 发布脚本: {WEBSITE_UPDATE_SCRIPT}")
-        return False
-    print(f"\n--- 发布 website (→ /dag/) ---\n")
-    print(f"  $ {' '.join(deploy_cmd)}  (cwd={WEBSITE_DIR})")
-    try:
-        result = subprocess.run(deploy_cmd, cwd=str(WEBSITE_DIR), text=True, timeout=600)
-    except subprocess.TimeoutExpired:
-        print("  [error] website 发布超时")
-        return False
-    except OSError as e:
-        print(f"  [error] 无法运行 website/update.sh: {e}")
-        return False
-    if result.returncode != 0:
-        print(f"  [error] website 发布失败 (退出码 {result.returncode})")
-        return False
-
-    print("\n[done] DAG 站已生成并部署。")
-    return True
-
-
-# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -611,12 +508,11 @@ def main() -> None:
         description="gadget 个人数据 rclone 同步工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    # Top-level --category supports the special `dag` target (generate + deploy
-    # the DAG site, no subcommand needed). rclone categories still go through
-    # push/pull/status subcommands as before.
+    # rclone categories go through the push/pull/status subcommands; a bare
+    # top-level --category has no meaning on its own.
     parser.add_argument(
-        "--category", choices=rclone_category_choices() + ["dag"],
-        help="顶层用法仅支持 dag (生成+部署 DAG 站); 其余类目请配合 push/pull/status 子命令",
+        "--category", choices=rclone_category_choices(),
+        help="类目需配合 push/pull/status 子命令使用",
     )
     # Separate dest so a subparser's own --dry-run default does not clobber a
     # global `--dry-run push`. The two are OR-ed after parsing (see below).
@@ -660,15 +556,9 @@ def main() -> None:
     # Honor --dry-run regardless of position (before or after the subcommand).
     args.dry_run = getattr(args, "dry_run", False) or args.global_dry_run
 
-    # Special top-level usage: `python scripts/sync.py --category dag` — generate +
-    # deploy the DAG site (no subcommand). Handle before subcommand dispatch.
     if not args.command:
-        if args.category == "dag":
-            ok = sync_dag(dry_run=args.dry_run)
-            sys.exit(0 if ok else 1)
         if args.category:
-            print(f"[error] 顶层 --category {args.category} 仅 dag 受支持；"
-                  f"其余类目请用 push/pull/status 子命令，例如 "
+            print(f"[error] --category {args.category} 需配合子命令使用，例如 "
                   f"`python scripts/sync.py push --category {args.category}`。")
             sys.exit(1)
         parser.print_help()
