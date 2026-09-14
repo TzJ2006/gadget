@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from common.bilingual import write_bilingual
 from common.io import atomic_write
 from common.site_staging import resolve_site_content_dir, write_site_content
 from research.models import ResearcherProfile
@@ -220,8 +221,16 @@ def render_report(profile: ResearcherProfile, reports_dir: Path) -> Path:
     return path
 
 
-def deploy_to_hugo(profile: ResearcherProfile, hugo_site: Path) -> Path | None:
-    """Deploy a researcher profile report to staged Hugo content/research/."""
+def deploy_to_hugo(profile: ResearcherProfile, hugo_site: Path, *,
+                   force: bool = False,
+                   overwrite_human: bool = False) -> Path | None:
+    """Deploy a researcher profile report to staged Hugo content/research/.
+
+    Goes through ``write_bilingual`` like every other generated page. It used to
+    call ``write_site_content`` directly, which writes one file — so profiles
+    were the only thing published into content/research/ without a Chinese
+    twin, and nothing noticed because nothing tested this function.
+    """
     filename = _safe_filename(profile.name) + ".md"
     resolve_site_content_dir(hugo_site, "research")
 
@@ -253,14 +262,18 @@ draft: false
 ---
 
 """
-    post_path = write_site_content(
+    en_path, zh_path = write_bilingual(
         hugo_site,
         Path("research") / filename,
         frontmatter + markdown_body,
+        force=force,
+        overwrite_human=overwrite_human,
     )
 
-    print(f"  Hugo post generated: {post_path}")
-    return post_path
+    print(f"  Hugo post generated: {en_path}")
+    if zh_path:
+        print(f"  Hugo post (translated): {zh_path}")
+    return en_path
 
 
 def show_profile(name: str, profiles_dir: Path, reports_dir: Path | None = None) -> bool:
