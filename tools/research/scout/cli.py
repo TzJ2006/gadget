@@ -54,7 +54,6 @@ from research.scout.evaluate import (
     call_scout_llm,
     evaluate_papers_for_project,
     suggest_directions,
-    analyze_citations,
 )
 from research.scout.report import (
     generate_daily_report,
@@ -225,7 +224,8 @@ def run_evaluation_pipeline(
     insight: bool = False,
     insight_top_n: int | None = None,
 ) -> dict:
-    """Run 3-stage evaluation + citation analysis + direction suggestions on papers.
+    """Run the 3-stage evaluation (screen → deep eval → citation impact) plus
+    direction suggestions on papers.
 
     If insight=True, also runs Stage 4 (insight analysis) + Stage 5 (OpenReview reviews)
     and generates a writing guide synthesis.
@@ -247,26 +247,8 @@ def run_evaluation_pipeline(
     low_papers = eval_result["low_relevance"]
     stats = eval_result["screening_stats"]
 
-    # Stage 3: Citation impact analysis (top 5 papers)
-    from common.cache import DiskCache as _DiskCache
-    citation_cache = None if no_cache else _DiskCache(CACHE_DIR)
-    s2_key = load_scout_config().get("semantic_scholar_api_key", "")
-    citation_top = high_papers[:5]
-    if citation_top:
-        logger.info("Stage 3: 引用影响分析 (%d 篇高分论文)...", len(citation_top))
-        for ci, cp in enumerate(citation_top):
-            cpid = _paper_id(cp)
-            logger.info("  [%d/%d] 分析引用: %s", ci + 1, len(citation_top), cpid)
-            try:
-                ca = analyze_citations(cp, api=api, timeout=timeout,
-                                       cache_obj=citation_cache, api_key=s2_key)
-                if ca:
-                    cp["citation_analysis"] = ca
-                    logger.info("    引用: %d, 参考文献: %d",
-                                ca.get("total_forward_citations", 0),
-                                ca.get("total_references", 0))
-            except Exception as e:
-                logger.warning("  引用分析失败 %s: %s", cpid, e)
+    # Stage 3 (citation impact) now runs inside evaluate_papers_for_project,
+    # where it gets the cache entry and quality gate stages 1-2 always had.
 
     # Direction suggestions
     top_papers = [e for e in high_papers if e.get("composite_score", 0) >= 2.5]
