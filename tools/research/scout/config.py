@@ -41,6 +41,10 @@ DEFAULT_LOOKBACK_DAYS = 7
 MAX_PAPERS_PER_PROJECT = 50
 TOP_PAPERS_IN_REPORT = 5
 MAX_HIGH_RELEVANCE = 20
+# Stage 3 is the expensive round (two Semantic Scholar calls plus an LLM read
+# per paper), so it runs on the strongest handful rather than every high-
+# relevance paper. Overridable per project / via config like any other param.
+MAX_CITATION_ANALYSIS = 5
 DEFAULT_LANGUAGE = "zh"
 BIORXIV_MAX_PAGES = 10
 INSIGHT_TOP_N = 3
