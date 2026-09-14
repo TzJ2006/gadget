@@ -16,7 +16,7 @@ except ImportError:
 from common.io import atomic_write as _atomic_write
 from common.hugo import run_hugo_update
 from common.llm import ChunkTimeoutError, cleanup_chunk_cache as _cleanup_chunk_cache
-from common.paths import LOGS_DIR
+from common.paths import IMAGES_DIR, LOGS_DIR
 
 from .config import _resolve_output_dir, resolve_hugo_site
 from .daily_helpers import _parse_date, _DEFAULT_LOGS_DIR, _DEFAULT_REPORTS_DIR, _DEFAULT_CACHE_DIR
@@ -449,8 +449,14 @@ def cmd_merge(args):
     else:
         report["_finalized"] = False
 
-    # 生成并保存报告（usage 卡片直接内嵌在 Markdown 中，无需图表文件）
-    markdown = generate_markdown(report, target_date)
+    # 生成并保存报告（内嵌 usage 卡片 + 逐源用量图表）
+    # matplotlib 缺失时 generate_daily_chart 返回 None，报告照常生成、只是没有图。
+    from .charts import generate_daily_chart
+    chart_path = generate_daily_chart(report.get("token_usage_by_source") or {},
+                                      target_date,
+                                      output_dir=IMAGES_DIR / "summarize")
+    markdown = generate_markdown(report, target_date,
+                                 chart_filename=chart_path.name if chart_path else None)
     save_report(report, markdown, target_date, output_dir)
 
     _rclone_upload(output_dir / f"{target_date.isoformat()}.md",
@@ -465,6 +471,7 @@ def cmd_merge(args):
             sys.exit(1)
 
         generate_hugo_post(markdown, target_date, hugo_site, api=args.api,
+                           chart_path=chart_path,
                            force=getattr(args, "force", False))
 
         run_hugo_update(hugo_site)
