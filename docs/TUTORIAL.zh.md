@@ -243,22 +243,6 @@ python scripts/sync.py bootstrap --dry-run
 
 `bootstrap` 依次：向仓库根 `config.json` 写入最小 `sync` 段 → 校验远端连通性（`rclone lsd`）→ 拉取配置文件 → （可选 `--include-tokens`）拉取 tokens → 拉取全部数据目录。`--remote` 默认 `gdrive:gadget`。
 
-#### 特殊类目 `dag`（生成 + 部署，非 GDrive 同步）
-
-`dag` 类目语义不同于 rclone 同步——它「生成 + 部署 DAG 站」。只能在顶层用、不带子命令：
-
-```bash
-STATICRYPT_PASSWORD='<your-password>' python scripts/sync.py --category dag
-python scripts/sync.py --category dag --dry-run     # 仅打印将运行的命令与目标路径
-```
-
-它会：
-
-1. 运行 `npx tsx ../ai-companion/scripts/build-dag-site.ts stage`（生成 overview + 各项目详情页 → StatiCrypt 加密 → 落地 `tools/website/static/dag/`），密码经环境变量 `STATICRYPT_PASSWORD` 传入（绝不硬编码）；
-2. 触发 website 发布（`tools/website/update.sh`，Hugo 构建并推送到 `/dag/` 路径）。
-
-`--dry-run` 时仅打印将运行的命令，不实际生成或部署。
-
 ---
 
 ### 一次性机器 Onboarding：`scripts/onboard.py`
