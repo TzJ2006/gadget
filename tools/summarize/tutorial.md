@@ -35,7 +35,6 @@ summarize/                   # pip 可安装包（python -m summarize）
 ├── auto.py                  # 全流程自动化：daily export → merge → weekly → monthly
 ├── monthly_summary.py       # 月度总结 (generate / list)
 ├── weekly_summary.py        # 周报总结 (generate / list)
-├── daily_summary.py         # 向后兼容 re-export shim（旧 import 路径仍可用）
 ├── llm_backends.py          # 重导出 shim → common/
 ├── requirements.txt         # Python 依赖
 └── tests/                   # pytest 测试套件
@@ -77,7 +76,7 @@ pip install -e .
 pip install -r tools/summarize/requirements.txt
 ```
 
-> **CLI 用法变更**：重构后推荐使用 `python -m summarize daily ...` 形式。旧的 `python tools/summarize/daily_summary.py ...` 仍然可用（向后兼容）。本教程中的命令均使用新形式。
+> **CLI 用法变更**：重构后统一使用 `python -m summarize daily ...` 形式。旧的 `python tools/summarize/daily_summary.py ...` 已不存在（纯 re-export shim，已删除）。本教程中的命令均使用新形式。
 
 调 API 生成总结时，有四种后端可选：
 

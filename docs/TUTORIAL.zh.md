@@ -435,7 +435,6 @@ summarize/                   # pip 可安装包（python -m summarize）
 ├── auto.py                  # 全流程自动化：daily export → merge → weekly → monthly
 ├── monthly_summary.py       # 月度总结 (generate / list)
 ├── weekly_summary.py        # 周报总结 (generate / list)
-├── daily_summary.py         # 向后兼容 re-export shim（旧 import 路径仍可用）
 ├── llm_backends.py          # 重导出 shim → common/
 ├── requirements.txt         # Python 依赖
 └── tests/                   # pytest 测试套件
@@ -485,7 +484,7 @@ pip install -e .
 pip install -r tools/summarize/requirements.txt
 ```
 
-> **CLI 用法变更**：重构后推荐使用 `python -m summarize daily ...` 形式。旧的 `python tools/summarize/daily_summary.py ...` 仍然可用（向后兼容）。本教程中的命令均使用新形式。
+> **CLI 用法变更**：重构后统一使用 `python -m summarize daily ...` 形式。旧的 `python tools/summarize/daily_summary.py ...` 已不存在——那个文件是为仓外消费者留的 re-export shim，已删除。本教程中的命令均使用新形式。
 
 > 请先 `pip install -e .`，再从仓库根目录运行 `python -m summarize`。
 
@@ -1268,7 +1267,7 @@ python -m summarize daily deploy --force
 
 ISO 8601 周（周一至周日）。tasks/problems/learnings 中每一项都带 `level: "high"|"low"` 和 `importance: 1-10`，用于优先级排序。
 
-**导入契约**：`daily_summary.py` 是向后兼容 re-export shim，是稳定的 API surface（被 monthly/weekly 管线和外部消费者引用）。被外部消费的关键导出：`_atomic_write`、`_resolve_output_dir`、`_load_config`、`run_hugo_update`、`format_reports_for_llm`、`aggregate_token_usage`。`tests/test_imports.py` 参数化验证重构后所有期望符号仍可导入，结构变动后必跑。新代码应直接 import 具体子模块。
+**导入契约**：`weekly_summary.py` 与 `monthly_summary.py` 是稳定的 API surface——它们是完整实现，各自对外暴露一组有文档的符号。`tests/test_imports.py` 参数化验证这些符号在结构变动后仍可导入，改完必跑。新代码应直接 import 具体子模块。（这里原来写着 `daily_summary.py` 是「被 monthly/weekly 管线引用」的 shim；两份文件从未 import 过它，该文件已删除。）
 
 ### `--api` 参数说明
 

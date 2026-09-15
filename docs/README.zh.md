@@ -86,7 +86,7 @@ python -m summarize monthly generate --month 2026-02 --deploy      # 月报 + �
 python -m summarize auto --deploy                                  # 全流程一键 export → merge → weekly → monthly + 部署
 ```
 
-> 旧入口 `python tools/summarize/daily_summary.py ...` / `weekly_summary.py` / `monthly_summary.py` 仍可用（向后兼容 re-export shim），推荐使用上面的 `python -m summarize` 新形式。
+> 旧入口 `python tools/summarize/weekly_summary.py ...` / `monthly_summary.py` 仍可用（它们是带 `main()` 的完整实现），推荐使用上面的 `python -m summarize` 新形式。`daily_summary.py` 已删除——它是纯 re-export shim，而它声明的唯一消费者 `mcp_server.py` 不在本仓库里。
 
 详细分步操作见 [TUTORIAL.zh.md — Summarize](TUTORIAL.zh.md#summarize) 与源文档 [tools/summarize/tutorial.md](../tools/summarize/tutorial.md)。
 
