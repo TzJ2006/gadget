@@ -75,9 +75,11 @@ SYNC_DIRS: dict[str, list[tuple[str, str]]] = {
         ("outputs/reports/research-profiler", "research/reports-profiler"),
         ("outputs/data/research-profiler", "research/data-profiler"),
     ],
-    "benchmark": [
-        ("outputs/data/benchmark", "benchmark/data"),
-    ],
+    # The results ledger is a tracked file, not a synced directory, and the
+    # submission queue under tools/benchmark/data/ is tracked too — so this
+    # category has no directories to sync. It kept a mapping for
+    # outputs/data/benchmark, which nothing has ever written.
+    "benchmark": [],
     # 强制重生成前的自动备份（website-force）+ 报告覆盖备份（summarize）
     "backups": [
         ("outputs/backups/website-force", "backups/website-force"),
@@ -96,7 +98,11 @@ SYNC_FILES: dict[str, list[tuple[str, str]]] = {
         ("tools/website/content/Random.md", "website/personal/Random.md"),
     ],
     "benchmark": [
-        ("outputs/data/benchmark/results.csv", "benchmark/data/benchmark_results.csv"),
+        # Was outputs/data/benchmark/results.csv — a path nothing writes, so
+        # `push --category benchmark` copied nothing. The real ledger is here
+        # (cli.py:23, core.py:171, report.py:595 all agree). Remote name kept
+        # so existing objects stay where they are.
+        ("tools/benchmark/benchmark_results.csv", "benchmark/data/benchmark_results.csv"),
     ],
 }
 

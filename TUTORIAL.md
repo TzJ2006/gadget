@@ -221,7 +221,7 @@ python scripts/sync.py pull --dry-run                   # Preview pull
 | `summarize` | `outputs/logs/summarize`, `outputs/reports/summarize`, `outputs/images/summarize` |
 | `website` | `tools/website/content/bugJournal/{daily,weekly,monthly}`, `tools/website/content/research`, `tools/website/static/images/{weekly,monthly}`, `tools/website/static/benchmark-report`, `tools/website/content/{leetcode,posts}` and several loose files (About.pdf, Resume.md/pdf, Random.md, benchmark.md/zh.md) |
 | `research` | `outputs/cache/research-scout`, `tools/research/projects`, `outputs/reports/research-scout`, `outputs/logs/research-scout`, `outputs/{reports,data}/research-profiler` |
-| `benchmark` | `outputs/data/benchmark` (including `results.csv`); `--category test` is a backward alias |
+| `benchmark` | `tools/benchmark/benchmark_results.csv`; `--category test` is a backward alias |
 | `backups` | `outputs/backups/website-force`, `outputs/backups/summarize` (pre-overwrite backups) |
 
 #### First-time configuration (`config --init`)
@@ -2449,7 +2449,7 @@ Running GPU benchmarks...
     [5/5] FP8_exp... ✗ (not supported)
 ✓ GPU benchmarks complete.
 
-Results saved to: outputs/data/benchmark/results.csv
+Results saved to: tools/benchmark/benchmark_results.csv
 Total records in file: 8
 ```
 
@@ -2515,7 +2515,7 @@ The report includes:
 
 Default output paths:
 
-- CSV: `outputs/data/benchmark/results.csv` (relative to the gadget project root)
+- CSV: `tools/benchmark/benchmark_results.csv` (relative to the gadget project root)
 - HTML: `outputs/reports/benchmark/report.html`
 
 #### Customizing Output Paths

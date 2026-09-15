@@ -221,7 +221,7 @@ python scripts/sync.py pull --dry-run                   # 预览 pull
 | `summarize` | `outputs/logs/summarize`、`outputs/reports/summarize`、`outputs/images/summarize` |
 | `website` | `tools/website/content/bugJournal/{daily,weekly,monthly}`、`tools/website/content/research`、`tools/website/static/images/{weekly,monthly}`、`tools/website/static/benchmark-report`、`tools/website/content/{leetcode,posts}` 及若干松散文件（About.pdf、Resume.md/pdf、Random.md、benchmark.md/zh.md） |
 | `research` | `outputs/cache/research-scout`、`tools/research/projects`、`outputs/reports/research-scout`、`outputs/logs/research-scout`、`outputs/{reports,data}/research-profiler` |
-| `benchmark` | `outputs/data/benchmark`（含 `results.csv`）；`--category test` 为旧名别名 |
+| `benchmark` | `tools/benchmark/benchmark_results.csv`；`--category test` 为旧名别名 |
 | `backups` | `outputs/backups/website-force`、`outputs/backups/summarize`（覆盖前自动备份） |
 
 #### 首次配置（`config --init`）
@@ -2449,7 +2449,7 @@ Running GPU benchmarks...
     [5/5] FP8_exp... ✗ (not supported)
 ✓ GPU benchmarks complete.
 
-Results saved to: outputs/data/benchmark/results.csv
+Results saved to: tools/benchmark/benchmark_results.csv
 Total records in file: 8
 ```
 
@@ -2515,7 +2515,7 @@ python -m benchmark.cli --report-only
 
 默认输出路径：
 
-- CSV：`outputs/data/benchmark/results.csv`（相对于 gadget 项目根目录）
+- CSV：`tools/benchmark/benchmark_results.csv`（相对于 gadget 项目根目录）
 - HTML：`outputs/reports/benchmark/report.html`
 
 #### 自定义输出路径
