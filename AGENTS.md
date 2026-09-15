@@ -13,6 +13,7 @@ bash scripts/smoke.sh          # read-only smoke net across all tools (--help/--
 pip install -e ".[dev]"        # the test runner itself; no extra is needed for the pure-mock suites
 python -m pytest common/tests scripts/tests
 cd tools && python -m pytest summarize/tests research/tests website/tests translator/tests/test_core.py
+cd tools/benchmark && python -m pytest tests   # benchmark's paths are cwd-relative, so it runs from its own dir
 python -m pytest tools/summarize/tests/test_config.py                # single file
 python -m pytest tools/summarize/tests/test_config.py::test_name -v  # single test
 

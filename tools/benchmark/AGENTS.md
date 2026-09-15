@@ -17,7 +17,9 @@ python -m benchmark.cli --report --deploy        # run + report + publish to Hug
 
 ## Quirks
 
-- No pytest suite — verify changes with `--info`, `--cpu-only --duration 3`, and `--report-only`.
+- `cd tools/benchmark && python -m pytest tests` — pure-mock (needs only numpy; no torch, no GPU). Covers the
+  append-only CSV semantics, the timer's outlier rejection, and the no-GPU/no-torch detection paths. Beyond
+  that, verify by hand with `--info`, `--cpu-only --duration 3`, and `--report-only`.
 - `--report` / `--report-only` / `--deploy` need plotly via `pip install -e ".[benchmark]"` from repo root. `--info` lazy-imports report and does not.
 - GPU run path is cuda/mps/xpu only; OpenCL appears in `--info` detection but is never benchmarked.
 - The CSV is append-mode by design (multi-hardware accumulation leaderboard) — never overwrite, dedupe, or sort it in place.
