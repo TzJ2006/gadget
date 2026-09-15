@@ -187,6 +187,20 @@ ideas:
       写错一个 tag 立刻报错并列出本机可用 tag，而不是走到 openai SDK 那层才炸；
       frontmatter 复核不再被静默跳过；ollama ps 显示两个模型同时驻留。
     how: >
+      **「认参数」与「没 pull 就报错」必须和调用方的改动在同一个提交里落地**，
+      否则默认本地路径会全线失败：今天喂给它的全是抽象名字——
+      LLMCallConfig.openai_model 默认 "gpt-4o"（llm.py:318），而 llm.py:379 把它
+      直接交给 _ollama_model，summarize 四个调用点一个都不覆盖它；
+      call_llm_raw 默认 model="sonnet"（llm.py:226）；
+      research 那侧 analysis.py 有四处 model="sonnet" 默认、evaluate.py:61 显式传 sonnet、
+      homepage_discovery.py:200 传 haiku；scripts/language.py:319 也传 haiku。
+      这些名字都不是本机 tag，所以一旦既认参数又对没 pull 的 tag 硬报错，
+      日报周报月报、JSON 修复、研究画像会同时炸掉——**今天「悄悄忽略参数」这个缺陷，
+      正是它们还能跑的唯一原因**。所以同一个提交里要做三件事：
+      给解析器一个 requested=None 的「没有意见」取值；
+      把 LLMCallConfig.openai_model 与上面那几处默认改成 None；
+      并且把 ANTHROPIC_MODELS / OPENAI_MODELS 的键（sonnet/haiku/opus 这些已知抽象别名）
+      也当成「没有意见」，而不是拿去问 /api/tags。
       common/llm.py 留 call_llm_raw / call_llm 两个函数与 ollama + openai 两个后端，
       删 anthropic 与 claude_cli 分支；common/engine/ 留 ollama.py 与 transformers.py，
       删 vllm.py、llamacpp.py 与为四后端而存在的 base.py 抽象；

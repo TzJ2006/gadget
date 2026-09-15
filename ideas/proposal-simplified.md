@@ -2,8 +2,8 @@
 
 > **架构仍然是提案，但代码已经动过了。** 本文件写成时一行代码都没改；
 > 之后你让我「去做哪些没有做的、或者做错的 case」，于是审计查出的 **10 处缺陷**
-> 已经在本分支修掉，另加 4 个提交收拾它们自己带出来的回归与尾巴，
-> 共 14 个提交（`5da90f3`..`a957221`，逐条见**附二**）。
+> 已经在本分支修掉，另加 6 个提交收拾它们自己带出来的回归、补上欠的合并与尾巴，
+> 共 16 个提交（`5da90f3`..`4ce39f1`，逐条见**附二**）。
 > 下面第六、七节保留审计当时的原文当证据，**凡是已经修掉的都就地标了「已修」**。
 > 六步主路、23 个节点那套结构本身仍然等你批准；`graph.claude.yaml` 一个字没碰，
 > 你批准之后那份 YAML 才会成为 `ideas/graph.yaml`。
@@ -544,6 +544,16 @@ class O1,O2 out
 审计是对着代码做的，但「该怎么改」仍然是判断。下面六条是我自己最没把握的，
 按把握从低到高排。你审的时候先看这一节。
 
+0. **让 `resolve_ollama_tag` 认它的参数、同时对没 pull 的 tag 硬报错**——
+   本案风险最高的一处，而且不是判断问题，是顺序问题。今天喂给这条路的全是抽象名字：
+   `LLMCallConfig.openai_model` 默认 `"gpt-4o"`（`llm.py:318`，而 `llm.py:379`
+   把它直接交给 `_ollama_model`，summarize 四个调用点一个都不覆盖）·
+   `call_llm_raw` 默认 `model="sonnet"`（`llm.py:226`）·
+   `analysis.py` 四处 `model="sonnet"` · `evaluate.py:61` · `homepage_discovery.py:200`
+   与 `scripts/language.py:319` 的 `haiku`。这些都不是本机 tag——
+   **今天「悄悄忽略参数」这个缺陷，正是这些路径还能跑的唯一原因**。
+   只改解析器不改调用方，日报周报月报、JSON 修复、研究画像会同时炸。
+   必须一个提交里一起改（见 I-063 的「怎么做」）。这一条本轮**刻意没动代码**。
 1. **删掉 frontmatter 的模型复核（第十节第 10 条）**——「没人发现它关掉了」有两种解释：
    它没在交付什么，或者它在悄悄修正什么而没人去看。今天分不出来，因为它的三道门
    全是 fail-open，而且复核它的模型就是起草它的那个模型。
@@ -576,7 +586,7 @@ class O1,O2 out
 | `ideas/graph.claude.html` | 生成物，不手改。批准并写进 `graph.yaml` 后由 `render` 重新生成 |
 | `ideas/log.md` · `log.claude.md` | 只追加，不动 |
 | `.companion/FORMAT.md` | 本提案的格式依据。遵守：D5 编号不复用 · 八个问题 · `steps` 三到七步且每步说得出新增的能力 · 终点节点以「终点：」开头 · 一个想法一个节点一种边 |
-| 代码 | 本文件写成时完全没动。之后按你「去做哪些没有做的、或者做错的 case」的要求，审计查出的 10 处缺陷已经修掉，连同收拾回归的提交共 14 个（`5da90f3`..`a957221`）——**逐条见附二**。23 个节点那套结构本身还没有被实现，仍等你批准 |
+| 代码 | 本文件写成时完全没动。之后按你「去做哪些没有做的、或者做错的 case」的要求，审计查出的 10 处缺陷已经修掉，连同收拾回归与补齐合并的提交共 16 个（`5da90f3`..`4ce39f1`）——**逐条见附二**。23 个节点那套结构本身还没有被实现，仍等你批准 |
 
 
 ---
@@ -604,6 +614,8 @@ class O1,O2 out
 | 12 | `aedac18` | **第 8 条自己带出来的三个问题**（见下） | 每级图表各自的目录（原来三级同名同目录会互相覆盖）· `static/images/daily` 补进同步表（否则它和 `/dag/` 一样会自删）· `summarize daily deploy` 补上 `chart_path`（原来发链接不拷图） | `test_chart_publish_paths.py`（7 个） |
 | 13 | `eb4bacf` | **第 10 条自己带出来的两个问题**（见下） | `pull` 对跑分账本改成追加合并（整文件覆盖会丢掉本机没 push 的行，违反 AGENTS.md 的只追加硬规则）· `status` 补上 `SYNC_FILES`（否则纯文件类目什么都不打印） | `test_sync.py` 新增 8 个 |
 | 14 | `a957221` | 前面几条留下的注释与文档尾巴 | `auto.py` 的共驻说明 · `research/llm.py` 的「升级链」说法 · `debugging.md` 与 research `TUTORIAL.md` 的第三轮缓存 · `docs/ecl/gadget-features.yaml` 里的 dag/账本路径/num_ctx 条目；顺带修了 `config.example.json` 里一个永远不生效的键（`max_high_relevance` 应为 `default_max_high_relevance`） | — |
+| 15 | `8be97eb` | **第七节 I-027 的另一半**：`citations` 命令整段重写了 stage 3（解析、抓两个方向、排序、拼提示词、修复），`>= 5` 那道闸门写了两遍 | 命令改成只负责打印，图工作全交给 `analyze_citations`。为此给它加了 `fetch_limit`/`top_n` 两个参数（抓得比留得多才让「最高引的前 N 篇」有意义，合成一个数会改变流水线挑哪几篇），并让它把 title 一起返回，省掉 CLI 第二次 S2 查询。顺带合并了 `get_paper_citations`/`get_paper_references` 这对 40 行孪生（只差四处替换，缓存键一字未动） | `test_citations_command.py`（10 个） |
+| 16 | `4ce39f1` | 第六节「这份报告算过了吗」里我撤回的那条 `_finalized`——撤回的是「它是缓存」，但它写入的判据确实太弱 | `_finalized` 改成按对话内容哈希判定，不再按对话条数。合并按 `(source, project, timestamp)` 取键，所以一个长出新消息的对话条数不变——数条数会说「什么都没发生」，然后把那天冻住，而 `--export-past` 再也不会回来看它 | `test_export_finalize.py`（5 个） |
 
 **其中两条是我自己改出来的回归**，值得单独写出来，因为它们说明「接上一条死链路」
 比「删掉它」风险高：第 8 条把图表接上之后，三级共用一个输出目录的碰撞、
@@ -613,7 +625,7 @@ class O1,O2 out
 
 **验证状态**（全绿）：
 `common/tests + scripts/tests` 131 passed ·
-`tools` 各套件 297 passed / 1 skipped ·
+`tools` 各套件 312 passed / 1 skipped ·
 `tools/benchmark/tests` 22 passed ·
 `bash scripts/smoke.sh` 18 passed / 0 skipped / 0 failed。
 
@@ -621,5 +633,9 @@ class O1,O2 out
 `daily_summary.py` 与 `common/html_text.py` 的归属、跑分排行榜那 609 行的驱动者、
 `--summarize` 设备级预摘要）；23 个节点的合并本身也一个都没开始。
 另有一处标成高风险、刻意没动：让 `resolve_ollama_tag` 认它的参数、
-同时对没 pull 的 tag 硬报错——这会把今天「故意忽略抽象名字」（`json_utils` 传的
-sonnet/haiku/opus）变成硬失败，必须和调用方的改动在同一个提交里做。
+同时对没 pull 的 tag 硬报错。复核把它的范围查清楚了，比我原先说的宽得多——
+不只是 `json_utils`，还有 `LLMCallConfig.openai_model` 的 `"gpt-4o"` 默认
+（summarize 四个调用点都不覆盖它）、`call_llm_raw` 的 `sonnet` 默认、
+`analysis.py` 四处、`evaluate.py:61`、`homepage_discovery.py:200`、`scripts/language.py:319`。
+必须和这些调用方的改动落在同一个提交里，否则默认本地路径全线失败。
+现在写进了 I-063 的「怎么做」与第十三节第 0 条。
