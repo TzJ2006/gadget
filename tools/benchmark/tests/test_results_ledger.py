@@ -2,10 +2,15 @@
 
 This is the benchmark tool's first test suite. It had none — 3126 lines with no
 tests/ directory, while AGENTS.md states the append rule as hard ("results
-append to benchmark_results.csv by design — never rewrite or dedupe it") and the
-file itself is outside version control. A refactor that turned append into
-overwrite would delete accumulated cross-machine history with nothing to catch
-it and nothing to restore from.
+append to benchmark_results.csv by design — never rewrite or dedupe it").
+
+An earlier version of this docstring said the file is outside version control.
+It is not: it has been tracked since the first commit. That claim came from
+idea I-055 (graph.claude.yaml:1752) and was never checked. Being tracked does
+change the stake but does not remove it — git protects against losing the file,
+not against a refactor that turns append into overwrite and commits the
+truncated result as an ordinary change. The rows other machines contributed are
+gone the moment that lands, and the only thing that catches it is a test.
 
 Pure-mock: no torch, no GPU, no network. numpy is the only real dependency,
 and it already ships in the benchmark extra.

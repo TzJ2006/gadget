@@ -71,3 +71,108 @@ def test_rclone_choices_include_alias():
     assert "benchmark" in choices
     assert "test" in choices
     assert choices.count("benchmark") == 1
+
+
+# ─── pull must not clobber the append-only ledger ────────────────────
+
+def test_the_ledger_is_declared_append_only():
+    """Repointing the mapping at the real file made pull dangerous.
+
+    A pull is a whole-file copy. While the mapping named a path nothing
+    writes that was inert; pointing it at the real ledger meant a pull would
+    discard every row this machine added since its last push — the opposite
+    of what an accumulation ledger is for.
+    """
+    from benchmark.core import BenchmarkResults
+    from common.paths import GADGET_ROOT
+
+    ledger = BenchmarkResults("").output_path.relative_to(GADGET_ROOT).as_posix()
+    assert ledger in sync.APPEND_ONLY_FILES
+
+
+def test_merge_keeps_every_local_row(tmp_path):
+    local = tmp_path / "local.csv"
+    remote = tmp_path / "remote.csv"
+    local.write_text("ts,gpu,flops\n1,A,10\n2,B,20\n", encoding="utf-8")
+    remote.write_text("ts,gpu,flops\n3,C,30\n", encoding="utf-8")
+
+    ok, msg = sync.merge_append_only_csv(remote, local)
+    assert ok, msg
+    rows = local.read_text(encoding="utf-8").splitlines()
+    assert rows[0] == "ts,gpu,flops"
+    assert rows[1:] == ["1,A,10", "2,B,20", "3,C,30"], rows
+
+
+def test_merge_does_not_duplicate_rows_already_present(tmp_path):
+    local = tmp_path / "local.csv"
+    remote = tmp_path / "remote.csv"
+    local.write_text("ts,gpu,flops\n1,A,10\n2,B,20\n", encoding="utf-8")
+    remote.write_text("ts,gpu,flops\n1,A,10\n2,B,20\n", encoding="utf-8")
+
+    ok, _ = sync.merge_append_only_csv(remote, local)
+    assert ok
+    assert local.read_text(encoding="utf-8").splitlines()[1:] == ["1,A,10", "2,B,20"]
+
+
+def test_merge_never_shrinks_the_ledger(tmp_path):
+    """The property that matters: pull may add rows, never remove them."""
+    local = tmp_path / "local.csv"
+    remote = tmp_path / "remote.csv"
+    local.write_text("ts,gpu,flops\n" + "".join(f"{i},A,{i}\n" for i in range(50)),
+                     encoding="utf-8")
+    before = len(local.read_text(encoding="utf-8").splitlines())
+    remote.write_text("ts,gpu,flops\n99,Z,99\n", encoding="utf-8")
+
+    sync.merge_append_only_csv(remote, local)
+    after = len(local.read_text(encoding="utf-8").splitlines())
+    assert after >= before, f"pull shrank the ledger: {before} -> {after}"
+    assert after == before + 1
+
+
+def test_merge_refuses_a_mismatched_header(tmp_path):
+    """Appending rows under a different header puts values in wrong columns."""
+    local = tmp_path / "local.csv"
+    remote = tmp_path / "remote.csv"
+    local.write_text("ts,gpu,flops\n1,A,10\n", encoding="utf-8")
+    remote.write_text("ts,flops,gpu\n2,20,B\n", encoding="utf-8")
+
+    ok, msg = sync.merge_append_only_csv(remote, local)
+    assert not ok and "表头" in msg
+    assert local.read_text(encoding="utf-8").splitlines()[1:] == ["1,A,10"]
+
+
+def test_merge_handles_a_local_file_without_a_trailing_newline(tmp_path):
+    local = tmp_path / "local.csv"
+    remote = tmp_path / "remote.csv"
+    local.write_text("ts,gpu,flops\n1,A,10", encoding="utf-8")   # no final \n
+    remote.write_text("ts,gpu,flops\n2,B,20\n", encoding="utf-8")
+
+    ok, _ = sync.merge_append_only_csv(remote, local)
+    assert ok
+    assert local.read_text(encoding="utf-8").splitlines()[1:] == ["1,A,10", "2,B,20"]
+
+
+def test_pull_routes_the_ledger_through_the_merge_not_a_copy():
+    """Reachability: the append-only branch must be in sync_files' pull path."""
+    import ast
+    import inspect
+
+    src = inspect.getsource(sync.sync_files)
+    assert "APPEND_ONLY_FILES" in src, "sync_files still copies every file blindly"
+    tree = ast.parse(src)
+    names = {getattr(n.func, "id", None) or getattr(n.func, "attr", None)
+             for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    assert "merge_append_only_csv" in names
+
+
+# ─── status must not go blind on a file-only category ────────────────
+
+def test_status_reports_file_mappings_too():
+    """Emptying SYNC_DIRS['benchmark'] made `status --category benchmark`
+    print nothing at all, because status only ever walked SYNC_DIRS."""
+    import inspect
+
+    src = inspect.getsource(sync.cmd_status)
+    assert "SYNC_FILES" in src, (
+        "cmd_status ignores SYNC_FILES, so a category whose mappings are all "
+        "files reports nothing")

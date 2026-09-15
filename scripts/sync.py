@@ -113,6 +113,57 @@ SYNC_FILES: dict[str, list[tuple[str, str]]] = {
     ],
 }
 
+# Files a pull must never replace wholesale. A pull is a whole-file copy, which
+# for an append-only ledger means the remote silently discards every row this
+# machine added since its last push — and the ledger's entire purpose is to
+# accumulate rows from several machines. AGENTS.md: "results append to
+# benchmark_results.csv by design — never rewrite or dedupe it."
+# Before the mapping was repointed at the real ledger this was harmless: it
+# named a path nothing writes, so pull had nothing to clobber.
+APPEND_ONLY_FILES = {
+    "tools/benchmark/benchmark_results.csv",
+}
+
+
+def merge_append_only_csv(src: Path, dst: Path) -> tuple[bool, str]:
+    """Union *src*'s rows into *dst*, keeping dst's rows and their order.
+
+    Row identity is the whole line. Every row carries a timestamp, so two
+    byte-identical lines are one measurement synced twice, not two runs that
+    happened to agree — which is why this adds rows and never drops any.
+    Returns (ok, message).
+    """
+    src_lines = src.read_text(encoding="utf-8").splitlines()
+    if not src_lines:
+        return True, "远端为空，本地不变"
+    if not dst.exists():
+        shutil.copy2(str(src), str(dst))
+        return True, f"本地不存在，直接写入 {len(src_lines) - 1} 行"
+
+    dst_lines = dst.read_text(encoding="utf-8").splitlines()
+    if not dst_lines:
+        shutil.copy2(str(src), str(dst))
+        return True, f"本地为空，直接写入 {len(src_lines) - 1} 行"
+
+    if src_lines[0] != dst_lines[0]:
+        # Merging rows under mismatched headers would put values in the wrong
+        # columns. Refuse rather than corrupt the ledger.
+        return False, "表头不一致，拒绝合并（先统一列定义再同步）"
+
+    have = set(dst_lines[1:])
+    added = [ln for ln in src_lines[1:] if ln and ln not in have]
+    if not added:
+        return True, "远端没有本地缺的行"
+
+    needs_newline = not dst.read_text(encoding="utf-8").endswith("\n")
+    with open(dst, "a", newline="", encoding="utf-8") as f:
+        if needs_newline:
+            f.write("\n")
+        for ln in added:
+            f.write(ln + "\n")
+    return True, f"追加 {len(added)} 行（本地 {len(dst_lines) - 1} 行一行未动）"
+
+
 # Pre-2026-08 category name. Same mappings as `benchmark`; remote layout moved
 # from test/data → benchmark/data (old GDrive objects are not auto-migrated).
 CATEGORY_ALIASES: dict[str, str] = {
@@ -319,8 +370,16 @@ def sync_files(direction: str, *, category: str | None = None, dry_run: bool = F
                     for local_rel, remote_name, cat in files:
                         src = Path(tmpdir) / remote_name
                         dst = GADGET_ROOT / local_rel
-                        if src.is_file():
-                            dst.parent.mkdir(parents=True, exist_ok=True)
+                        if not src.is_file():
+                            continue
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        if local_rel in APPEND_ONLY_FILES:
+                            merged, msg = merge_append_only_csv(src, dst)
+                            print(f"  [{cat}] → {local_rel}（追加合并）：{msg}")
+                            if not merged:
+                                fail += 1
+                                continue
+                        else:
                             shutil.copy2(str(src), str(dst))
                             print(f"  [{cat}] → {local_rel}")
                 ok += 1
@@ -402,6 +461,21 @@ def cmd_status(args: argparse.Namespace) -> None:
             print(f"  [{cat}] {local_rel}/ ↔ {remote_path}/")
             run_rclone(["check", str(local_path), remote_path, "--combined", "-"], dry_run=False)
             print()
+
+    # SYNC_FILES too, or a category whose mappings are all files reports
+    # nothing at all — which is what `status --category benchmark` did once its
+    # directory list was emptied, even though push and pull both covered it.
+    for cat, mappings in SYNC_FILES.items():
+        if category and cat != category:
+            continue
+        for local_rel, remote_rel in mappings:
+            local_path = GADGET_ROOT / local_rel
+            remote_path = f"{remote_base}/{remote_rel}"
+            if not local_path.is_file():
+                print(f"  [{cat}] {local_rel} — 本地不存在")
+                continue
+            size = local_path.stat().st_size
+            print(f"  [{cat}] {local_rel} ({size} B) ↔ {remote_path}")
 
 
 def cmd_bootstrap(args: argparse.Namespace) -> None:
