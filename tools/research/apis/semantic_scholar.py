@@ -470,6 +470,55 @@ def get_paper_by_id(
     return data
 
 
+def _get_paper_edge(
+    paper_id: str,
+    endpoint: str,
+    item_key: str,
+    label: str,
+    limit: int = 50,
+    api_key: str = "",
+    cache: DiskCache | None = None,
+) -> list[dict[str, Any]]:
+    """One direction of the citation graph.
+
+    Citations and references differ in four things and nothing else: the cache
+    prefix, the endpoint segment, the key each result item wraps the paper in,
+    and the noun in the log lines. They were two 40-line copies.
+    """
+    cache_key = f"s2_{endpoint}:{paper_id}:{limit}"
+    if cache:
+        cached = cache.get("api/semantic_scholar", cache_key, ttl_seconds=S2_TTL)
+        if cached is not None:
+            logger.info(f"[S2] {label}缓存命中: {paper_id}")
+            return cached
+
+    logger.info(f"[S2] 获取论文 {paper_id} 的{label}...")
+    try:
+        data = _s2_request(
+            f"paper/{paper_id}/{endpoint}?fields=paperId,title,year,"
+            f"citationCount,venue,authors&limit={limit}",
+            api_key,
+        )
+    except Exception as e:
+        logger.error(f"[S2] 获取{label}失败: {e}")
+        return []
+
+    papers = []
+    for item in data.get("data", []):
+        paper = item.get(item_key, {})
+        if paper and paper.get("title"):
+            papers.append(paper)
+
+    # Sort by citation count descending
+    papers.sort(key=lambda x: x.get("citationCount") or 0, reverse=True)
+
+    if cache and papers:
+        cache.put("api/semantic_scholar", cache_key, papers)
+
+    logger.info(f"[S2] 论文 {paper_id}: 获取到 {len(papers)} 篇{label}")
+    return papers
+
+
 def get_paper_citations(
     paper_id: str,
     limit: int = 50,
@@ -477,38 +526,8 @@ def get_paper_citations(
     cache: DiskCache | None = None,
 ) -> list[dict[str, Any]]:
     """Get papers that CITE this paper (forward citations), sorted by citation count."""
-    cache_key = f"s2_citations:{paper_id}:{limit}"
-    if cache:
-        cached = cache.get("api/semantic_scholar", cache_key, ttl_seconds=S2_TTL)
-        if cached is not None:
-            logger.info(f"[S2] 引用缓存命中: {paper_id}")
-            return cached
-
-    logger.info(f"[S2] 获取论文 {paper_id} 的引用...")
-    try:
-        data = _s2_request(
-            f"paper/{paper_id}/citations?fields=paperId,title,year,"
-            f"citationCount,venue,authors&limit={limit}",
-            api_key,
-        )
-    except Exception as e:
-        logger.error(f"[S2] 获取引用失败: {e}")
-        return []
-
-    citations = []
-    for item in data.get("data", []):
-        citing = item.get("citingPaper", {})
-        if citing and citing.get("title"):
-            citations.append(citing)
-
-    # Sort by citation count descending
-    citations.sort(key=lambda x: x.get("citationCount") or 0, reverse=True)
-
-    if cache and citations:
-        cache.put("api/semantic_scholar", cache_key, citations)
-
-    logger.info(f"[S2] 论文 {paper_id}: 获取到 {len(citations)} 篇引用")
-    return citations
+    return _get_paper_edge(paper_id, "citations", "citingPaper", "引用",
+                           limit, api_key, cache)
 
 
 def get_paper_references(
@@ -518,38 +537,8 @@ def get_paper_references(
     cache: DiskCache | None = None,
 ) -> list[dict[str, Any]]:
     """Get papers CITED BY this paper (backward references)."""
-    cache_key = f"s2_references:{paper_id}:{limit}"
-    if cache:
-        cached = cache.get("api/semantic_scholar", cache_key, ttl_seconds=S2_TTL)
-        if cached is not None:
-            logger.info(f"[S2] 参考文献缓存命中: {paper_id}")
-            return cached
-
-    logger.info(f"[S2] 获取论文 {paper_id} 的参考文献...")
-    try:
-        data = _s2_request(
-            f"paper/{paper_id}/references?fields=paperId,title,year,"
-            f"citationCount,venue,authors&limit={limit}",
-            api_key,
-        )
-    except Exception as e:
-        logger.error(f"[S2] 获取参考文献失败: {e}")
-        return []
-
-    references = []
-    for item in data.get("data", []):
-        cited = item.get("citedPaper", {})
-        if cited and cited.get("title"):
-            references.append(cited)
-
-    # Sort by citation count descending
-    references.sort(key=lambda x: x.get("citationCount") or 0, reverse=True)
-
-    if cache and references:
-        cache.put("api/semantic_scholar", cache_key, references)
-
-    logger.info(f"[S2] 论文 {paper_id}: 获取到 {len(references)} 篇参考文献")
-    return references
+    return _get_paper_edge(paper_id, "references", "citedPaper", "参考文献",
+                           limit, api_key, cache)
 
 
 def _names_match(query_name: str, candidate_name: str) -> bool:

@@ -377,8 +377,19 @@ def _deep_evaluate_papers(project: dict, papers: list[dict],
 
 def analyze_citations(paper: dict, api: str = "ollama",
                       timeout: int = 600,
-                      cache_obj=None, api_key: str = "") -> dict:
-    """Stage 3: Citation impact analysis."""
+                      cache_obj=None, api_key: str = "",
+                      fetch_limit: int = 20, top_n: int = 10) -> dict:
+    """Stage 3: Citation impact analysis.
+
+    ``fetch_limit`` is how many edges to ask S2 for, ``top_n`` how many to keep.
+    They are deliberately not one number: S2 returns edges in its own order and
+    the ranking by citation count happens here, so asking for more than we keep
+    is what makes "top N most-cited" mean anything. The `citations` CLI command
+    sets both to its --top-n, which is the behaviour that flag documents.
+
+    ``paper`` needs only an id; title and abstract fall back to the S2 record,
+    so a caller holding nothing but an identifier can still get a full prompt.
+    """
     from research.apis.semantic_scholar import (
         get_paper_by_id, get_paper_citations, get_paper_references,
     )
@@ -395,27 +406,24 @@ def analyze_citations(paper: dict, api: str = "ollama",
 
     s2_id = s2_paper["paperId"]
     total_citations = s2_paper.get("citationCount") or 0
+    title = paper.get("title") or s2_paper.get("title", "")
+    abstract = paper.get("abstract") or s2_paper.get("abstract") or ""
 
-    forward = get_paper_citations(s2_id, limit=20, api_key=api_key, cache=cache_obj)
-    backward = get_paper_references(s2_id, limit=20, api_key=api_key, cache=cache_obj)
+    forward = get_paper_citations(s2_id, limit=fetch_limit,
+                                  api_key=api_key, cache=cache_obj)
+    backward = get_paper_references(s2_id, limit=fetch_limit,
+                                    api_key=api_key, cache=cache_obj)
 
-    top_citing = []
-    for c in forward[:10]:
-        top_citing.append({
-            "title": c.get("title", ""),
-            "year": c.get("year", 0),
-            "citation_count": c.get("citationCount") or 0,
-            "venue": c.get("venue", ""),
-        })
+    def _normalize(items):
+        return [{
+            "title": p.get("title", ""),
+            "year": p.get("year", 0),
+            "citation_count": p.get("citationCount") or 0,
+            "venue": p.get("venue", ""),
+        } for p in items[:top_n]]
 
-    top_refs = []
-    for r in backward[:10]:
-        top_refs.append({
-            "title": r.get("title", ""),
-            "year": r.get("year", 0),
-            "citation_count": r.get("citationCount") or 0,
-            "venue": r.get("venue", ""),
-        })
+    top_citing = _normalize(forward)
+    top_refs = _normalize(backward)
 
     influence_analysis = {}
     if forward and total_citations >= 5:
@@ -424,8 +432,8 @@ def analyze_citations(paper: dict, api: str = "ollama",
             for c in top_citing
         )
         prompt = CITATION_IMPACT_PROMPT.format(
-            title=paper.get("title", ""),
-            abstract=paper.get("abstract", "")[:1000],
+            title=title,
+            abstract=abstract[:1000] if abstract else "(无摘要)",
             citation_count=total_citations,
             n=len(top_citing),
             citing_papers_text=citing_text,
@@ -438,6 +446,9 @@ def analyze_citations(paper: dict, api: str = "ollama",
         total_references = len(backward)
 
     return {
+        # title travels with the result so a caller that started from a bare
+        # identifier does not need a second get_paper_by_id to label it.
+        "title": title,
         "total_forward_citations": total_citations,
         "total_references": total_references,
         "top_citing_papers": top_citing,
