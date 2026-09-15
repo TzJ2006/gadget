@@ -41,6 +41,10 @@ tools/website/.verify-public*/
 tools/website/static/images/
 !tools/website/static/images/icon.png
 !tools/website/static/images/icon2.png
+# Generated + StatiCrypt-encrypted by ../ai-companion. Not committed here; it
+# reaches other machines through sync.py's website category, like the other
+# generated static namespaces.
+tools/website/static/dag/
 tools/website/static/videos/
 tools/website/static/pdfs/
 tools/website/static/resume.pdf
@@ -81,7 +85,9 @@ tools/website/content/About.pdf
 tools/website/content/Resume.pdf
 tools/website/content/Random.md
 tools/website/content/Random.zh.md
-tools/website/static/benchmark/
+# (static/benchmark/ was ignored here too — nothing has ever written it; the
+#  benchmark publisher writes benchmark-report/. Dropped rather than given a
+#  sync entry for a directory that does not exist.)
 tools/website/static/benchmark-report/
 tools/research/cache/
 tools/research/projects/
