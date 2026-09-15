@@ -67,9 +67,17 @@ def _save_failed_response(text: str) -> None:
 def parse_json_response(text: str, backend: str = "ollama") -> dict[str, Any]:
     """Extract and parse JSON from LLM response text.
 
-    Stages 1-3 (non-LLM) then escalating LLM repair (haiku → sonnet → opus), both
-    delegated to common.json_utils. Profiler-specific: a larger repair payload cap
-    (20K) and failed-response logging for debugging.
+    Stages 1-3 (non-LLM) then LLM repair, both delegated to common.json_utils.
+    Profiler-specific: a larger repair payload cap (20K) and failed-response
+    logging for debugging.
+
+    strategy="escalating" is named for a haiku → sonnet → opus ladder, which is
+    what it does on the anthropic and claude_cli backends. On the default ollama
+    backend the model argument is dropped (llm.py:_ollama_model), and on openai
+    sonnet and opus both map to the same model — so there it is three samples of
+    one model rather than three models. That is still worth having on a 20K
+    payload, since sampling is not deterministic, but it is resampling, not
+    escalation.
 
     Args:
         backend: LLM backend for the repair call (ollama/claude_cli/anthropic/openai).

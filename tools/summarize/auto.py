@@ -28,13 +28,17 @@ _DEFAULT_REPORTS_DIR = REPORTS_DIR / "summarize"
 
 
 def _unload_ollama() -> None:
-    """Free Ollama VRAM (all resident models, incl. qwen) once the pipeline is done.
+    """Free Ollama VRAM (all resident models) once the pipeline is done.
 
-    Historically the chat model was evicted mid-pipeline as a side effect of the
-    translation-model swap thrash; with co-residency (translation num_ctx 8192)
-    both models now survive the run, so the 23GB chat model would otherwise sit
-    on the GPU until its idle timeout, and the translator up to keep_alive=30m.
-    GADGET_KEEP_OLLAMA=1 skips (e.g. cron back-to-back runs).
+    Translation runs on the chat tag (engine/base.py: DEFAULT_TRANSLATION_MODEL_
+    OLLAMA = DEFAULT_OLLAMA_CHAT_MODEL), so there is one runner, not two, and it
+    survives the whole pipeline — meaning the 23GB model would otherwise sit on
+    the GPU until its idle timeout. GADGET_KEEP_OLLAMA=1 skips (e.g. cron
+    back-to-back runs).
+
+    This used to explain itself by two-model co-residency at translation
+    num_ctx 8192; both premises are gone (the single tag above, and the
+    num_ctx override that was removed).
     """
     from common.engine import _free_ollama_vram  # lazy: stdlib-only helper
 

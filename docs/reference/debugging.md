@@ -39,7 +39,7 @@ Base: `outputs/cache/` (`paths.py:10`). `DiskCache` stores
 |---|---|---|
 | summarize final report | `outputs/cache/summarize/<date>.json` | skipped by `--no-cache`/`--force` (`daily.py:646-650`) |
 | summarize chunks | `outputs/cache/summarize/chunks/<date>/<hash>.json` | **auto-deleted** after final report cached (`daily.py:677` → `llm.py:474`); a crash leaves them behind |
-| research scout eval | `outputs/cache/research-scout/eval/{screening,deep}_<hash>.json` | quality-gated — LLM-failure results are **not** cached (`evaluate.py:451-454,492-495`) |
+| research scout eval | `outputs/cache/research-scout/eval/{screening,deep,citations}_<hash>.json` | quality-gated — LLM-failure results are **not** cached (screening `evaluate.py:530-533`, deep `:571-574`, citations `:490-493`) |
 | research scout search | `outputs/cache/research-scout/papers/*.json` | hard failure (`None`) not cached (`search.py:856-863`) |
 | research scout insight | `outputs/cache/research-scout/insight/<hash>.json` | Stage 4/5 only (`insight.py:141-153`) |
 | research API (S2/arxiv/openreview/pdfs) | `outputs/cache/research-scout/` namespaces `api/*` | Stage-3 citations + full-text; disabled by `--no-cache` |
@@ -67,7 +67,7 @@ Base: `outputs/cache/` (`paths.py:10`). `DiskCache` stores
 
 - **search** — `search --project P --no-cache`; inspect `outputs/cache/research-scout/papers/*.json` and `找到 N 篇` lines in the log. `None` vs `[]` distinguishes hard failure from empty.
 - **screen (Stage 1)** — check `eval/screening_<hash>.json` and `have empty motivation/innovation_point` warnings (`evaluate.py:234-239`); all-empty ⇒ LLM failed (deliberately not cached).
-- **eval (Stage 2/3)** — `eval/deep_<hash>.json` + `composite_score=0` warnings; Stage-3 citations hit the `api/semantic_scholar` namespace (`无法在 S2 找到论文`).
+- **eval (Stage 2/3)** — `eval/deep_<hash>.json` + `composite_score=0` warnings; Stage-3 citations hit the `api/semantic_scholar` namespace (`无法在 S2 找到论文`) **and** have their own gated entry `eval/citations_<hash>.json` (the stage moved into `evaluate_papers_for_project`; it used to be an ungated inline loop in `cli.py`).
 - **report/insight** — reports in `outputs/reports/research-scout/`; `--insight` adds Stage 4/5 with `insight/` cache. `--no-cache` busts all layers; swap `--api`/`GADGET_LLM_BACKEND` to separate parse errors from model errors.
 - **general** — the file log is DEBUG-level (`config.py:143`), so `research_scout.log` has per-stage timing that stdout (INFO) omits — tail it to see which stage stalled.
 
