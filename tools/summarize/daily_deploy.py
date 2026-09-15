@@ -24,6 +24,7 @@ from .config import (
     _save_summarize_config,
     resolve_hugo_site,
 )
+from .charts import chart_path_for
 from .daily_helpers import _parse_date, _DEFAULT_LOGS_DIR, _DEFAULT_REPORTS_DIR
 from .formatter import generate_hugo_post
 from .remote import _find_rclone
@@ -118,10 +119,16 @@ def cmd_deploy(args):
         buf = StringIO()
         try:
             markdown_body = md_file.read_text(encoding="utf-8")
+            # The saved markdown already carries the chart link (daily_merge
+            # writes it in before saving), so the PNG has to travel with it or
+            # the republished page gets a broken image. Weekly and monthly do
+            # the same lookup before their deploy call.
+            chart = chart_path_for("daily", file_date)
             old_stdout = sys.stdout
             sys.stdout = buf
             try:
                 generate_hugo_post(markdown_body, file_date, hugo_site, pbar=pbar,
+                                   chart_path=chart if chart.exists() else None,
                                    force=force,
                                    overwrite_human=getattr(args, "overwrite_human", False))
             finally:

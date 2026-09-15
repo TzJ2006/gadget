@@ -356,7 +356,7 @@ def _generate_chart(usage_by_source: dict,
                     iso_year: int, iso_week: int) -> Optional[Path]:
     """生成周报 usage 图表（单 PNG 三子图，按来源）。"""
     monday, _ = _week_date_range(iso_year, iso_week)
-    return generate_period_chart(usage_by_source, monday)
+    return generate_period_chart(usage_by_source, monday, "weekly")
 
 
 # ─── 4. 输出渲染 ────────────────────────────────────────────────────
@@ -743,12 +743,12 @@ def cmd_deploy(args):
         print("[ok] 所有周报均已部署")
         return
 
-    from common.paths import IMAGES_DIR
+    from .charts import chart_path_for
     for md_file in to_deploy:
         week_label = md_file.stem[:-len("-weekly")]
         iso_year, iso_week = _parse_week(week_label)
         monday, _ = _week_date_range(iso_year, iso_week)
-        chart = IMAGES_DIR / "summarize" / f"{monday.isoformat()}-usage.png"
+        chart = chart_path_for("weekly", monday)
         generate_weekly_hugo_post(
             md_file.read_text(encoding="utf-8"), iso_year, iso_week, hugo_site,
             chart_path=chart if chart.exists() else None,

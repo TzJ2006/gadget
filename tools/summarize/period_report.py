@@ -329,14 +329,16 @@ def reshape_usage_for_chart(usage_by_source: dict) -> dict:
     return chart_input
 
 
-def generate_period_chart(usage_by_source: dict, chart_date: date) -> Optional[Path]:
+def generate_period_chart(usage_by_source: dict, chart_date: date,
+                          level: str) -> Optional[Path]:
+    """Render *level*'s usage chart. ``level`` picks the output directory --
+    see charts.chart_dir_for for why each level needs its own."""
     chart_input = reshape_usage_for_chart(usage_by_source)
     if not chart_input:
         return None
-    from .charts import generate_daily_chart
-    from common.paths import IMAGES_DIR
+    from .charts import chart_dir_for, generate_daily_chart
     return generate_daily_chart(chart_input, chart_date,
-                                output_dir=IMAGES_DIR / "summarize")
+                                output_dir=chart_dir_for(level))
 
 
 def collect_usage_by_source(daily_reports: list[dict]) -> dict:
