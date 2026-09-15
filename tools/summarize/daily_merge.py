@@ -451,10 +451,10 @@ def cmd_merge(args):
 
     # 生成并保存报告（内嵌 usage 卡片 + 逐源用量图表）
     # matplotlib 缺失时 generate_daily_chart 返回 None，报告照常生成、只是没有图。
-    from .charts import generate_daily_chart
+    from .charts import chart_dir_for, generate_daily_chart
     chart_path = generate_daily_chart(report.get("token_usage_by_source") or {},
                                       target_date,
-                                      output_dir=IMAGES_DIR / "summarize")
+                                      output_dir=chart_dir_for("daily"))
     markdown = generate_markdown(report, target_date,
                                  chart_filename=chart_path.name if chart_path else None)
     save_report(report, markdown, target_date, output_dir)

@@ -19,6 +19,35 @@ from common.paths import IMAGES_DIR
 
 _DEFAULT_IMAGES_DIR = IMAGES_DIR / "summarize"
 
+# Levels that produce a usage chart. Each gets its own directory because every
+# level keys its chart by a date -- daily by the day, weekly by the ISO Monday,
+# monthly by the 1st -- so one shared directory makes the daily chart for
+# 2026-06-01 and the monthly chart for 2026-06 literally the same file, and a
+# Monday's daily chart the same file as that week's weekly one.
+CHART_LEVELS = ("daily", "weekly", "monthly")
+
+
+def chart_filename(chart_date: date) -> str:
+    """The chart's basename. Shared so writer and reader cannot drift."""
+    return f"{chart_date.isoformat()}-usage.png"
+
+
+def chart_dir_for(level: str) -> Path:
+    """Where *level* keeps its usage charts."""
+    if level not in CHART_LEVELS:
+        raise ValueError(f"unknown chart level {level!r}, expected one of {CHART_LEVELS}")
+    return _DEFAULT_IMAGES_DIR / level
+
+
+def chart_path_for(level: str, chart_date: date) -> Path:
+    """Full path of *level*'s chart for *chart_date*.
+
+    The deploy paths look the chart up by name to republish an old report, so
+    they must compute the same path the generator wrote to. Both go through
+    here.
+    """
+    return chart_dir_for(level) / chart_filename(chart_date)
+
 
 def _try_import():
     try:
@@ -220,7 +249,7 @@ def generate_daily_chart(
     if output_dir is None:
         output_dir = _DEFAULT_IMAGES_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"{target_date.isoformat()}-usage.png"
+    path = output_dir / chart_filename(target_date)
     fig.savefig(str(path), dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"[ok] Usage chart saved: {path}")
