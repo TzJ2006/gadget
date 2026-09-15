@@ -38,7 +38,7 @@ extra) so `common` and the tool packages are importable. Config resolution is
   - `cd tools/benchmark && python -m benchmark.cli --report --deploy`
   - `cd tools/benchmark && python -m benchmark.cli --info` (prints hardware, writes nothing)
 - **Config**: none — all CLI flags. Only env fallback is `BENCHMARK_RELAY_URL` (optional leaderboard upload).
-- **Outputs**: CSV `outputs/data/benchmark/results.csv` (append-only, `--output` to override), HTML `outputs/reports/benchmark/report.html`. `--deploy` copies the HTML to `tools/website/static/benchmark-report/` + writes the `content/benchmark.md` wrapper, then runs Hugo.
+- **Outputs**: CSV `tools/benchmark/benchmark_results.csv` (append-only, tracked in git, `--output` to override), HTML `outputs/reports/benchmark/report.html`. `--deploy` copies the HTML to `tools/website/static/benchmark-report/` + writes the `content/benchmark.md` wrapper, then runs Hugo.
 - **Gotchas**: the `benchmark` package IS installed editable so `python -m benchmark.cli` resolves anywhere, **but importing it requires `torch/numpy/pandas/plotly/tqdm`** — in a bare env it dies at import with `ModuleNotFoundError: plotly`; install `pip install -r requirements.txt` (or `pip install -e ".[benchmark]"`). Bare `python -m benchmark.cli` (no flags) runs benchmarks and **writes CSV** — use `--info`/`--report-only` for read-only.
 - Evidence: `tools/benchmark/benchmark/cli.py:22-23,84-244,334-337`, `pyproject.toml:19`.
 
