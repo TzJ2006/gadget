@@ -86,36 +86,73 @@ def test_version_parse_modern_no_upgrade():
          mock.patch.object(usage.subprocess, "run",
                            return_value=_completed("20.0.13")) as run:
         usage._USE_NPX = True            # force a known starting state
-        usage._ensure_ccusage_global()
+        usage._resolve_ccusage()
     assert usage._USE_NPX is False       # modern global -> use global
     assert run.call_count == 1           # only the --version probe ran
 
 
-def test_version_old_triggers_silent_upgrade(monkeypatch):
+def test_an_old_global_falls_back_to_npx_without_installing_anything(monkeypatch):
+    """Generating a daily report must not install a package system-wide.
+
+    This used to run `npm install -g ccusage@latest` on the user's machine as
+    a side effect of one report. The npx fallback covers the same case without
+    touching anything outside the run.
+    """
     calls = []
 
     def fake_run(cmd, *a, **k):
         calls.append(cmd)
-        if cmd[:2] == ["npm", "install"]:
-            return _completed("", 0)
-        # --version: report modern only after an npm install has happened
-        ver = "20.0.13" if any(c[:2] == ["npm", "install"] for c in calls[:-1]) else "18.0.10"
-        return _completed(ver)
+        return _completed("18.0.10")
 
     monkeypatch.setattr(usage.shutil, "which", lambda *_: "/usr/bin/ccusage")
     monkeypatch.setattr(usage.subprocess, "run", fake_run)
     usage._USE_NPX = False
-    usage._ensure_ccusage_global()
-    assert any(c[:2] == ["npm", "install"] for c in calls)
-    assert usage._USE_NPX is False       # upgrade succeeded
+    usage._resolve_ccusage()
+
+    assert not any("install" in c for c in calls), f"still installing: {calls}"
+    assert usage._USE_NPX is True        # and it still works, via npx
 
 
 def test_missing_falls_back_to_npx(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, *a, **k):
+        calls.append(cmd)
+        return _completed("", 1)
+
     monkeypatch.setattr(usage.shutil, "which", lambda *_: None)
-    monkeypatch.setattr(usage.subprocess, "run", lambda *a, **k: _completed("", 1))
+    monkeypatch.setattr(usage.subprocess, "run", fake_run)
     usage._USE_NPX = False
-    usage._ensure_ccusage_global()
+    usage._resolve_ccusage()
     assert usage._USE_NPX is True
+    assert not any("install" in c for c in calls), f"still installing: {calls}"
+
+
+def test_no_code_path_shells_out_to_an_installer():
+    """Belt and braces: no subprocess in this module runs an install.
+
+    Checked on the AST rather than the text, so the line telling the user what
+    they may run themselves does not count as running it.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(usage))
+    offending = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+        if name not in {"run", "call", "check_call", "check_output", "Popen"}:
+            continue
+        for arg in node.args:
+            if not isinstance(arg, (ast.List, ast.Tuple)):
+                continue
+            words = [e.value for e in arg.elts
+                     if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            if any(w in {"install", "add", "-g", "--global"} for w in words):
+                offending.append(words)
+    assert not offending, f"a subprocess install survived: {offending}"
 
 
 def test_ccusage_cmd_switches_on_flag():
@@ -138,7 +175,7 @@ UNIFIED_RAW = {
 
 
 def test_discover_sources_union():
-    with mock.patch.object(usage, "_ensure_ccusage_global"), \
+    with mock.patch.object(usage, "_resolve_ccusage"), \
          mock.patch.object(usage, "_ccusage_cmd",
                            return_value=["ccusage", "daily", "--json"]), \
          mock.patch.object(usage.subprocess, "run",
@@ -147,7 +184,7 @@ def test_discover_sources_union():
 
 
 def test_discover_sources_failure_default():
-    with mock.patch.object(usage, "_ensure_ccusage_global"), \
+    with mock.patch.object(usage, "_resolve_ccusage"), \
          mock.patch.object(usage, "_ccusage_cmd",
                            return_value=["ccusage", "daily", "--json"]), \
          mock.patch.object(usage.subprocess, "run",
