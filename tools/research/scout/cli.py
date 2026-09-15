@@ -475,12 +475,33 @@ def cmd_profile(args):
     run_profiler(args)
 
 
+def _print_paper_table(rows: list[dict], heading: str, empty: str) -> None:
+    """One fixed-width table. Citations and references rendered it identically."""
+    if not rows:
+        print(f"  {empty}")
+        return
+    print(f"\n### {heading} ({len(rows)} 篇)\n")
+    print(f"{'#':>3} | {'年份':>4} | {'引用':>6} | {'标题':<60} | 会议")
+    print(f"{'---':>3}-+-{'----':>4}-+-{'------':>6}-+-{'-'*60}-+-{'---'}")
+    for i, row in enumerate(rows, 1):
+        title = row.get("title", "")
+        if len(title) > 60:
+            title = title[:57] + "..."
+        year = row.get("year") or ""
+        print(f"{i:3d} | {year:>4} | {row.get('citation_count', 0):6d} | "
+              f"{title:<60} | {row.get('venue', '')}")
+
+
 def cmd_citations(args):
-    """Citation graph analysis: view paper citations and references."""
-    from research.apis.semantic_scholar import (
-        get_paper_by_id, get_paper_citations, get_paper_references,
-    )
-    from research.prompts import CITATION_IMPACT_PROMPT
+    """Citation graph analysis: view paper citations and references.
+
+    The graph work itself lives in evaluate.analyze_citations, which the report
+    pipeline runs as stage 3. This command used to re-implement the whole
+    sequence -- resolve, fetch both directions, rank, prompt, repair -- because
+    back then the pipeline function did not call it either. It does now, so
+    this is the printing half only.
+    """
+    from .evaluate import analyze_citations
 
     no_cache = getattr(args, "no_cache", False)
     from common.cache import DiskCache as _DiskCache
@@ -489,95 +510,50 @@ def cmd_citations(args):
     api = args.api or scout_cfg.get("default_api", "ollama")
     timeout = args.timeout or 600
     top_n = args.top_n or 10
-    paper_id_arg = args.paper_id
 
-    s2_key = scout_cfg.get("semantic_scholar_api_key", "")
-
-    # Step 1: Resolve to S2 paper
-    print(f"\n查找论文: {paper_id_arg}")
-    s2_paper = get_paper_by_id(paper_id_arg, api_key=s2_key, cache=cache)
-    if not s2_paper:
-        logger.error("无法在 Semantic Scholar 找到论文: %s", paper_id_arg)
+    print(f"\n查找论文: {args.paper_id}")
+    # --top-n is documented as "show N rows", so it sets both the fetch size and
+    # the slice here -- unlike the pipeline, which fetches wider than it keeps.
+    result = analyze_citations(
+        {"paper_id": args.paper_id}, api=api, timeout=timeout,
+        cache_obj=cache, api_key=scout_cfg.get("semantic_scholar_api_key", ""),
+        fetch_limit=top_n, top_n=top_n,
+    )
+    if not result:
+        logger.error("无法在 Semantic Scholar 找到论文: %s", args.paper_id)
         sys.exit(1)
 
-    s2_id = s2_paper["paperId"]
-    title = s2_paper.get("title", "")
-    total_cites = s2_paper.get("citationCount") or 0
-    abstract = s2_paper.get("abstract", "")
-
-    print(f"标题: {title}")
+    total_cites = result["total_forward_citations"]
+    print(f"标题: {result['title']}")
     print(f"被引次数: {total_cites}")
     print()
 
-    # Step 2: Forward citations
+    forward = result["top_citing_papers"]
     print(f"获取前向引用 (top {top_n})...")
-    forward = get_paper_citations(s2_id, limit=top_n, api_key=s2_key, cache=cache)
+    _print_paper_table(forward, "引用此论文的高引后续工作", "(无引用数据)")
 
-    if forward:
-        print(f"\n### 引用此论文的高引后续工作 ({len(forward)} 篇)\n")
-        print(f"{'#':>3} | {'年份':>4} | {'引用':>6} | {'标题':<60} | 会议")
-        print(f"{'---':>3}-+-{'----':>4}-+-{'------':>6}-+-{'-'*60}-+-{'---'}")
-        for i, c in enumerate(forward, 1):
-            t = c.get("title", "")
-            if len(t) > 60:
-                t = t[:57] + "..."
-            year = c.get("year") or ""
-            cites = c.get("citationCount") or 0
-            print(f"{i:3d} | {year:>4} | {cites:6d} | "
-                  f"{t:<60} | {c.get('venue', '')}")
-    else:
-        print("  (无引用数据)")
-
-    # Step 3: Backward references
     print(f"\n获取参考文献 (top {top_n})...")
-    backward = get_paper_references(s2_id, limit=top_n, api_key=s2_key, cache=cache)
+    _print_paper_table(result["top_references"], "论文引用的参考文献",
+                       "(无参考文献数据)")
 
-    if backward:
-        print(f"\n### 论文引用的参考文献 ({len(backward)} 篇)\n")
-        print(f"{'#':>3} | {'年份':>4} | {'引用':>6} | {'标题':<60} | 会议")
-        print(f"{'---':>3}-+-{'----':>4}-+-{'------':>6}-+-{'-'*60}-+-{'---'}")
-        for i, r in enumerate(backward, 1):
-            t = r.get("title", "")
-            if len(t) > 60:
-                t = t[:57] + "..."
-            year = r.get("year") or ""
-            cites = r.get("citationCount") or 0
-            print(f"{i:3d} | {year:>4} | {cites:6d} | "
-                  f"{t:<60} | {r.get('venue', '')}")
-    else:
-        print("  (无参考文献数据)")
-
-    # Step 4: LLM influence analysis
+    # analyze_citations returns {} for influence_analysis both when the >=5 gate
+    # was not passed and when the model came back empty, so the reason for a
+    # missing analysis is recovered from the citation count, not from the dict.
+    analysis = result["influence_analysis"]
     if forward and total_cites >= 5:
         print(f"\n分析引用影响力...")
-        citing_text = "\n".join(
-            f"- [{c.get('year', '')}] {c.get('title', '')} "
-            f"(引用: {c.get('citationCount', 0)}, 会议: {c.get('venue', '')})"
-            for c in forward[:top_n]
-        )
-        prompt = CITATION_IMPACT_PROMPT.format(
-            title=title,
-            abstract=abstract[:1000] if abstract else "(无摘要)",
-            citation_count=total_cites,
-            n=len(forward[:top_n]),
-            citing_papers_text=citing_text,
-        )
-
-        result = call_scout_llm(api, prompt, timeout)
-        result = _try_repair_result(result, api, timeout)
-
-        if result and not result.get("parse_error"):
+        if analysis and not analysis.get("parse_error"):
             print(f"\n### 影响力分析\n")
-            reason = result.get("popularity_reason", "")
+            reason = analysis.get("popularity_reason", "")
             if reason:
                 print(f"**为什么被广泛引用**: {reason}\n")
-            dirs = result.get("followup_directions", [])
+            dirs = analysis.get("followup_directions", [])
             if dirs:
                 print("**后续研究方向**:")
                 for d in dirs:
                     print(f"  - {d}")
                 print()
-            trend = result.get("trend_impact", "")
+            trend = analysis.get("trend_impact", "")
             if trend:
                 print(f"**趋势影响**: {trend}\n")
     elif total_cites < 5:
