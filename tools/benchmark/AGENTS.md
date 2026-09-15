@@ -23,4 +23,5 @@ python -m benchmark.cli --report --deploy        # run + report + publish to Hug
 - `--report` / `--report-only` / `--deploy` need plotly via `pip install -e ".[benchmark]"` from repo root. `--info` lazy-imports report and does not.
 - GPU run path is cuda/mps/xpu only; OpenCL appears in `--info` detection but is never benchmarked.
 - The CSV is append-mode by design (multi-hardware accumulation leaderboard) — never overwrite, dedupe, or sort it in place.
-- Benchmark payloads are explicit dicts with stable keys (`dtype`, `backend`, `flops_per_sec`) — keep field names stable; report/ingest/CI all parse them.
+- Benchmark payloads are explicit dicts with stable keys (`dtype`, `backend`, `flops_per_sec`) — keep field names stable; report and ingest both parse them.
+- `scripts/` (submit_result.py, ingest_submissions.py — 609 lines) is **manual tooling with no driver**: it was written against `.github/workflows/*.yml` files that do not exist in this repo, and `data/ingest_log.json` shows zero submissions ever processed. It works when run by hand. Don't document it as a live service, and don't assume CI will catch a change to it — there is no CI.

@@ -685,6 +685,12 @@ python -m summarize daily export --date 2026-02-13 --summarize
 
 加了 `--summarize` 后会调 API 为这台设备的对话先做一次总结，结果存在 log 的 `device_summary` 字段里。后续 merge 时会利用这些总结作为上下文，提高最终日报质量。
 
+> **这是只能手动用的选项。** `auto` 调 `daily export` 时不传它（`auto.py`），
+> 所以只有你手动带这个 flag 导出过的那些天才会有 `device_summary`。
+> merge 有就用、没有就算，所以两种混着用是安全的。
+> 要不要让流水线默认传它是个悬而未决的问题：每设备每天多一次模型调用，
+> 而「先摘要再合并」是否真的比直接合并原始对话好，还没有量过。
+
 #### Phase 2: Merge（任意设备上运行）
 
 有两种方式提供 log 文件给 merge：
@@ -2602,6 +2608,12 @@ python -m benchmark.cli --report-only --deploy
 
 ### 8. 提交结果到公共排行榜
 
+> **没有任何 CI 在驱动这套东西。** 下面这些提交工具是真的、手动跑也能用，
+> 但本仓库没有 `.github/` 目录，也从来没有过——所以没有任何东西在接收 dispatch、
+> 没有任何东西在按时消费队列、也没有任何东西在部署排行榜页面。
+> `data/ingest_log.json` 记录的处理数是 0。请把这一节当成「手动工具 + 一份还没搭的
+> 流水线设计」，而不是一个你可以提交上去的服务。
+
 如果有配置 relay 服务器，可以把测试结果提交到公共排行榜：
 
 ```bash
@@ -2668,7 +2680,9 @@ python scripts/ingest_submissions.py \
 
 #### Website 自动更新流水线
 
-仓库内含一套基于 GitHub 的流水线，把基准报告发布为网站并从排队投稿持续更新：
+下面这些 workflow 文件**在本仓库里并不存在**。它们描述的是这些提交工具当初对着写的
+那套流水线；要不要真的搭起来是一个待定的决定，在那之前 `ingest_submissions.py`
+是一个手动运行的脚本。
 
 - `.github/workflows/accept-submission.yml` — 接收 `repository_dispatch` 事件 `benchmark_submission`，把 payload 追加到 `data/pending_submissions.ndjson`
 - `.github/workflows/daily-publish.yml` — 每日（`00:00 UTC`）或手动运行：以严格校验/去重/脱敏方式消费队列，数据集变化时重新生成报告
