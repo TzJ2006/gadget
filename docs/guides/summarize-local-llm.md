@@ -189,8 +189,13 @@ with `OLLAMA_TRANSLATION_MODEL` (ollama) or `GADGET_TRANSLATION_MODEL` (in-proce
   only lever is the SERVER's `OLLAMA_CONTEXT_LENGTH`. `serve_local_llm.sh` reads the
   loaded `context_length` back from `/api/ps` and **fails** below `MIN_CTX` (65536)
   rather than letting summarize silently truncate a ~52k-token chunk. The translation
-  path is different — it uses native `/api/chat`, where `OLLAMA_TRANSLATION_NUM_CTX`
-  (default 8192) does apply per request.
+  path is different — it uses the native endpoint, where a per-request `num_ctx`
+  *is* honoured. It no longer sends one: translation runs on the chat model itself
+  (`engine/base.py` sets `DEFAULT_TRANSLATION_MODEL_OLLAMA = DEFAULT_OLLAMA_CHAT_MODEL`),
+  so a per-request `num_ctx` that differed from the loaded 65536 made Ollama reload
+  the runner on every summarize↔translate switch — paying the ~10s it was meant to
+  save. Unset, the loaded context governs. `OLLAMA_TRANSLATION_NUM_CTX` still pins one
+  if you run a dedicated MT model that must stay small.
   For reference, 65536 measured **17/32 GB, 100% GPU** on the previous `qwen3.8-sum`;
   not re-measured on gemma4.
 - **`OPENAI_REASONING_EFFORT=none`**: disables thinking — faster, but **measurably degrades
@@ -212,9 +217,11 @@ with `OLLAMA_TRANSLATION_MODEL` (ollama) or `GADGET_TRANSLATION_MODEL` (in-proce
   completes** — set `GADGET_KEEP_OLLAMA=1` to keep them warm (e.g. back-to-back cron runs).
 - **Translation concurrency**: `GADGET_TRANSLATION_CONCURRENCY` (default 4) — concurrent chunk
   requests batch inside Ollama for ~2.2× wall-clock; `1` restores sequential.
-- **Translation context**: `OLLAMA_TRANSLATION_NUM_CTX` (default 8192) keeps HY-MT2 at ~3.6GB
-  so it **co-resides** with the chat model (no more ~10s evict/reload per
-  summarize↔translate switch). Chunkers cap zh chunks at 5000 chars to fit.
+- **Translation context**: `OLLAMA_TRANSLATION_NUM_CTX` — **unset by default**. Translation
+  runs on the chat model, so there is no second model to leave room for, and pinning a
+  context that differs from the runner's loaded one forced a reload on every
+  summarize↔translate switch. Set it only for a dedicated MT model that must stay small.
+  Chunkers still cap zh chunks at 5000 chars, which fits any reasonable runner context.
 - **`chunk_text` max_chars** (150,000 in `common/llm.py`) ≈ ~40k tokens/chunk for these dev logs;
   stays under `num_ctx 65536` with headroom for the prompt + output.
 
