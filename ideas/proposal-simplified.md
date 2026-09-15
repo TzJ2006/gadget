@@ -2,8 +2,8 @@
 
 > **架构仍然是提案，但代码已经动过了。** 本文件写成时一行代码都没改；
 > 之后你让我「去做哪些没有做的、或者做错的 case」，于是审计查出的 **10 处缺陷**
-> 已经在本分支修掉，另加 6 个提交收拾它们自己带出来的回归、补上欠的合并与尾巴，
-> 共 16 个提交（`5da90f3`..`4ce39f1`，逐条见**附二**）。
+> 已经在本分支修掉，另加 8 个提交收拾它们自己带出来的回归、补上欠的合并、
+> 以及审计里剩下的几处独立缺陷，共 18 个提交（`5da90f3`..`94a0528`，逐条见**附二**）。
 > 下面第六、七节保留审计当时的原文当证据，**凡是已经修掉的都就地标了「已修」**。
 > 六步主路、23 个节点那套结构本身仍然等你批准；`graph.claude.yaml` 一个字没碰，
 > 你批准之后那份 YAML 才会成为 `ideas/graph.yaml`。
@@ -230,7 +230,7 @@ class O1,O2 out
 | **怎么让本地小模型吐出能用的结构** | 7 种机制、5 层抢救、两侧判据不同 | `tool_use`（`llm.py:344`）· `json_object`（`llm.py:202`）· `json_schema`+全 required（`llm.py:166`）· `try_parse_json` 三级（`json_utils.py:56`）· 修引号（`json_utils.py:15`）· 交给模型重排（`json_utils.py:157`）· `summarizer.py:335-446` 五层抢救 + `formatter.py:46` 再兜一次；research 那侧又自己写了一份（`evaluate.py:128`·`141`），判据与 summarize 不同 | **I-064**：一个 `call_llm_structured` |
 | **怎么把别的机器上的素材弄过来** | 3 套，远端布局互不兼容 | `ssh_pull.py:55`（ssh+scp）· `remote.py:193`（rclone，对 `<remote>/logs`）· `sync.py:68`（rclone，对 `summarize/logs`）。`remote.py` 257 行**图里没有任何想法认领它**，`_find_rclone` 与 `sync.py:182` 的 `find_rclone` 逐字相同但读不同的配置节；而 `ssh_pull.py:73` 的 glob 少一层目录所以拉不到文件，`test_ssh_pull.py:16,18` 断言的正是这条错路径（**已修，`5da90f3`**：远端相对路径改成从 `_DEFAULT_LOGS_DIR` 反推，测试跟着改对）。顺带：`onboarding.py:84-101` 已经把「配好 rclone 远端」做成 `auto` 的硬性前置 | **I-068**：只留 rclone 一条 |
 | **怎么把一段时间的工作写成一份报告** | 日/周/月三份代码 + 3 份 Hugo 部署 + 5 处「算过了吗」 | `weekly_summary.py`（831 行）与 `monthly_summary.py`（952 行）**397 行逐字相同**、相似度 0.45，而它们上面本来就压着 `period_report.py`（410 行）；日报的 Hugo 部署有三份实现（`daily_merge.py:204`·`461`、`daily_deploy.py:117`）；`_find_missing_weeks` 与 `_find_missing_months` 是同一段逻辑写两遍，`cmd_list` 又各写第三四遍；weekly/monthly 各有一对影子缓存函数无调用方 | **I-070**：一个 `render(版式, 结果)`，版式是数据 |
-| **「这个文件是不是我们的、能不能动」** | 5 个答案 | 文件里的标记（**三种拼写**，`website_backup.py:32-36`）· 路径白名单 `generated_paths.py` 被三个消费者用**三种不同语义**匹配（`publish.py:128-135` 连任意子目录下的 `benchmark.md` 都算，`preflight_check.py:73-81` 只认精确相对路径，`translate_site_batch.py:155-166` 解析绝对路径）· 而 `publish.py:49-55` 干脆把那两个元组复制了一份。分歧已经有后果：预检和发布对「子目录里的 benchmark.md 算不算生成物」判断不同 | **I-074**：`content/` 只认文件里的标记，只经 `classify_file` 一个入口；路径清单降级为纯性能捷径，三方统一 import、统一语义。**复核后补一句**：`static/` 不在这条规则里——PNG/CSS 没地方盖标记，归属按命名空间划分（`copy_site_static` 的 docstring 已经写明） |
+| **「这个文件是不是我们的、能不能动」** | 5 个答案（**其中路径那三份已经并成一个，`94a0528`**） | 文件里的标记（**三种拼写**，`website_backup.py:32-36`）· 路径白名单 `generated_paths.py` 被三个消费者用**三种不同语义**匹配（`publish.py:128-135` 连任意子目录下的 `benchmark.md` 都算，`preflight_check.py:73-81` 只认精确相对路径，`translate_site_batch.py:155-166` 解析绝对路径）· 而 `publish.py:49-55` 干脆把那两个元组复制了一份。分歧已经有后果：预检和发布对「子目录里的 benchmark.md 算不算生成物」判断不同 | **I-074**：`content/` 只认文件里的标记，只经 `classify_file` 一个入口；路径清单降级为纯性能捷径，三方统一 import、统一语义。**复核后补一句**：`static/` 不在这条规则里——PNG/CSS 没地方盖标记，归属按命名空间划分（`copy_site_static` 的 docstring 已经写明） |
 | **「一份报告怎么变成站点上的双语文章」** | 4 个发布器 | `period_report.generate_period_hugo_post` · `formatter.generate_hugo_post`（前者的壳）· research 的 `scout/report.generate_hugo_post` · benchmark 的 `publish` —— 四个都是「拼 frontmatter 字符串 → 解析内容目录 → `write_bilingual`」，只差标题、关键词、摘要、相对路径 | `common/` 里一个 `publish_report_post(...)`，四个调用方只填参数。收拢时顺带暴露：`content/benchmark.zh.md` 是一份没人再生成的固定文件，跑分中文页一直陈旧 |
 | **怎么补齐缺的那一侧语言** | 2 套，而且第二套会让第一套白做 | 第一份是 `translate_site_batch.plan_pair`（`publish.py` 第 1 步）；第二份是预检的可修档（`preflight_check.py:309-351`），**四步之后又做一遍，而且不写状态文件**——它补出来的那一对下一轮会被当成没翻过再翻一遍。正文语言是否正确也查了三处（`translate_site_batch.py:274`、`preflight_check.py:247`、`common` 的 `wrong_language`），而两处的散文长度门槛还不一样（100 vs 20） | **I-073** + **I-075**：补齐只发生在发布链第一步，预检只报不修 |
 | **「这份报告算过了吗」** | 5 套，其中一套根本没有哈希 | ~~日志里的 `_finalized`（`daily_export.py:137`）~~ **（复核后撤回：它不是缓存判据。`daily_export.py:183-206` 的 `--export-past` 靠它决定哪些日期要补导出，而且它跟着日志文件在机器之间走——留着）** · 报告里的 `_finalized`（`daily_merge.py:100`·`334`）· **日报最终缓存只按日期取键、一个哈希都没有**（所以改完措辞重跑会拿到旧报告冒充新产出）· 输出文件存在即跳过（`weekly:626`·`monthly:768`）· `auto` 的 mtime 陈旧判定 · `period_report.py:186` 的 source_hash | **I-062** + **I-070**：一条规则——`hash(输入 + 措辞/结构版本)` 与存在产物旁边的那个相符，就算最新 |
@@ -261,18 +261,18 @@ class O1,O2 out
 | I-027 | 三轮都有缓存闸门，`analyze_citations` 是第三轮 | 只有前两轮有闸门；`evaluate_papers_for_project` 根本不调 `analyze_citations`，第三轮在 `cli.py` 的循环里 **已修（`05cfb7d`）：**第三轮搬进 `evaluate_papers_for_project`，加了缓存键与可用性闸门，结果挂在 `paper["citation_analysis"]` |
 | I-025（状态 `done`） | `auto --deploy` 第一步 ssh 拉各设备日志 | 确实调了，但按 I-019 的缺陷它拉回零个文件、只打一条警告——「多设备汇总」这个卖点在默认路径上没有兑现 |
 | I-018 | merge 汇总各设备的内容 | 设备级预摘要只有 `--summarize` 产出，而 `auto.py:195` 不传它，所以那条路在实际流水线里从不执行 |
-| I-015 | 自动修只碰手写内容（怕弄乱生成文件的指纹） | 靠**路径清单**判断（`preflight_check.py:73-81`），从不读文件里的 `gadget_generated` 标记——生成文件放在清单外就会被改 |
+| I-015 | 自动修只碰手写内容（怕弄乱生成文件的指纹） | 靠**路径清单**判断（`preflight_check.py:73-81`），从不读文件里的 `gadget_generated` 标记——生成文件放在清单外就会被改。**一半已修（`94a0528`）：**三个消费者三种匹配语义并成了一个函数，`publish.py` 自己复制的元组也删了（它按文件名匹配，所以任何子目录里叫 `benchmark.md` 的手写文件都被当成生成物、跳过链接重写，而预检把同一个文件当手写的继续报错）。**「只认路径不读标记」这条仍然成立**——那是 I-074 的事 |
 | I-060 | 压缩程序没装时「给出可读的失败」 | 现在是静默跳过（`publish.py:236-238` 打一行字然后返回 0） |
 | I-041（状态 `done`） | 「每个模块自带 tests/ 目录」 | `tools/benchmark/` 没有 tests/（3126 行），`tools/benchmark/AGENTS.md:20` 自己写着「No pytest suite」 **已修（`546b4a3`）：**`tools/benchmark/tests/` 建起来了，22 个纯 mock 测试（追加式 CSV 语义、计时器剔异常、无 GPU/无 torch 的降级路径），并修了测试查出来的 `get_gpu_info` 只捕 `ImportError` 的问题 |
 | I-016 | 第 7 步就是「提交推送 public/」 | 还有第五道变更判断：`git diff --cached --quiet` 决定到底要不要提交推送 |
 | 跑分中文页 | 站点有中英两份跑分页 | `content/benchmark.zh.md` 是一份固定文件，**没有任何代码再生成它**——中文页一直是陈旧的 |
 | I-038 的产物 | 总览页发到站点 `/dag/` | 产物目录 `tools/website/static/dag/` 在 `.gitignore:43`，也不在 `sync.py` 的 website 同步类目里，所以它只存在于生成它的那台机器；而发布链清空 `public/` 整站重建再 `git add -A` 推送——**任何一台没有这个目录的机器，下一次发布就把线上的 `/dag/` 删掉**。这个功能会被自己的依赖删掉 **已修（`0984632`）：**按你的决定把 dag 类目整个从本仓移走，生成归 `../ai-companion` |
 | 预检三档分级 | BLOCK / WARN / FIX 对应退出码 1 / 2 / 就地修 | `preflight_check.py:487` 返回「有警告就 2、否则 0」，而 `publish.py:359-362` 只区分退出码 1——**退出码 2 和 0 完全等价**，警告这一档对流水线没有任何影响 |
-| 压缩的增量 | 只压改动过的媒体 | 时间边界只在推送成功后才前移（`publish.py:374`），所以预检中止或构建失败之后重跑，会对已经压过的图片**再有损压一次**，画质逐次退化 **已修（`bb1eee6`）：****只修了一半**——已经被 pngquant 调色板化的 PNG 现在直接跳过（读 IHDR 颜色类型判断，不需要 Pillow），所以重跑不再反复有损压 PNG；`.last_build` 时间边界那半仍然是 I-062 的提案 |
+| 压缩的增量 | 只压改动过的媒体 | 时间边界只在推送成功后才前移（`publish.py:374`），所以预检中止或构建失败之后重跑，会对已经压过的图片**再有损压一次**，画质逐次退化 **两半都已修（`bb1eee6` + `22f4bcc`）：**已经被 pngquant 调色板化的 PNG 直接跳过（读 IHDR 颜色类型判断，不需要 Pillow）；`.last_build` 改成压缩一结束就前移，而不是推送成功之后——后者才覆盖到没有幂等护栏的 JPEG 与视频。I-062 用内容哈希取代时间戳那条仍然是提案 |
 | 全图 | — | Hugo 构建是**全量**的：`public/` 每轮清空重建。图里没有任何节点提到这件事，所以前面那些增量判据省的只是翻译和压缩，不是构建 |
 | I-020 的抢救层 | 模型输出跑偏时自动修回合法报告 | 这条链**只保护日报**——`_finalize_report` 的调用点只有 `summarizer.py:460` 与 `503`；周报月报走的是不带抢救的 `timed_llm_call`，只靠渲染器里的类型判断兜着 |
 | I-046 · I-047 · I-050 的 `code:` | 指向三份设计文档 | 三份**都不存在**：`docs/guides/report-quality-rubric.md`（I-046 与 I-050 指的是同一份）与 `docs/ecl/report-structure-redesign.yaml`（`docs/ecl/` 下 19 个文件，没有这个名字） |
-| I-021 的用量抓取 | 通过 ccusage 抓 token 用量 | 版本低于 20 时会**静默在用户机器上跑 `npm install -g ccusage@latest`**，再静默回落到 npx——装全局包成了生成一次日报的副作用 |
+| I-021 的用量抓取 | 通过 ccusage 抓 token 用量 | 版本低于 20 时会**静默在用户机器上跑 `npm install -g ccusage@latest`**，再静默回落到 npx——装全局包成了生成一次日报的副作用 **已修（`22f4bcc`）：**直接走 npx 回退，只打印一行「想装全局自己跑这条」 |
 | I-032 的 `what` | 研究周报汇入了「学者画像」 | `generate_daily_report`（`report.py:44-113`）里**没有任何 profile 键**——画像走自己的 `output.py:223-264`，而且用的是 `write_site_content` 不是 `write_bilingual`，**所以画像页一直没有中文孪生页** **已修（`05d32cf`）：**画像改走 `write_bilingual`，和别的生成页一样出中英一对 |
 | I-027 的第三轮 | 引用影响分析是三轮流水线的第三段 | 它根本不在 `evaluate_papers_for_project` 里（那个函数在 `evaluate.py:502` 直接返回），而是 `cli.py:254-269` 的一段内联循环，硬编码只取前 5 篇，没有缓存条目也没有闸门 **已修（`05cfb7d`）：**同上——上限提成 `MAX_CITATION_ANALYSIS` 常量，进了流水线函数并有了缓存与闸门 |
 | I-045 的硬阻塞 | 「拆分前必须先从 git 历史里清理曾提交过的私人内容与 secrets」，所以受阻 | 这条被**量错了**，而量错正是它一直卡在受阻的原因：实测历史只有 **20 个提交**（4b800f4 → 43a29db），历史上出现过 818 个路径，真正要摘掉的只有 `docs/ecl/dag/` 下 **3 个文件**。而且 `tokens/` 从**第一个提交**起就在 `.gitignore` 里，`git log --all --name-only` 核过——`tokens/` 与 `config.json` **从来没有被提交过**，所以「历史里有 secrets」这个前提本身不成立。一次 gitleaks 当闸门 + 一次对 3 个路径的 `filter-repo`——几小时，不是一个项目 |
@@ -444,18 +444,19 @@ class O1,O2 out
 | 11 | 每次「总结↔翻译」切换，Ollama 重载一次运行时（约 10 秒） | 不重载 | **已修（`8300726`）。** 停掉翻译对 `num_ctx` 的覆盖；前提（两个模型抢显存）早就不存在了。`keep_alive` 与 `GADGET_TRANSLATION_CONCURRENCY` 两个旋钮都没动 |
 | 12 | 换翻译模型或改措辞后，要有人去改 `common/bilingual.py` 的版本号才能让整站重译 | 指纹带上配方版本，自己失效；另加一个 `--retranslate` | 小，而且是 I-072 那一轮的必要条件 |
 | 13 | 翻译界面的模型下拉框列 HuggingFace 仓库名 | 列本机 `ollama list` 的 tag | 小，而且是修好：今天选非默认那项会悄悄卸掉聊天模型 |
-| 14 | 预检中止或构建失败后重跑，已压过的图片会被再压一次 | 压完立刻记账，不再二次压 | **这是修好。** 今天每次中途失败都让图片画质再降一档 |
+| 14 | 预检中止或构建失败后重跑，已压过的图片会被再压一次 | 压完立刻记账，不再二次压 | **已修（`bb1eee6` + `22f4bcc`）。** 两半：已被 pngquant 调色板化的 PNG 直接跳过，以及 `.last_build` 改成压缩一结束就前移（后者才覆盖到没有幂等护栏的 JPEG 与视频）。后者翻转了 `test_publish.py` 原本钉住的一条断言，是有意的，新断言连同理由写进了那个测试 |
 | 15 | 预检的退出码有 0 / 1 / 2 三种 | 只有 0 / 1 | 无。退出码 2 今天与 0 完全等价 |
 | 16 | 强制覆盖人写文件时会记一本 manifest 账 | 只留带时间戳的文件副本 | 小。那本账没有第二个读者；找回仍然按文件找 |
 | 17 | 没配云盘远端就出不了日报（`merge --sync-all` 直接以「没有日志」退出） | 汇总只认素材目录里现在有什么，远端是可选的 | **这是修好，而且是本轮最实在的一条。** 一台离线的机器现在也能出自己的日报 |
 | 18 | 周报月报的模型输出跑偏时只有渲染器兜着 | 和日报用同一层抢救 | **这是能力增加**，不是变化 |
-| 19 | ccusage 版本低时自动 `npm install -g` | 报错并说明该跑哪条命令 | 小。装全局包不该是生成一次日报的副作用 |
+| 19 | ccusage 版本低时自动 `npm install -g` | 报错并说明该跑哪条命令 | **已修（`22f4bcc`）。** 装全局包不该是生成一次日报的副作用；npx 回退本来就覆盖同样的情况，所以只打印一行告诉你想装全局该跑什么 |
 | 20 | 学者画像页只有英文一份 | 和别的页一样出中英一对 | **这是修好。** 今天它走的是 `write_site_content` 而不是 `write_bilingual`，所以从来没有中文孪生页 |
 | 21 | 三个加权打分器的权重可以从 config 改 | 三者都硬编码 | 小。今天其中一个本来就是硬编码的；另两个的「可配」代价是每次调用重读配置并改写一个全局变量 |
 | 22 | 引用影响分析挑「筛选结果顺序的前五篇」 | 挑「综合分最高的五篇」 | **已变（`05cfb7d`）。** 搬进流水线函数时切片对象从 `high_relevance` 变成排过序的 `evaluated_papers`（`evaluate.py:456-458`，排序在 `:373`）。这是改进——那两次 S2 调用和一次模型阅读应该花在综合分最高的论文上——但确实是行为变化，当时的提交说明里漏了 |
 | 23 | 三份报告的用量 PNG 写在同一个目录、按日期取文件名 | 每级各有自己的目录 | **这是修好（`aedac18`）。** 接上图表之后三级同名同目录：2026-06 的月报图和 2026-06-01 的日报图是同一个文件，而 2026-06-01 正好是周一，周报图也是。站点那侧本来就分级，只有 `outputs/` 这侧撞了 |
-| 22 | `write_bilingual` 自己往内容树写文件 | 它只返回正文，写入统一由落站那一步做 | 无外部变化，但它让「唯一一道写入门」从一句话变成事实。今天翻译那一步是绕过那道门的 |
-| 23 | 第一次跑简化后的版本 | 两个旧状态文件消失，媒体与双语对各全量检查一次（只这一次） | 一次性，几分钟 |
+| 24 | `write_bilingual` 自己往内容树写文件 | 它只返回正文，写入统一由落站那一步做 | 无外部变化，但它让「唯一一道写入门」从一句话变成事实。今天翻译那一步是绕过那道门的 |
+| 25 | 第一次跑简化后的版本 | 两个旧状态文件消失，媒体与双语对各全量检查一次（只这一次） | 一次性，几分钟 |
+| 26 | 任何子目录里叫 `benchmark.md` 的手写文件，发布时被当成生成物、跳过链接重写 | 只有 `content/benchmark.md` 算 | **已修（`94a0528`）。** 而预检一直把同一个文件当手写的、继续报它的失效链接——两边现在用同一个判据 |
 
 除此之外**所有其它能力的行为都不变**，包括：五种对话记录格式、逐源 token 用量、
 三个论文库与已看过过滤、三轮筛选评分与缓存闸门、全文与审稿分析、学者画像与内网地址防护、
@@ -586,7 +587,7 @@ class O1,O2 out
 | `ideas/graph.claude.html` | 生成物，不手改。批准并写进 `graph.yaml` 后由 `render` 重新生成 |
 | `ideas/log.md` · `log.claude.md` | 只追加，不动 |
 | `.companion/FORMAT.md` | 本提案的格式依据。遵守：D5 编号不复用 · 八个问题 · `steps` 三到七步且每步说得出新增的能力 · 终点节点以「终点：」开头 · 一个想法一个节点一种边 |
-| 代码 | 本文件写成时完全没动。之后按你「去做哪些没有做的、或者做错的 case」的要求，审计查出的 10 处缺陷已经修掉，连同收拾回归与补齐合并的提交共 16 个（`5da90f3`..`4ce39f1`）——**逐条见附二**。23 个节点那套结构本身还没有被实现，仍等你批准 |
+| 代码 | 本文件写成时完全没动。之后按你「去做哪些没有做的、或者做错的 case」的要求，审计查出的缺陷已经修掉 13 处，连同收拾回归与补齐合并的提交共 18 个（`5da90f3`..`94a0528`）——**逐条见附二**。23 个节点那套结构本身还没有被实现，仍等你批准 |
 
 
 ---
@@ -616,6 +617,8 @@ class O1,O2 out
 | 14 | `a957221` | 前面几条留下的注释与文档尾巴 | `auto.py` 的共驻说明 · `research/llm.py` 的「升级链」说法 · `debugging.md` 与 research `TUTORIAL.md` 的第三轮缓存 · `docs/ecl/gadget-features.yaml` 里的 dag/账本路径/num_ctx 条目；顺带修了 `config.example.json` 里一个永远不生效的键（`max_high_relevance` 应为 `default_max_high_relevance`） | — |
 | 15 | `8be97eb` | **第七节 I-027 的另一半**：`citations` 命令整段重写了 stage 3（解析、抓两个方向、排序、拼提示词、修复），`>= 5` 那道闸门写了两遍 | 命令改成只负责打印，图工作全交给 `analyze_citations`。为此给它加了 `fetch_limit`/`top_n` 两个参数（抓得比留得多才让「最高引的前 N 篇」有意义，合成一个数会改变流水线挑哪几篇），并让它把 title 一起返回，省掉 CLI 第二次 S2 查询。顺带合并了 `get_paper_citations`/`get_paper_references` 这对 40 行孪生（只差四处替换，缓存键一字未动） | `test_citations_command.py`（10 个） |
 | 16 | `4ce39f1` | 第六节「这份报告算过了吗」里我撤回的那条 `_finalized`——撤回的是「它是缓存」，但它写入的判据确实太弱 | `_finalized` 改成按对话内容哈希判定，不再按对话条数。合并按 `(source, project, timestamp)` 取键，所以一个长出新消息的对话条数不变——数条数会说「什么都没发生」，然后把那天冻住，而 `--export-past` 再也不会回来看它 | `test_export_finalize.py`（5 个） |
+| 17 | `22f4bcc` | 第七节 I-021 的静默全局安装 · 「压缩的增量」剩下的那一半 | 生成一次日报不再 `npm install -g`（npx 回退本来就够）· `.last_build` 改成压缩一结束就前移，预检中止或构建失败不再让下一轮把图片重压一遍 | `test_usage.py` 3 个（含一条 AST 断言：模块里不存在任何跑 install 的子进程）· `test_compress_idempotent.py` 1 个（AST 断言时间戳在会中止的步骤之前前移） |
+| 18 | `94a0528` | 第六节「这个文件是不是我们的」里路径判据那三份 | 一个 `is_generated_path`，`publish` 与 `preflight` 都调它；删掉 `publish.py` 自己复制的元组和它按文件名匹配的规则 | `test_generated_paths.py`（9 个，含一条走遍两个消费者、判断不一致就红） |
 
 **其中两条是我自己改出来的回归**，值得单独写出来，因为它们说明「接上一条死链路」
 比「删掉它」风险高：第 8 条把图表接上之后，三级共用一个输出目录的碰撞、
@@ -625,7 +628,7 @@ class O1,O2 out
 
 **验证状态**（全绿）：
 `common/tests + scripts/tests` 131 passed ·
-`tools` 各套件 312 passed / 1 skipped ·
+`tools` 各套件 324 passed / 1 skipped ·
 `tools/benchmark/tests` 22 passed ·
 `bash scripts/smoke.sh` 18 passed / 0 skipped / 0 failed。
 
