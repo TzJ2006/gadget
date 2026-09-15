@@ -1,6 +1,7 @@
 """Phase 1: export conversation logs (single date or batch)."""
 
 import getpass
+import hashlib
 import json
 import platform
 import sys
@@ -16,6 +17,17 @@ from .remote import _rclone_upload, _rclone_upload_dir
 from .summarizer import _call_summarize
 from .formatter import _sort_report_by_importance
 from .usage import _refresh_usage_snapshots
+
+
+
+def _conversations_hash(conversations: list) -> str:
+    """Stable hash of an export's conversations.
+
+    Keys are sorted so a reordered-but-identical export hashes the same; the
+    point is to detect changed content, not changed serialization order.
+    """
+    payload = json.dumps(conversations, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def cmd_export(args):
@@ -134,13 +146,20 @@ def cmd_export(args):
         export_data["conversations"] = merged
         print(f"[info] 检测到已有 log，合并: 新 {len(conversations)} + 旧增量 {added} = {len(merged)} 个会话")
 
-    # auto-finalize: 非今天 + 无新增对话 → 标记 finalized，避免后续重复扫描
+    # auto-finalize: 非今天 + 内容无变化 → 标记 finalized，避免后续重复扫描
+    #
+    # The criterion is a content hash, not the conversation count. Counting
+    # answers "were any conversations added", but the merge above keys on
+    # (source, project, timestamp), so a conversation that gained messages keeps
+    # its key and the count stays equal -- and finalizing freezes that stale
+    # body, because --export-past only revisits dates that are not finalized.
     if existing_data is not None:
-        old_count = len(existing_data.get("conversations", []))
-        new_count = len(export_data["conversations"])
-        if target_date != date.today() and new_count == old_count:
+        old_hash = _conversations_hash(existing_data.get("conversations", []))
+        new_hash = _conversations_hash(export_data["conversations"])
+        if target_date != date.today() and new_hash == old_hash:
             export_data["_finalized"] = True
-            print(f"[info] 对话数量无变化 ({old_count})，标记为 finalized")
+            print(f"[info] 对话内容无变化 ({len(export_data['conversations'])} 个会话)，"
+                  f"标记为 finalized")
         else:
             export_data["_finalized"] = False
     else:
