@@ -12,7 +12,9 @@ Steps:
   5. Preflight — abort only on exit 1; exit 2 (warnings) continues
   6. Clean public/ (keep .git) and run hugo
   7. Commit and push public/ if there are changes
-  8. Touch .last_build
+(.last_build advances right after step 4, not at the end: it is the incremental
+ boundary for the two lossy compression steps, so an abort after them must not
+ make the next run compress the same files again.)
 """
 
 from __future__ import annotations
@@ -355,6 +357,14 @@ def main() -> int:
     rewrite_modified_markdown(since, site_url)
     compress_images(since)
     compress_videos(since)
+    # Advance the boundary as soon as the destructive work is done, not after
+    # the push. Compression is lossy: while the timestamp only moved on a
+    # successful push, every preflight abort or failed build meant the next run
+    # re-compressed images it had already compressed, and the quality dropped
+    # another notch each time. Everything after this point is idempotent --
+    # Hugo rebuilds from a wiped public/, and a retried push re-pushes the same
+    # tree -- so nothing is lost by moving it here.
+    TIMESTAMP_FILE.touch()
 
     preflight_rc = run_preflight()
     if preflight_rc == 1:
@@ -370,8 +380,6 @@ def main() -> int:
     timer.step("Step 7 提交推送")
 
     print("\n─────────────────────────────────────────────────", flush=True)
-    print("> Step 8/8：更新时间戳：", flush=True)
-    TIMESTAMP_FILE.touch()
     print(f"Done!（总耗时 {timer.total():.0f}s）", flush=True)
     return 0
 

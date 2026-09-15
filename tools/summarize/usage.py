@@ -110,10 +110,17 @@ def _ccusage_version() -> Optional[tuple]:
     return tuple(int(x) for x in m.groups()) if m else None
 
 
-def _ensure_ccusage_global() -> None:
-    """Silent best-effort: ensure a >=20 global ccusage, else fall back to npx.
+def _resolve_ccusage() -> None:
+    """Pick the global ccusage if it is new enough, otherwise npx.
 
     Sets module flag `_USE_NPX`. Never prompts; never blocks the pipeline.
+
+    This used to run `npm install -g ccusage@latest` when the global was
+    missing or older than 20, which made installing a package system-wide a
+    silent side effect of generating one daily report. The npx fallback right
+    below already handles both cases without touching anything outside this
+    run, so the install bought nothing but the surprise. We say what to run
+    instead and let the machine's owner decide.
     """
     global _USE_NPX
     ver = _ccusage_version()
@@ -121,20 +128,14 @@ def _ensure_ccusage_global() -> None:
         _USE_NPX = False
         return
 
-    print("[info] ccusage 缺失或版本过旧(<20)，尝试静默升级: npm install -g ccusage@latest")
-    try:
-        r = subprocess.run(["npm", "install", "-g", "ccusage@latest"],
-                           capture_output=True, text=True, timeout=300,
-                           shell=(sys.platform == "win32"))
-        new_ver = _ccusage_version()
-        if r.returncode == 0 and new_ver and new_ver[0] >= _MIN_MAJOR:
-            print("[ok] ccusage 已升级到 20.x")
-            _USE_NPX = False
-            return
-        print("[warn] 全局升级失败，本次回退 npx --yes ccusage@latest")
-    except (subprocess.TimeoutExpired, OSError) as e:
-        print(f"[warn] 全局升级异常({e})，本次回退 npx --yes ccusage@latest")
+    if ver:
+        print(f"[info] 全局 ccusage 版本过旧({'.'.join(map(str, ver))} < {_MIN_MAJOR})，"
+              f"本次用 npx --yes ccusage@latest")
+    else:
+        print("[info] 未找到全局 ccusage，本次用 npx --yes ccusage@latest")
+    print("[info] 想装成全局的话请自己跑: npm install -g ccusage@latest")
     _USE_NPX = True
+
 
 
 def _ccusage_cmd(args: list) -> list:
@@ -153,7 +154,7 @@ def discover_sources() -> list:
     split per-source token counts, but it does list which agents contributed).
     Falls back to `_DEFAULT_SOURCES` on any failure.
     """
-    _ensure_ccusage_global()
+    _resolve_ccusage()
     cmd = _ccusage_cmd(["daily", "--json"])
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120,

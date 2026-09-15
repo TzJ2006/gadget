@@ -67,3 +67,43 @@ def test_truecolour_png_still_gets_compressed(tmp_path):
         compress_image.compress_with_pngquant(path)
     assert run.call_count == 1
     assert run.call_args[0][0][0] == "pngquant"
+
+
+# ─── the other half: the incremental boundary itself ─────────────────
+
+def test_the_build_timestamp_advances_before_anything_that_can_abort():
+    """`.last_build` is the boundary for the two lossy compression steps.
+
+    While it only moved after a successful push, a preflight abort or a failed
+    hugo build left every image still "newer than the last build", so the next
+    run compressed them all again. The guard above stops that for PNGs already
+    quantized to a palette; this stops the re-run from being attempted at all,
+    and covers JPEGs and videos, which have no such guard.
+    """
+    import ast
+    import inspect
+
+    import publish
+
+    tree = ast.parse(inspect.getsource(publish.main))
+    order = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+        if name in {"compress_images", "compress_videos", "touch",
+                    "run_preflight", "commit_and_push"}:
+            order.append((node.lineno, name))
+    order.sort()
+    seq = [name for _, name in order]
+
+    assert "touch" in seq, "main() no longer advances .last_build at all"
+    touched = seq.index("touch")
+    for after in ("run_preflight", "commit_and_push"):
+        assert after in seq, f"main() no longer calls {after}"
+        assert touched < seq.index(after), (
+            f".last_build advances after {after}; an abort there makes the next "
+            "run re-compress everything")
+    for before in ("compress_images", "compress_videos"):
+        assert seq.index(before) < touched, (
+            f".last_build advances before {before}, so that step would be skipped")
