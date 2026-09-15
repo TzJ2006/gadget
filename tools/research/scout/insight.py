@@ -116,7 +116,7 @@ def _insight_cache_key(
     paper_id: str,
     content_hash: str,
     language: str = "en",
-    api: str = "claude_cli",
+    api: str = "ollama",
 ) -> str:
     """Cache key for insight analysis: paper_id + content hash + language + api."""
     raw = json.dumps(
@@ -160,7 +160,7 @@ def analyze_paper_insight(
     paper: dict,
     fulltext: str,
     *,
-    api: str = "claude_cli",
+    api: str = "ollama",
     timeout: int = 600,
     language: str = "en",
 ) -> dict:
@@ -201,7 +201,7 @@ def analyze_review_consensus(
     paper: dict,
     reviews: list[dict],
     *,
-    api: str = "claude_cli",
+    api: str = "ollama",
     timeout: int = 600,
     language: str = "en",
 ) -> dict:
@@ -278,7 +278,7 @@ def synthesize_writing_guide(
     papers_with_insights: list[dict],
     project: dict,
     *,
-    api: str = "claude_cli",
+    api: str = "ollama",
     timeout: int = 600,
     language: str = "en",
 ) -> dict:
@@ -362,7 +362,7 @@ def run_insight_analysis(
     papers: list[dict],
     project: dict,
     *,
-    api: str = "claude_cli",
+    api: str = "ollama",
     timeout: int = 600,
     language: str = "en",
     top_n: int | None = None,

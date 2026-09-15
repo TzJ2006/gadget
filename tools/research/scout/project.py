@@ -164,7 +164,7 @@ def create_project_from_query(plan: dict) -> tuple[dict, Path]:
 
 
 def create_project_from_overview(project_id: str, overview_path: str,
-                                 api: str = "claude_cli",
+                                 api: str = "ollama",
                                  timeout: int = 600) -> Path:
     """Create project from existing overview.md (LLM extracts title/keywords/questions)."""
     # Lazy import to avoid circular dependency

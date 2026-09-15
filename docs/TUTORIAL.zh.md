@@ -4,7 +4,7 @@
 
 本文是 gadget 工具集的**详细使用教程**，覆盖安装与环境、五个工具（Summarize / Research / Benchmark / Website / Translator）的分步操作，以及跨设备数据同步与新机器 Onboarding。每个工具仍保留各自的源文档（`tools/<tool>/` 下），本文是它们的合并与统一入口。
 
-> 所有 LLM 工具支持 `--api` 切换后端（`ollama` 默认 / `claude_cli` / `anthropic` / `openai`）；翻译链路走本地推理引擎，不经 `--api`。
+> 所有 LLM 工具支持 `--api` 切换后端（`ollama` 默认 / `anthropic` / `openai`）；翻译链路走本地推理引擎，不经 `--api`。
 
 ## 目录
 
@@ -156,7 +156,6 @@ Ollama 后端用聊天 tag 翻译（`OLLAMA_TRANSLATION_MODEL` > `OLLAMA_MODEL` 
 | `--api` 值 | 后端 | 所需 |
 |-----------|------|------|
 | `ollama`（默认） | 本地 Ollama 服务，无需 key | 本地运行的 Ollama 及已拉取的对话模型 |
-| `claude_cli` | 本地 Claude Code CLI | 已安装并登录 `claude` CLI |
 | `anthropic` | Anthropic API | 环境变量 `ANTHROPIC_API_KEY` |
 | `openai` | OpenAI API | 环境变量 `OPENAI_API_KEY` |
 
@@ -365,7 +364,7 @@ gadgets:
     hugo_site: "tools/website"          # 相对仓库根的 Hugo 站点
     rclone_remote: "gdrive:gadget/summarize"
     rclone_path: ""                     # 空 = 远端默认
-    default_api: claude_cli             # ollama | claude_cli | anthropic | openai; 默认: ollama
+    default_api: anthropic             # ollama | anthropic | openai; 默认: ollama
   research:                             # -> config.json "research"
     model: sonnet
     default_mode: fast
@@ -374,7 +373,7 @@ gadgets:
     output_dir: ""
     semantic_scholar_api_key: ""        # 设置可提高速率上限
   research_scout:                       # -> config.json "research_scout"
-    default_api: claude_cli
+    default_api: anthropic
     hugo_site: "tools/website"          # 相对仓库根的 Hugo 站点
     default_lookback_days: 7
     default_max_results: 50             # 建议 ~50 以内，避免筛选超时
@@ -502,10 +501,10 @@ npm install -g @anthropic-ai/claude-code
 claude --version
 ```
 
-使用时通过 `--api claude_cli` 选择：
+使用时通过 `--api anthropic` 选择：
 
 ```bash
-python -m summarize daily export --summarize --date 2026-02-13 --api claude_cli
+python -m summarize daily export --summarize --date 2026-02-13 --api anthropic
 ```
 
 #### 方式二：Anthropic API
@@ -740,7 +739,7 @@ python -m summarize daily merge --sync-all --api anthropic --timeout 300
 python -m summarize daily merge --sync-all --workers 4
 ```
 
-默认 `--workers 1`（顺序处理，保持原有行为），实际并行数会被裁剪到「待处理日期数」。该参数**仅对 `--sync-all` 批量合并生效**，单日期 merge 与 export 不受影响。每个 worker 是独立子进程，日志分别写到 `outputs/logs/summarize/merge_logs/`。并发越高对 LLM 后端的瞬时请求越多——用 `claude_cli` 或有速率限制的 API 时不宜调太大。
+默认 `--workers 1`（顺序处理，保持原有行为），实际并行数会被裁剪到「待处理日期数」。该参数**仅对 `--sync-all` 批量合并生效**，单日期 merge 与 export 不受影响。每个 worker 是独立子进程，日志分别写到 `outputs/logs/summarize/merge_logs/`。并发越高对 LLM 后端的瞬时请求越多——用 `anthropic` 或其它有速率限制的 API 时不宜调太大。
 
 **方式二：手动指定文件**
 
@@ -807,7 +806,7 @@ python -m summarize auto --date 2026-04-18 --api anthropic --deploy --force
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `--date YYYY-MM-DD` | 昨天 | 聚合目标日期。决定周报取哪一周、月报取哪一月。**不影响** `daily export` / `merge --sync-all`，它们仍处理所有未导出 / 未 finalized 日期 |
-| `--api {ollama,claude_cli,anthropic,openai}` | `ollama` | LLM 后端，透传给所有调 LLM 的步骤 |
+| `--api {ollama,anthropic,openai}` | `ollama` | LLM 后端，透传给所有调 LLM 的步骤 |
 | `--deploy` | 关 | 对 merge / weekly / monthly 都追加 `--deploy`，把日报 / 周报 / 月报一并发布到 Hugo |
 | `--force` | 关 | 对所有四步追加 `--force`，忽略缓存和已存在的输出文件，强制重跑 |
 | `--workers N` | 1 | 透传给 `daily merge --sync-all`，开 N 个 worker 并行合并多天日报（默认 1 = 顺序）。详见上文 `--sync-all` 的「并行加速」说明 |
@@ -862,7 +861,7 @@ python -m summarize auto --date 2026-04-18 --api anthropic --force --deploy
 
 #### Onboarding / readiness check
 
-`auto` 会在真正执行 export / merge / weekly / monthly 之前先检查运行条件。如果缺少必需项（例如 `rclone_remote`、`rclone`、默认 `ollama` 后端可达的 Ollama 服务（用 `claude_cli` 时则是 `claude` CLI），或 `--deploy` 需要的 Hugo 站点/二进制），命令会停止并给出修复步骤，避免跑到一半才失败。
+`auto` 会在真正执行 export / merge / weekly / monthly 之前先检查运行条件。如果缺少必需项（例如 `rclone_remote`、`rclone`、默认 `ollama` 后端可达的 Ollama 服务，或 `--deploy` 需要的 Hugo 站点/二进制），命令会停止并给出修复步骤，避免跑到一半才失败。
 
 ```bash
 python -m summarize onboard                 # 检查 summarize auto 所需条件
@@ -1282,11 +1281,10 @@ ISO 8601 周（周一至周日）。tasks/problems/learnings 中每一项都带 
 | 值 | 说明 | 是否需要 API key |
 |----|------|-----------------|
 | `ollama` | 调用本地 Ollama 服务（默认） | 否，本地无 key 服务 |
-| `claude_cli` | 调用本地 Claude Code CLI | 否，复用 CLI 登录状态 |
 | `anthropic` | 调用 Anthropic Claude API | 是，需 `ANTHROPIC_API_KEY` |
 | `openai` | 调用 OpenAI API | 是，需 `OPENAI_API_KEY` |
 
-`claude_cli` 模式通过 `claude --print` 将 prompt 传给 Claude Code CLI。需要提前安装并登录 Claude Code。
+`claude_cli` 模式已删除。它通过 `claude --print` 调一个命令行工具，是唯一一个失败形态是「二进制不存在 / 非零退出 / 空 stdout」而不是 HTTP 错误的后端，而且纯文本与 JSON 两条路各写了一遍。要用 Claude 请走 `anthropic`。
 
 #### `--timeout` 参数
 
@@ -1386,7 +1384,7 @@ python tools/research/research_scout.py config --init
 ```
 
 会交互式询问以下配置项：
-- **默认 LLM 后端**：`ollama`（默认，本地无 key 的 Ollama 服务）/ `claude_cli`（直接调用 Claude CLI）/ `anthropic` / `openai`
+- **默认 LLM 后端**：`ollama`（默认，本地无 key 的 Ollama 服务）/ `anthropic` / `openai`
 - **Hugo 站点路径**：用于将周报部署到你的博客（可选）
 - **默认回溯天数**：搜索最近几天的论文（默认 7 天）
 - **默认最大结果数**：每个项目每次搜索最多返回多少篇论文（默认 50）
@@ -1400,7 +1398,7 @@ python tools/research/research_scout.py config --init
 python tools/research/research_scout.py config --show
 ```
 
-> **注意**：使用 `anthropic` 后端需要设置环境变量 `ANTHROPIC_API_KEY`；使用 `openai` 后端需要设置 `OPENAI_API_KEY`。使用 `claude_cli` 后端不需要额外配置，但需要已安装 Claude CLI。
+> **注意**：使用 `anthropic` 后端需要设置环境变量 `ANTHROPIC_API_KEY`；使用 `openai` 后端需要设置 `OPENAI_API_KEY`。`ollama` 两者都不需要，只要本机服务在跑。
 
 ### 2. 创建研究项目
 
@@ -1549,7 +1547,7 @@ python tools/research/research_scout.py report --project robot-manipulation --ap
 python tools/research/research_scout.py report --project robot-manipulation --api openai
 
 # 使用 Claude CLI（默认，无需 API key）
-python tools/research/research_scout.py report --project robot-manipulation --api claude_cli
+python tools/research/research_scout.py report --project robot-manipulation --api anthropic
 ```
 
 #### 选择输出语言
@@ -1918,7 +1916,7 @@ python tools/research/research_scout.py profile "Sergey Levine" --deploy --hugo-
 
 ```bash
 python -m research analyze "Sergey Levine"                  # 分析研究者
-python -m research analyze "Sergey Levine" --api anthropic  # 选择后端（ollama/claude_cli/anthropic/openai）
+python -m research analyze "Sergey Levine" --api anthropic  # 选择后端（ollama/anthropic/openai）
 python -m research show "Sergey Levine"                     # 查看已缓存的画像
 python -m research list                                     # 列出所有已分析的研究者
 python -m research config --init                            # 初始化 Profiler 配置
@@ -2276,14 +2274,13 @@ outputs/                       # 所有生成文件（项目根目录下，已 g
 
 - 编辑 `overview.md`，添加更多研究背景和当前进展。Stage 2 会读取这些内容来做更精准的评估
 - 修改 `project.json` 中的 `open_questions`，让 LLM 更清楚你关心什么
-- 尝试不同的 LLM 后端（`--api anthropic` vs `--api claude_cli`）
+- 尝试不同的 LLM 后端（`--api anthropic` vs `--api anthropic`）
 - 尝试英文输出：`--language en`
 
 #### Q: LLM 调用超时？
 
 - 默认超时 600 秒（10 分钟），可以用 `--timeout 900` 增加
 - 减少 `--max-results` 以减少论文数量（Stage 1 单次筛选调用在 ~100 篇时容易超时，建议把 `--max-results` 控制在 ~50 以内，或相应提高 `--timeout`）
-- 使用 `--api anthropic` 通常比 `claude_cli` 更稳定
 
 #### Q: 如何暂停/恢复项目？
 
@@ -2321,7 +2318,7 @@ OpenReview 匹配基于 fuzzy title matching（相似度阈值 0.85）。以下�
 
 全文下载 + LLM 分析每篇论文需要 1-3 分钟。可以：
 - 减少分析数量：`--insight-top-n 1`
-- 使用更快的 API：`--api anthropic`（通常比 claude_cli 快）
+- 使用更快的 API：`--api anthropic`
 - 全文和 insight 分析结果会被缓存，第二次运行同一项目会很快
 
 #### Q: 需要安装 openreview-py 吗？

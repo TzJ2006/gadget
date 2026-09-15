@@ -6,6 +6,7 @@ import argparse
 import logging
 import sys
 
+from common.llm import LLM_BACKENDS
 from research.config import (
     load_config,
     interactive_config_init,
@@ -77,7 +78,7 @@ def main() -> None:
                            help="每层最多探索学生数 (默认: 10)")
     p_analyze.add_argument("--model", choices=["sonnet", "opus", "haiku"],
                            help="Claude 模型 (默认: sonnet)")
-    p_analyze.add_argument("--api", choices=["claude_cli", "anthropic", "openai", "ollama"],
+    p_analyze.add_argument("--api", choices=list(LLM_BACKENDS),
                            help="LLM 后端 (默认: ollama)")
     p_analyze.add_argument("--affiliation", type=str, default="",
                            help="机构提示（用于同名作者消歧）")

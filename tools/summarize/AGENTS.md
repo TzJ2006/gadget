@@ -15,7 +15,7 @@ python -m summarize daily config --init                # first-time config
 cd tools && python -m pytest summarize/tests           # unit tests (pure mock, no network/keys)
 ```
 
-LLM backend via `--api`: `ollama` (default) / `claude_cli` / `anthropic` / `openai`. matplotlib ships in the `summarize` extra and renders the per-source usage chart embedded in every report; `charts.py` lazy-imports it and returns None if absent, so a machine without it still gets the report, just without the chart. Optional: Node.js for ccusage token stats.
+LLM backend via `--api`: `ollama` (default) / `anthropic` / `openai`. matplotlib ships in the `summarize` extra and renders the per-source usage chart embedded in every report; `charts.py` lazy-imports it and returns None if absent, so a machine without it still gets the report, just without the chart. Optional: Node.js for ccusage token stats.
 
 ## Quirks
 

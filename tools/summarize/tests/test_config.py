@@ -190,7 +190,7 @@ def test_cli_defaults_feeds_argparse(tmp_path, monkeypatch):
 
     _write_summarize(tmp_path, monkeypatch, {"default_api": "ollama"})
     parser = argparse.ArgumentParser()
-    parser.add_argument("--api", default="claude_cli")
+    parser.add_argument("--api", default="anthropic")
     parser.set_defaults(**cli_defaults())
 
     assert parser.parse_args([]).api == "ollama"

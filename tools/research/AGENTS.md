@@ -19,7 +19,7 @@ python -m research --help                              # standalone profiler ent
 cd tools && python -m pytest research/tests            # unit tests (LLM mocked)
 ```
 
-Subcommands: `init / ask / list / search / report / profile / citations / deploy / config`. LLM backend via `--api`: `ollama` (default) / `claude_cli` / `anthropic` / `openai`.
+Subcommands: `init / ask / list / search / report / profile / citations / deploy / config`. LLM backend via `--api`: `ollama` (default) / `anthropic` / `openai`.
 
 ## Quirks
 

@@ -54,17 +54,17 @@ DEFAULT_BACKEND = os.environ.get("GADGET_LLM_BACKEND") or "ollama"
 
 # Single source of truth for valid chat backends. Both dispatchers validate against
 # this so a typo'd config `default_api` / GADGET_LLM_BACKEND fails loudly instead of
-# silently degrading to claude_cli.
-LLM_BACKENDS = ("ollama", "anthropic", "openai", "claude_cli")
+# silently degrading to something else.
+#
+# claude_cli is gone: it was the odd one out — a subprocess call to a command-line
+# tool, with its own failure modes (binary missing, non-zero exit, empty stdout)
+# and its own copy of the plain-text and JSON paths, where the other three are
+# HTTP clients. Use `anthropic` to reach Claude.
+LLM_BACKENDS = ("ollama", "anthropic", "openai")
 
 # The abstract model names (sonnet/opus/haiku) mean nothing to Ollama; it serves
 # real tags. When OLLAMA_MODEL/OPENAI_MODEL are unset, fall back to this tag.
 DEFAULT_OLLAMA_CHAT_MODEL = "gemma4:26b"
-
-
-def _clean_env() -> dict:
-    """Return os.environ without CLAUDECODE (prevents nested Claude Code)."""
-    return {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
 
 def _openai_client():
@@ -238,32 +238,7 @@ def call_llm_raw(
         return _raw_openai(prompt, model, timeout, max_tokens)
     elif backend == "ollama":
         return _raw_ollama(prompt, model, timeout, max_tokens)
-    elif backend == "claude_cli":
-        return _raw_claude_cli(prompt, model, timeout)
     raise ValueError(f"Unknown LLM backend {backend!r}; valid: {LLM_BACKENDS}")
-
-
-def _raw_claude_cli(prompt: str, model: str, timeout: int) -> str:
-    logger.info("Calling Claude CLI (%s), prompt length: %d", model, len(prompt))
-    try:
-        result = subprocess.run(
-            ["claude", "--print", "--model", model],
-            input=prompt,
-            capture_output=True, text=True, timeout=timeout,
-            env=_clean_env(),
-        )
-    except FileNotFoundError:
-        raise RuntimeError(
-            "Claude CLI not found. Install: npm install -g @anthropic-ai/claude-code")
-    except subprocess.TimeoutExpired as e:
-        raise RuntimeError(f"Claude CLI timed out after {timeout}s") from e
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Claude CLI failed (exit {result.returncode}): {result.stderr[:500]}")
-    response = result.stdout.strip()
-    if not response:
-        raise RuntimeError("Claude CLI returned empty response")
-    return response
 
 
 def _raw_anthropic(prompt: str, model: str, timeout: int, max_tokens: int) -> str:
@@ -316,7 +291,6 @@ class LLMCallConfig:
     # Model overrides
     anthropic_model: str = "claude-sonnet-5"
     openai_model: str = "gpt-4o"
-    claude_cli_model: str = "sonnet"
     thinking: Optional[dict] = None
 
 
@@ -380,37 +354,6 @@ def call_ollama(config: LLMCallConfig) -> dict:
                       schema=_schema_from_tools(config.anthropic_tools))
 
 
-def call_claude_cli(config: LLMCallConfig) -> dict:
-    """Call Claude Code CLI and return parsed JSON dict."""
-    logger.info("Calling Claude Code CLI (timeout=%ds)...", config.timeout)
-    cmd = ["claude", "--print", "--model", config.claude_cli_model]
-    if config.thinking:
-        cmd += ["--effort", "low"]
-    try:
-        result = subprocess.run(
-            cmd,
-            input=config.prompt,
-            capture_output=True, text=True, timeout=config.timeout,
-            env=_clean_env(),
-        )
-    except FileNotFoundError:
-        raise RuntimeError(
-            "Claude CLI not found. Install: npm install -g @anthropic-ai/claude-code")
-    except subprocess.TimeoutExpired:
-        raise  # let caller handle
-
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Claude CLI failed (exit {result.returncode}): "
-            f"{result.stderr[:500] if result.stderr else ''}")
-
-    text = result.stdout.strip()
-    if not text:
-        raise RuntimeError("Claude CLI returned empty response")
-
-    return parse_json_response(text)
-
-
 def call_llm(api: str, config: LLMCallConfig) -> dict:
     """Dispatch to the appropriate backend."""
     logger.debug("LLM call: backend=%s model=%s", api, getattr(config, "model", "?"))
@@ -420,8 +363,6 @@ def call_llm(api: str, config: LLMCallConfig) -> dict:
         return call_openai(config)
     elif api == "ollama":
         return call_ollama(config)
-    elif api == "claude_cli":
-        return call_claude_cli(config)
     raise ValueError(f"Unknown LLM backend {api!r}; valid: {LLM_BACKENDS}")
 
 
@@ -529,7 +470,7 @@ def hierarchical_merge(api: str, summaries: list[dict],
     """Recursively merge chunk summaries until everything fits in one call.
 
     Args:
-        api: Backend name ("anthropic" / "openai" / "claude_cli").
+        api: Backend name — one of LLM_BACKENDS.
         summaries: Per-chunk JSON summary dicts.
         merge_prompt: System/user prompt prefix for the merge phase.
         make_config: Factory — given full prompt text, returns LLMCallConfig.

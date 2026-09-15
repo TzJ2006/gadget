@@ -19,6 +19,7 @@ from typing import Iterable, Optional, TextIO
 
 from .config import _CONFIG_PATH, _load_config, _resolve_config_path, resolve_hugo_site
 from common.config import clear_cache as _clear_gadget_config_cache, resolve_config_path
+from common.llm import DEFAULT_BACKEND, LLM_BACKENDS
 from .remote import _find_rclone
 from .usage import _ccusage_version
 
@@ -122,17 +123,6 @@ def _check_rclone_binary(cfg: dict) -> RequirementResult:
 
 
 def _check_backend(api: str) -> list[RequirementResult]:
-    if api == "claude_cli":
-        claude = shutil.which("claude")
-        if claude:
-            return [_ok("llm-claude-cli", "Claude CLI", f"Found {claude}")]
-        return [_fail(
-            "llm-claude-cli",
-            "Claude CLI",
-            "The default --api claude_cli requires the claude executable.",
-            "Install Claude Code CLI: npm install -g @anthropic-ai/claude-code",
-        )]
-
     if api == "anthropic":
         results = []
         if importlib.util.find_spec("anthropic") is None:
@@ -230,7 +220,7 @@ def _check_backend(api: str) -> list[RequirementResult]:
         "llm-api",
         "LLM backend",
         f"Unsupported API backend: {api}",
-        "Use one of: claude_cli, anthropic, openai, ollama.",
+        f"Use one of: {', '.join(LLM_BACKENDS)}.",
     )]
 
 
@@ -315,7 +305,7 @@ def _check_hugo_deploy(hugo_site: Optional[str | Path]) -> list[RequirementResul
 
 def check_auto_requirements(
     *,
-    api: str = "claude_cli",
+    api: str = DEFAULT_BACKEND,
     deploy: bool = False,
     hugo_site: Optional[str | Path] = None,
 ) -> list[RequirementResult]:
@@ -378,7 +368,7 @@ def _onboard_command(api: str, deploy: bool, hugo_site: Optional[str | Path]) ->
 
 def ensure_auto_ready(
     *,
-    api: str = "claude_cli",
+    api: str = DEFAULT_BACKEND,
     deploy: bool = False,
     hugo_site: Optional[str | Path] = None,
     stream: TextIO = sys.stdout,
@@ -414,7 +404,7 @@ def cmd_onboard(args) -> None:
         _CONFIG_PATH = _resolve_config_path()
 
     results = check_auto_requirements(
-        api=getattr(args, "api", "claude_cli"),
+        api=getattr(args, "api", None) or DEFAULT_BACKEND,
         deploy=getattr(args, "deploy", False),
         hugo_site=getattr(args, "hugo_site", None),
     )

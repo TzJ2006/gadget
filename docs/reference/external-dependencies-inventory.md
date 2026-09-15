@@ -66,7 +66,7 @@ python scripts/sync.py config --init
 | `pngquant` | 图片压缩（JPEG→PNG 转换） | `website/compress_image.py`, `website/update.sh` | Windows `update.ps1` 跳过压缩；Linux/macOS 报错 |
 | `HandBrakeCLI` | 视频压缩（720p30，无音频） | `website/compress_video.py`, `website/update.sh` | Windows `update.ps1` 跳过压缩；Linux/macOS 报错 |
 | `ccusage` (Node.js, **>=20**) | 统一多来源 token 用量跟踪（Claude Code / Codex / Gemini 等，逐源命名空间命令） | `summarize/usage.py` | 缺失或 <20 时静默 `npm install -g ccusage@latest`，失败回退 `npx --yes ccusage@latest`；再失败则跳过 token 统计 |
-| `claude` CLI | Claude Code CLI（用于 `--api claude_cli` 模式） | `summarize/summarizer.py` | 可使用 `--api anthropic` 或 `--api openai` 替代 |
+| ~~`claude` CLI~~ | ~~Claude Code CLI（`--api claude_cli` 模式）~~ **该后端已删除** | `summarize/summarizer.py` | 可使用 `--api anthropic` 或 `--api openai` 替代 |
 
 **安装方式**:
 ```bash
@@ -277,7 +277,7 @@ CONFIG_HOME = Path.home() / ".config"        # 用户配置目录
 | `pngquant` | 图片压缩 | 跳过图片压缩步骤 |
 | `HandBrakeCLI` | 视频压缩 | 跳过视频压缩步骤 |
 | `ccusage` | Token 跟踪 | 跳过 token 统计 |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | 云 LLM API | 可使用 `--api claude_cli` 或本地 Ollama 替代 |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | 云 LLM API | 可使用本地 Ollama 替代（默认后端，无需 key）|
 
 ---
 

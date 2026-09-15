@@ -29,7 +29,6 @@ def call_llm(
 
     Backends:
         ollama (default)     — local Ollama server (OpenAI protocol, keyless)
-        claude_cli           — calls `claude --print --model <model> -p <prompt>`
         anthropic            — uses anthropic Python SDK (needs ANTHROPIC_API_KEY)
         openai               — uses openai Python SDK (needs OPENAI_API_KEY)
     """
@@ -72,15 +71,15 @@ def parse_json_response(text: str, backend: str = "ollama") -> dict[str, Any]:
     logging for debugging.
 
     strategy="escalating" is named for a haiku → sonnet → opus ladder, which is
-    what it does on the anthropic and claude_cli backends. On the default ollama
-    backend the model argument is dropped (llm.py:_ollama_model), and on openai
-    sonnet and opus both map to the same model — so there it is three samples of
-    one model rather than three models. That is still worth having on a 20K
+    what it does on the anthropic backend, the only one left whose model map has
+    three distinct entries. On the default ollama backend the model argument is
+    dropped (llm.py:_ollama_model), and on openai sonnet and opus both map to the
+    same model — so there it is three samples of one model rather than three. That is still worth having on a 20K
     payload, since sampling is not deterministic, but it is resampling, not
     escalation.
 
     Args:
-        backend: LLM backend for the repair call (ollama/claude_cli/anthropic/openai).
+        backend: LLM backend for the repair call — one of common.llm.LLM_BACKENDS.
             Defaults to "ollama".
     """
     result = try_parse_json(text)

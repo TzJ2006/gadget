@@ -10,6 +10,7 @@ from datetime import date
 from pathlib import Path
 
 from common.json_utils import try_repair_result as _try_repair_result
+from common.llm import LLM_BACKENDS
 from common.hugo import run_hugo_update
 from common.site_staging import resolve_site_content_dir
 
@@ -218,7 +219,7 @@ def run_evaluation_pipeline(
     pj: dict,
     papers: list[dict],
     *,
-    api: str = "claude_cli",
+    api: str = "ollama",
     timeout: int = 600,
     no_cache: bool = False,
     language: str = DEFAULT_LANGUAGE,
@@ -290,7 +291,7 @@ def finalize_report(
     reports_dir: Path | None = None,
     deploy: bool = False,
     hugo_site: Path | None = None,
-    api: str = "claude_cli",
+    api: str = "ollama",
 ) -> None:
     """Generate report from projects_data and optionally deploy to Hugo."""
     if reports_dir is None:
@@ -690,8 +691,8 @@ def _config_init():
 
     cfg = {}
 
-    api = input("默认 LLM 后端 [ollama/anthropic/openai/claude_cli] (默认 ollama): ").strip()
-    if api in ("anthropic", "openai", "claude_cli", "ollama"):
+    api = input(f"默认 LLM 后端 [{'/'.join(LLM_BACKENDS)}] (默认 ollama): ").strip()
+    if api in LLM_BACKENDS:
         cfg["default_api"] = api
     else:
         cfg["default_api"] = "ollama"
@@ -746,13 +747,13 @@ def main():
     sp_init.add_argument("--categories", type=str, nargs="+", default=None, help="arXiv 分类")
     sp_init.add_argument("--questions", type=str, nargs="+", default=None, help="开放问题")
     sp_init.add_argument("--from-overview", type=str, default=None, help="从已有 overview.md 构建项目")
-    sp_init.add_argument("--api", type=str, choices=["anthropic", "openai", "ollama", "claude_cli"], default=None)
+    sp_init.add_argument("--api", type=str, choices=list(LLM_BACKENDS), default=None)
     sp_init.add_argument("--timeout", type=int, default=None)
 
     # ── ask ──
     sp_ask = subparsers.add_parser("ask", help="自然语言搜索 (自动解析意图 → 搜索 → 评估)")
     sp_ask.add_argument("query", nargs="+", help="自然语言查询 (如 '找 Pieter Abbeel 最近的机器人操作论文')")
-    sp_ask.add_argument("--api", type=str, choices=["anthropic", "openai", "ollama", "claude_cli"], default=None)
+    sp_ask.add_argument("--api", type=str, choices=list(LLM_BACKENDS), default=None)
     sp_ask.add_argument("--timeout", type=int, default=None)
     sp_ask.add_argument("--language", type=str, default=None)
     sp_ask.add_argument("--no-cache", action="store_true")
@@ -785,7 +786,7 @@ def main():
     sp_report.add_argument("--conference", type=str, default=None)
     sp_report.add_argument("--author", type=str, default=None)
     sp_report.add_argument("--source", type=str, nargs="+", default=None)
-    sp_report.add_argument("--api", type=str, choices=["anthropic", "openai", "ollama", "claude_cli"], default=None)
+    sp_report.add_argument("--api", type=str, choices=list(LLM_BACKENDS), default=None)
     sp_report.add_argument("--timeout", type=int, default=None)
     sp_report.add_argument("--language", type=str, default=None)
     sp_report.add_argument("--no-cache", action="store_true")
@@ -805,7 +806,7 @@ def main():
     sp_profile.add_argument("--depth", type=int, choices=[0, 1, 2, 3], default=None)
     sp_profile.add_argument("--max-students", type=int, default=None)
     sp_profile.add_argument("--model", type=str, choices=["sonnet", "opus", "haiku"], default=None)
-    sp_profile.add_argument("--api", type=str, choices=["anthropic", "openai", "ollama", "claude_cli"], default=None)
+    sp_profile.add_argument("--api", type=str, choices=list(LLM_BACKENDS), default=None)
     sp_profile.add_argument("--affiliation", type=str, default="")
     hint_group = sp_profile.add_mutually_exclusive_group()
     hint_group.add_argument("--paper", type=str, default="")
@@ -819,7 +820,7 @@ def main():
     sp_citations = subparsers.add_parser("citations", help="引用图分析")
     sp_citations.add_argument("paper_id", type=str)
     sp_citations.add_argument("--top-n", type=int, default=10)
-    sp_citations.add_argument("--api", type=str, choices=["anthropic", "openai", "ollama", "claude_cli"], default=None)
+    sp_citations.add_argument("--api", type=str, choices=list(LLM_BACKENDS), default=None)
     sp_citations.add_argument("--timeout", type=int, default=None)
     sp_citations.add_argument("--no-cache", action="store_true")
 

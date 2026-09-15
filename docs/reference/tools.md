@@ -24,7 +24,7 @@ extra) so `common` and the tool packages are importable. Config resolution is
 ## research — paper scout + profiler + citation graph
 
 - **Run**: `python tools/research/research_scout.py {init,ask,list,search,report,profile,citations,deploy,config} [args]`
-  - `python tools/research/research_scout.py report --project my-project --api claude_cli`
+  - `python tools/research/research_scout.py report --project my-project --api anthropic`
   - `python tools/research/research_scout.py ask "找 Pieter Abbeel 最近的机器人操作论文"`
   - Profiler standalone: `python -m research {analyze,show,list,config}`
 - **Config**: repo-root `config.json` sections `research_scout` (scout) and `research` (profiler; merged — scout keys win). Override path with `GADGET_CONFIG`. Init: `research_scout.py config --init` (scout) and `python -m research config --init` (profiler).

@@ -55,7 +55,7 @@ python -m summarize auto --force            # 强制重新生成
 
 `auto` 会在真正执行 export / merge / weekly / monthly 之前先检查运行条件。
 如果缺少必需项（例如 `rclone_remote`、`rclone`、所选 LLM 后端的依赖
-（如 `--api claude_cli` 需要 `claude` CLI），或 `--deploy` 需要的 Hugo 站点/二进制），命令会停止并给出修复步骤，
+（如 `--api anthropic` 需要 `claude` CLI），或 `--deploy` 需要的 Hugo 站点/二进制），命令会停止并给出修复步骤，
 避免跑到一半才失败。
 
 ```bash
