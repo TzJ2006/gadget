@@ -1,8 +1,11 @@
 # gadget — 简化后的架构（提案）
 
-> **这是提案，不是现状。** 本文件与配套的 `proposal-simplified.yaml` 都没有改动任何代码，
-> 也没有碰 `graph.claude.yaml`。你批准之后，那份 YAML 才会成为 `ideas/graph.yaml`，
-> 实现改动才开始。
+> **架构仍然是提案，但代码已经动过了。** 本文件写成时一行代码都没改；
+> 之后你让我「去做哪些没有做的、或者做错的 case」，于是审计查出的 **10 处缺陷**
+> 已经在本分支修掉，分成 11 个提交（`5da90f3`..`e7fd4d5`，逐条见**附二**）。
+> 下面第六、七节保留审计当时的原文当证据，**凡是已经修掉的都就地标了「已修」**。
+> 六步主路、23 个节点那套结构本身仍然等你批准；`graph.claude.yaml` 一个字没碰，
+> 你批准之后那份 YAML 才会成为 `ideas/graph.yaml`。
 >
 > 口径沿用 `.companion/FORMAT.md`：一个想法一个节点，一条前置一条箭头，每个节点答完八个问题。
 > 配色沿用 `graph.claude.html`。
@@ -13,13 +16,15 @@
 模型名解析器从 **5 条优先级链减到 1 条**，「内容没变就别重做」的实现从 **7 套减到 2 套**，
 语言判定从 **4 个减到 1 个**，「这个文件是不是我们的」从 **5 个答案减到 1 个**，
 跨机通道从 **3 条减到 1 条**，
-并顺手清掉约 **1,400 行没有调用方或没有驱动者的代码**。
+并顺手清掉约 **1,150 行没有调用方或没有驱动者的代码**
+（原本写的是 1,400 行，其中 `charts.py` 那 ~250 行按你的决定改成接上，不再计入）。
 
 审计还查出**想法图本身有 33 处已经和代码漂移**（第七节），其中两处值得现在就知道：
 `I-008`「两个模型共驻一块显卡」的前提已经被一行代码取消了，为它造的 `num_ctx` 旋钮
-现在每次「总结↔翻译」切换都在逼运行时重载——**正是那个想法声称要省掉的约 10 秒，
-现在每次都在付**；而 `I-038` 那张总览页**会被自己的依赖删掉**（产物目录进了 `.gitignore`，
+当时每次「总结↔翻译」切换都在逼运行时重载——**正是那个想法声称要省掉的约 10 秒，
+当时每次都在付**；而 `I-038` 那张总览页**会被自己的依赖删掉**（产物目录进了 `.gitignore`，
 而发布链整站重建再推送，所以任何一台没有它的机器下次发布就把线上的 `/dag/` 删掉）。
+**这两条都已经修掉了**（`8300726` 停掉 num_ctx 覆盖，`0984632` 把 dag 类目从本仓移走）。
 
 没有删掉任何一个你会想念的能力——会变的地方全部逐条列在第十节，
 要你拍板的六件事列在第十一节，我自己最没把握的六处列在第十三节。
@@ -222,52 +227,55 @@ class O1,O2 out
 | **打同一个本机服务用几个客户端、「这次用哪个模型」有几个答案** | 2 个客户端 + 5 个解析器（第 6 个还在计划里） | `engine/` 966 行里 540 行是三个非 Ollama 后端加一层抽象基类；同一个本机 Ollama 有两个客户端（`llm.py:107` 走 OpenAI SDK，`engine/ollama.py:114` 走 urllib，各抄一份 base-url 优先级）；五条优先级链（`llm.py:89`·`123`、`base.py:79`·`87`、`frontmatter.py:247`）只有最后一个读 config；而 `llm.py:123-129` 把调用方传的 model 直接丢掉，导致 `json_utils` 文档里那条 haiku→sonnet→opus 升级链在默认后端上是空转 | **I-063**：聊天一个入口、翻译一个入口，各 2 个后端，一个解析器 |
 | **内容没变该不该重做** | 7 套实现、7 种存放格式 | src-hash 注释（`bilingual.py:32`）· 块缓存 `_chunk_meta`（`llm.py:479`）· DiskCache（`cache.py:23`）· 配置进程内缓存（`config.py:35`）· `load_json_config` 记忆字典（`io.py:33`）· `.last_build` 时间戳（`publish.py:138`，**实现了两遍**且两份对「生成文件算不算」的判断不一致）· `.translation_state.json`（`translate_site_batch.py:313`），外加推送前 `git diff --cached` 第五道判断。**而 DiskCache 在 `common/` 内部零调用方**——两条最热的跳过路径各自另写了一套 | **I-062**：一个内容哈希缓存（算不算）+ 文件里的指纹（产物来历） |
 | **怎么让本地小模型吐出能用的结构** | 7 种机制、5 层抢救、两侧判据不同 | `tool_use`（`llm.py:344`）· `json_object`（`llm.py:202`）· `json_schema`+全 required（`llm.py:166`）· `try_parse_json` 三级（`json_utils.py:56`）· 修引号（`json_utils.py:15`）· 交给模型重排（`json_utils.py:157`）· `summarizer.py:335-446` 五层抢救 + `formatter.py:46` 再兜一次；research 那侧又自己写了一份（`evaluate.py:128`·`141`），判据与 summarize 不同 | **I-064**：一个 `call_llm_structured` |
-| **怎么把别的机器上的素材弄过来** | 3 套，远端布局互不兼容 | `ssh_pull.py:55`（ssh+scp）· `remote.py:193`（rclone，对 `<remote>/logs`）· `sync.py:68`（rclone，对 `summarize/logs`）。`remote.py` 257 行**图里没有任何想法认领它**，`_find_rclone` 与 `sync.py:182` 的 `find_rclone` 逐字相同但读不同的配置节；而 `ssh_pull.py:73` 的 glob 少一层目录所以拉不到文件，`test_ssh_pull.py:16,18` 断言的正是这条错路径。顺带：`onboarding.py:84-101` 已经把「配好 rclone 远端」做成 `auto` 的硬性前置 | **I-068**：只留 rclone 一条 |
+| **怎么把别的机器上的素材弄过来** | 3 套，远端布局互不兼容 | `ssh_pull.py:55`（ssh+scp）· `remote.py:193`（rclone，对 `<remote>/logs`）· `sync.py:68`（rclone，对 `summarize/logs`）。`remote.py` 257 行**图里没有任何想法认领它**，`_find_rclone` 与 `sync.py:182` 的 `find_rclone` 逐字相同但读不同的配置节；而 `ssh_pull.py:73` 的 glob 少一层目录所以拉不到文件，`test_ssh_pull.py:16,18` 断言的正是这条错路径（**已修，`5da90f3`**：远端相对路径改成从 `_DEFAULT_LOGS_DIR` 反推，测试跟着改对）。顺带：`onboarding.py:84-101` 已经把「配好 rclone 远端」做成 `auto` 的硬性前置 | **I-068**：只留 rclone 一条 |
 | **怎么把一段时间的工作写成一份报告** | 日/周/月三份代码 + 3 份 Hugo 部署 + 5 处「算过了吗」 | `weekly_summary.py`（831 行）与 `monthly_summary.py`（952 行）**397 行逐字相同**、相似度 0.45，而它们上面本来就压着 `period_report.py`（410 行）；日报的 Hugo 部署有三份实现（`daily_merge.py:204`·`461`、`daily_deploy.py:117`）；`_find_missing_weeks` 与 `_find_missing_months` 是同一段逻辑写两遍，`cmd_list` 又各写第三四遍；weekly/monthly 各有一对影子缓存函数无调用方 | **I-070**：一个 `render(版式, 结果)`，版式是数据 |
-| **「这个文件是不是我们的、能不能动」** | 5 个答案 | 文件里的标记（**三种拼写**，`website_backup.py:32-36`）· 路径白名单 `generated_paths.py` 被三个消费者用**三种不同语义**匹配（`publish.py:128-135` 连任意子目录下的 `benchmark.md` 都算，`preflight_check.py:73-81` 只认精确相对路径，`translate_site_batch.py:155-166` 解析绝对路径）· 而 `publish.py:49-55` 干脆把那两个元组复制了一份。分歧已经有后果：预检和发布对「子目录里的 benchmark.md 算不算生成物」判断不同 | **I-074**：只认文件里的标记，只经 `classify_file` 一个入口；路径清单降级为纯性能捷径，三方统一 import、统一语义 |
+| **「这个文件是不是我们的、能不能动」** | 5 个答案 | 文件里的标记（**三种拼写**，`website_backup.py:32-36`）· 路径白名单 `generated_paths.py` 被三个消费者用**三种不同语义**匹配（`publish.py:128-135` 连任意子目录下的 `benchmark.md` 都算，`preflight_check.py:73-81` 只认精确相对路径，`translate_site_batch.py:155-166` 解析绝对路径）· 而 `publish.py:49-55` 干脆把那两个元组复制了一份。分歧已经有后果：预检和发布对「子目录里的 benchmark.md 算不算生成物」判断不同 | **I-074**：`content/` 只认文件里的标记，只经 `classify_file` 一个入口；路径清单降级为纯性能捷径，三方统一 import、统一语义。**复核后补一句**：`static/` 不在这条规则里——PNG/CSS 没地方盖标记，归属按命名空间划分（`copy_site_static` 的 docstring 已经写明） |
 | **「一份报告怎么变成站点上的双语文章」** | 4 个发布器 | `period_report.generate_period_hugo_post` · `formatter.generate_hugo_post`（前者的壳）· research 的 `scout/report.generate_hugo_post` · benchmark 的 `publish` —— 四个都是「拼 frontmatter 字符串 → 解析内容目录 → `write_bilingual`」，只差标题、关键词、摘要、相对路径 | `common/` 里一个 `publish_report_post(...)`，四个调用方只填参数。收拢时顺带暴露：`content/benchmark.zh.md` 是一份没人再生成的固定文件，跑分中文页一直陈旧 |
 | **怎么补齐缺的那一侧语言** | 2 套，而且第二套会让第一套白做 | 第一份是 `translate_site_batch.plan_pair`（`publish.py` 第 1 步）；第二份是预检的可修档（`preflight_check.py:309-351`），**四步之后又做一遍，而且不写状态文件**——它补出来的那一对下一轮会被当成没翻过再翻一遍。正文语言是否正确也查了三处（`translate_site_batch.py:274`、`preflight_check.py:247`、`common` 的 `wrong_language`），而两处的散文长度门槛还不一样（100 vs 20） | **I-073** + **I-075**：补齐只发生在发布链第一步，预检只报不修 |
-| **「这份报告算过了吗」** | 6 套，其中一套根本没有哈希 | 日志里的 `_finalized`（`daily_export.py:137`）· 报告里的 `_finalized`（`daily_merge.py:100`·`334`）· **日报最终缓存只按日期取键、一个哈希都没有**（所以改完措辞重跑会拿到旧报告冒充新产出）· 输出文件存在即跳过（`weekly:626`·`monthly:768`）· `auto` 的 mtime 陈旧判定 · `period_report.py:186` 的 source_hash | **I-062** + **I-070**：一条规则——`hash(输入 + 措辞/结构版本)` 与存在产物旁边的那个相符，就算最新 |
+| **「这份报告算过了吗」** | 5 套，其中一套根本没有哈希 | ~~日志里的 `_finalized`（`daily_export.py:137`）~~ **（复核后撤回：它不是缓存判据。`daily_export.py:183-206` 的 `--export-past` 靠它决定哪些日期要补导出，而且它跟着日志文件在机器之间走——留着）** · 报告里的 `_finalized`（`daily_merge.py:100`·`334`）· **日报最终缓存只按日期取键、一个哈希都没有**（所以改完措辞重跑会拿到旧报告冒充新产出）· 输出文件存在即跳过（`weekly:626`·`monthly:768`）· `auto` 的 mtime 陈旧判定 · `period_report.py:186` 的 source_hash | **I-062** + **I-070**：一条规则——`hash(输入 + 措辞/结构版本)` 与存在产物旁边的那个相符，就算最新 |
 | **「素材怎么到汇总机」—— 顺带：汇总这一步把传输当成了前提** | 3 套传输，最贵的那套是强制的 | 没配 `summarize.rclone_remote` 时 `_rclone_download_logs` 返回空（`remote.py:197-200`），`_cmd_merge_sync_all` 随即以「没有日志」退出 0；而 `onboarding.py:84-101` 把「配好 rclone 远端」做成 `auto` 的硬性前置。**也就是说今天不开云盘账号就出不了日报**，哪怕所有素材都在本机 | **I-068**：传输只留 rclone 一条，**并且是可选的**——汇总只认「素材目录里现在有哪些文件」 |
-| **「别把一次失败冻成缓存里的权威结果」** | 4 种形状 | 检索用 `None` 与空列表的返回约定（`search.py:774`）· 筛选与深评用结果形状闸门（`evaluate.py:128`·`141`）· insight 用「成功才写」（`insight.py:457`）· common 的块缓存用「拒绝 parse_error」。而最贵的那次调用（第三轮引用影响分析）**一套都没盖到**——既不在任何文件缓存里，也因为 `call_scout_llm` 不传 cache 而不在 DiskCache 里 | **I-064**：一个 `cache_if(结果, 可用吗)`，硬失败直接抛异常 |
+| **「别把一次失败冻成缓存里的权威结果」** | 4 种形状 | 检索用 `None` 与空列表的返回约定（`search.py:774`）· 筛选与深评用结果形状闸门（`evaluate.py:128`·`141`）· insight 用「成功才写」（`insight.py:457`）· common 的块缓存用「拒绝 parse_error」。而最贵的那次调用（第三轮引用影响分析）**一套都没盖到**——既不在任何文件缓存里，也因为 `call_scout_llm` 不传 cache 而不在 DiskCache 里 | **I-064**：一个 `cache_if(结果, 可用吗)`。**复核后收窄**：抛异常只管单次调用那一层——`search.py:748` 的 `None`/`[]` 还兼着第二个职责（单个来源塌掉时记警告返回 `[]`，另外两个来源照常回到调用方），这层容错保留 |
 | **「会议 / 作者 / 多源检索 + 缓存」这段分支** | 3 份，**而且已经漂移** | `cmd_search`（`cli.py:134-214`）· `cmd_report`（`cli.py:363-391`）· `route_search`（`ask.py:208-243`）；`ask.py:238` 带注释地给会议检索传 `project=None`，另两份传 `project` | **I-066**：一个 `collect_papers(项目, 检索条件)`，三个命令只差怎么构造检索条件——而那正好就是 `ask` 的模型产物 |
 | **怎么给没测过的代码补测试** | 8 个节点 | I-044 汇合点 + I-054 量具 + I-055–I-060 六个区域。八个里没有一个包含独立的设计判断——`how` 与 `why_this_way` 在 I-054–I-060 七个里**全是 `null`**。它们是一份工作分解，不是八个想法 | **I-079**：1 个节点 |
 | **「这段文字是不是该有的语言」** | 4 个判定实现 | 让判定变正确的那次修改（只看散文、别被 CSS 和内嵌 HTML 稀释）只落进了其中两个：`protect.py:240` 的 `wrong_language` 与 `scripts/language.py:235`；而 `preflight_check.py:247` 用的是另一个、门槛也不同（100 vs 20），`document.py:85-96` 又另加了一道 frontmatter 英文判定，和 `frontmatter.py:142` 的闸门重叠 | **I-073**：只留 `wrong_language` 一个判定，所有入口都调它 |
 | **翻译过的内容怎么记「已经翻过」** | 3 套记账、3 条失效规则 | 生成页用文件里的 `gadget:src-hash:v2:` 注释（`bilingual.py:32`），**唯一的失效办法是有人去手改源码里的 `_MARKER_VERSION`**——`force=True` 刻意不重译（docstring 写明）；手写页用外部的 `.translation_state.json`；预检的可修档补出来的那一对谁都不记 | **I-073**：一条记录一页，内容哈希 + 配方版本（标记版本 + 模型 tag + 措辞版本），谁翻的谁写 |
-| **怎么把数字变成能看的东西** | 3 套，其中 1 套已经是死代码 | `charts.generate_daily_chart`（227 行 + matplotlib + 中文字体）**没有任何活调用方**，但 `weekly_summary.py:741`、`monthly_summary.py:875` 还在探测那个 PNG、`period_report.py:152-157` 还在把它拷进站点——一段在等一个没人写的文件的代码 | 卡片（嵌报告）+ plotly 网页（需要交互的那张） |
+| **怎么把数字变成能看的东西** | 3 套，其中 1 套当时是死代码 | `charts.generate_daily_chart`（227 行 + matplotlib + 中文字体）**当时没有任何活调用方**，但 `weekly_summary.py:741`、`monthly_summary.py:875` 还在探测那个 PNG、`period_report.py:152-157` 还在把它拷进站点——一段在等一个没人写的文件的代码 | **已修（`4faab70`）**：按你的决定是**接上**而不是删——日/周/月三级都生成那张 PNG 并在正文里插链接，三处悬空消费点因此有了产出者 |
 
 ## 七 · 顺带查出来的：想法图本身已经和代码漂移的地方
 
 审计不只看图，也逐条回去读了代码。下面每一条都是**图写着一件事、代码做着另一件事**。
 它们不改变本提案的结构，但会误导任何照着图做事的人——批准后应当随 `graph.yaml` 一起改掉。
 
+> **下表保留审计当时的原文。**其中 9 行已经在本分支上修掉了（另有几条在第六、八、九、十节），
+> 逐条对照见**附二**；行内也标了「**已修**」。没标的仍然是现状。
+
 | 处 | 图里怎么写 | 代码实际怎么做 |
 |---|---|---|
 | 总览 + I-006 | 翻译跑 `HY-MT2-1.8B`，「pull 了 HY-MT2 就自动选 Ollama」 | 默认翻译 tag 就是**聊天 tag**（`engine/base.py:22`，经 `resolve_ollama_translation_model`），所以按默认配置 HY-MT2 从来不会被加载 |
-| I-008 整条 | 「翻译模型与聊天模型共驻一块显卡」，`num_ctx` 压到 8192 是为了让翻译模型停在 3.6GB | **这个前提已经被一行代码取消了**：`engine/base.py:22` 写着 `DEFAULT_TRANSLATION_MODEL_OLLAMA = DEFAULT_OLLAMA_CHAT_MODEL`——翻译用的就是聊天那个模型，显存上只有一个模型。而为那个前提造的机制全留着，其中一个现在在帮倒忙：聊天运行时按 65536 加载（`serve_local_llm.sh` 的 `MIN_CTX`，并在 `:88-95` 显式检查，因为 `/v1` 会忽略单次 `num_ctx`），原生接口却认 8192——所以每次「总结↔翻译」切换都逼 Ollama 重载一次运行时，**正是这个想法声称要省掉的那约 10 秒，现在每次切换都在付** |
+| I-008 整条 | 「翻译模型与聊天模型共驻一块显卡」，`num_ctx` 压到 8192 是为了让翻译模型停在 3.6GB | **这个前提已经被一行代码取消了**：`engine/base.py:22` 写着 `DEFAULT_TRANSLATION_MODEL_OLLAMA = DEFAULT_OLLAMA_CHAT_MODEL`——翻译用的就是聊天那个模型，显存上只有一个模型。而为那个前提造的机制全留着，其中一个现在在帮倒忙：聊天运行时按 65536 加载（`serve_local_llm.sh` 的 `MIN_CTX`，并在 `:88-95` 显式检查，因为 `/v1` 会忽略单次 `num_ctx`），原生接口却认 8192——所以每次「总结↔翻译」切换都逼 Ollama 重载一次运行时，**正是这个想法声称要省掉的那约 10 秒，现在每次切换都在付** **已修（`8300726`）：**num_ctx 只在显式设了 `OLLAMA_TRANSLATION_NUM_CTX` 时才发；`docs/guides/summarize-local-llm.md` 两条说明同步改掉（`e7fd4d5`） |
 | I-036 的模型下拉框 | 可以在界面上选翻译模型 | 列的是 HuggingFace 仓库名（`models.py:12-17`）；默认那条会被解析成已服务的聊天 tag，选**别的**会掉出自动选 Ollama 的闸门、于是悄悄把聊天模型卸掉去在进程里加载 torch。选什么和真用什么是两回事 |
 | I-052（状态 `todo`） | 待办：默认模型换成 `gemma4:26b`、复核模型跟随聊天默认 | **已经做完了**：`llm.py:62` 就是 `gemma4:26b`，`frontmatter.py:44` 就是 `DEFAULT_REVIEW_MODEL = DEFAULT_OLLAMA_CHAT_MODEL`，连钉住这条关联的测试都在 |
 | I-005 | 块结果「两两归并」 | 能塞进一次调用就一次归并完，塞不下才分组递归——从不两两 |
-| I-022（状态 `done`） | 三子图 PNG 与 HTML 卡片并列产出 | PNG 路径已死（无活调用方），而三处代码还在等那个文件 |
-| I-027 | 三轮都有缓存闸门，`analyze_citations` 是第三轮 | 只有前两轮有闸门；`evaluate_papers_for_project` 根本不调 `analyze_citations`，第三轮在 `cli.py` 的循环里 |
+| I-022（状态 `done`） | 三子图 PNG 与 HTML 卡片并列产出 | PNG 路径已死（无活调用方），而三处代码还在等那个文件 **已修（`4faab70`）：**按你的决定**接上**而不是删——日/周/月三级都生成 PNG 并在正文插链接 |
+| I-027 | 三轮都有缓存闸门，`analyze_citations` 是第三轮 | 只有前两轮有闸门；`evaluate_papers_for_project` 根本不调 `analyze_citations`，第三轮在 `cli.py` 的循环里 **已修（`05cfb7d`）：**第三轮搬进 `evaluate_papers_for_project`，加了缓存键与可用性闸门，结果挂在 `paper["citation_analysis"]` |
 | I-025（状态 `done`） | `auto --deploy` 第一步 ssh 拉各设备日志 | 确实调了，但按 I-019 的缺陷它拉回零个文件、只打一条警告——「多设备汇总」这个卖点在默认路径上没有兑现 |
 | I-018 | merge 汇总各设备的内容 | 设备级预摘要只有 `--summarize` 产出，而 `auto.py:195` 不传它，所以那条路在实际流水线里从不执行 |
 | I-015 | 自动修只碰手写内容（怕弄乱生成文件的指纹） | 靠**路径清单**判断（`preflight_check.py:73-81`），从不读文件里的 `gadget_generated` 标记——生成文件放在清单外就会被改 |
 | I-060 | 压缩程序没装时「给出可读的失败」 | 现在是静默跳过（`publish.py:236-238` 打一行字然后返回 0） |
-| I-041（状态 `done`） | 「每个模块自带 tests/ 目录」 | `tools/benchmark/` 没有 tests/（3126 行），`tools/benchmark/AGENTS.md:20` 自己写着「No pytest suite」 |
+| I-041（状态 `done`） | 「每个模块自带 tests/ 目录」 | `tools/benchmark/` 没有 tests/（3126 行），`tools/benchmark/AGENTS.md:20` 自己写着「No pytest suite」 **已修（`546b4a3`）：**`tools/benchmark/tests/` 建起来了，22 个纯 mock 测试（追加式 CSV 语义、计时器剔异常、无 GPU/无 torch 的降级路径），并修了测试查出来的 `get_gpu_info` 只捕 `ImportError` 的问题 |
 | I-016 | 第 7 步就是「提交推送 public/」 | 还有第五道变更判断：`git diff --cached --quiet` 决定到底要不要提交推送 |
 | 跑分中文页 | 站点有中英两份跑分页 | `content/benchmark.zh.md` 是一份固定文件，**没有任何代码再生成它**——中文页一直是陈旧的 |
-| I-038 的产物 | 总览页发到站点 `/dag/` | 产物目录 `tools/website/static/dag/` 在 `.gitignore:43`，也不在 `sync.py` 的 website 同步类目里，所以它只存在于生成它的那台机器；而发布链清空 `public/` 整站重建再 `git add -A` 推送——**任何一台没有这个目录的机器，下一次发布就把线上的 `/dag/` 删掉**。这个功能会被自己的依赖删掉 |
+| I-038 的产物 | 总览页发到站点 `/dag/` | 产物目录 `tools/website/static/dag/` 在 `.gitignore:43`，也不在 `sync.py` 的 website 同步类目里，所以它只存在于生成它的那台机器；而发布链清空 `public/` 整站重建再 `git add -A` 推送——**任何一台没有这个目录的机器，下一次发布就把线上的 `/dag/` 删掉**。这个功能会被自己的依赖删掉 **已修（`0984632`）：**按你的决定把 dag 类目整个从本仓移走，生成归 `../ai-companion` |
 | 预检三档分级 | BLOCK / WARN / FIX 对应退出码 1 / 2 / 就地修 | `preflight_check.py:487` 返回「有警告就 2、否则 0」，而 `publish.py:359-362` 只区分退出码 1——**退出码 2 和 0 完全等价**，警告这一档对流水线没有任何影响 |
-| 压缩的增量 | 只压改动过的媒体 | 时间边界只在推送成功后才前移（`publish.py:374`），所以预检中止或构建失败之后重跑，会对已经压过的图片**再有损压一次**，画质逐次退化 |
+| 压缩的增量 | 只压改动过的媒体 | 时间边界只在推送成功后才前移（`publish.py:374`），所以预检中止或构建失败之后重跑，会对已经压过的图片**再有损压一次**，画质逐次退化 **已修（`bb1eee6`）：****只修了一半**——已经被 pngquant 调色板化的 PNG 现在直接跳过（读 IHDR 颜色类型判断，不需要 Pillow），所以重跑不再反复有损压 PNG；`.last_build` 时间边界那半仍然是 I-062 的提案 |
 | 全图 | — | Hugo 构建是**全量**的：`public/` 每轮清空重建。图里没有任何节点提到这件事，所以前面那些增量判据省的只是翻译和压缩，不是构建 |
 | I-020 的抢救层 | 模型输出跑偏时自动修回合法报告 | 这条链**只保护日报**——`_finalize_report` 的调用点只有 `summarizer.py:460` 与 `503`；周报月报走的是不带抢救的 `timed_llm_call`，只靠渲染器里的类型判断兜着 |
 | I-046 · I-047 · I-050 的 `code:` | 指向三份设计文档 | 三份**都不存在**：`docs/guides/report-quality-rubric.md`（I-046 与 I-050 指的是同一份）与 `docs/ecl/report-structure-redesign.yaml`（`docs/ecl/` 下 19 个文件，没有这个名字） |
 | I-021 的用量抓取 | 通过 ccusage 抓 token 用量 | 版本低于 20 时会**静默在用户机器上跑 `npm install -g ccusage@latest`**，再静默回落到 npx——装全局包成了生成一次日报的副作用 |
-| I-032 的 `what` | 研究周报汇入了「学者画像」 | `generate_daily_report`（`report.py:44-113`）里**没有任何 profile 键**——画像走自己的 `output.py:223-264`，而且用的是 `write_site_content` 不是 `write_bilingual`，**所以画像页一直没有中文孪生页** |
-| I-027 的第三轮 | 引用影响分析是三轮流水线的第三段 | 它根本不在 `evaluate_papers_for_project` 里（那个函数在 `evaluate.py:502` 直接返回），而是 `cli.py:254-269` 的一段内联循环，硬编码只取前 5 篇，没有缓存条目也没有闸门 |
+| I-032 的 `what` | 研究周报汇入了「学者画像」 | `generate_daily_report`（`report.py:44-113`）里**没有任何 profile 键**——画像走自己的 `output.py:223-264`，而且用的是 `write_site_content` 不是 `write_bilingual`，**所以画像页一直没有中文孪生页** **已修（`05d32cf`）：**画像改走 `write_bilingual`，和别的生成页一样出中英一对 |
+| I-027 的第三轮 | 引用影响分析是三轮流水线的第三段 | 它根本不在 `evaluate_papers_for_project` 里（那个函数在 `evaluate.py:502` 直接返回），而是 `cli.py:254-269` 的一段内联循环，硬编码只取前 5 篇，没有缓存条目也没有闸门 **已修（`05cfb7d`）：**同上——上限提成 `MAX_CITATION_ANALYSIS` 常量，进了流水线函数并有了缓存与闸门 |
 | I-045 的硬阻塞 | 「拆分前必须先从 git 历史里清理曾提交过的私人内容与 secrets」，所以受阻 | 这条被**量错了**，而量错正是它一直卡在受阻的原因：实测历史只有 **20 个提交**（4b800f4 → 43a29db），历史上出现过 818 个路径，真正要摘掉的只有 `docs/ecl/dag/` 下 **3 个文件**。而且 `tokens/` 从**第一个提交**起就在 `.gitignore` 里，`git log --all --name-only` 核过——`tokens/` 与 `config.json` **从来没有被提交过**，所以「历史里有 secrets」这个前提本身不成立。一次 gitleaks 当闸门 + 一次对 3 个路径的 `filter-repo`——几小时，不是一个项目 |
-| `I-041` / `I-043` 的验收命令 | 「各套件全绿」「装上就能用」 | **pytest 没有在任何一个可选依赖里声明**（`pyproject.toml` 八个 extras 里 grep 不到它），所以一个干净克隆按 `AGENTS.md` 跑那几条 pytest 命令会直接 `ModuleNotFoundError`——这对「任何人装上就能用」是直接的反例 |
+| `I-041` / `I-043` 的验收命令 | 「各套件全绿」「装上就能用」 | **pytest 没有在任何一个可选依赖里声明**（`pyproject.toml` 八个 extras 里 grep 不到它），所以一个干净克隆按 `AGENTS.md` 跑那几条 pytest 命令会直接 `ModuleNotFoundError`——这对「任何人装上就能用」是直接的反例 **已修（`03dad36`）：**加了 `dev` extra（`pytest>=7.0.0`）；顺带修了 `scripts/smoke.sh` 把真失败当成「缺依赖跳过」的那条裸 `not found` 匹配 |
 | I-043 与 I-045 的关系 | I-045 挂在终点 I-043 之后，且「不被任何终点依赖是预期的」 | 终点说的是「**任何人**下载下来就能用」，而这个仓库是私有的——拆仓是唯一能交付这个结果的路。它不该在终点之后，它是终点的前置 |
 | I-044 的 `how` | 那 474 个测试骨架「pytest 默认不收集」是因为生成方式 | 真实原因是 `.devcompanion` 开头那个点命中了 pytest 的 `norecursedirs` |
 | I-043 的 `verify` | — | 与 I-040 的验证命令**逐字相同**（都是 `bash scripts/smoke.sh` / `0 failed`）。一个终点的验收直接复用了它某个前置的 |
@@ -275,7 +283,7 @@ class O1,O2 out
 | 行号 | `code[].lines` 精确到行 | 系统性多出 2–10 行（多数把尾部空行算进去了）；`I-043` 引 `pyproject.toml 1-80`，而那个文件**总共 28 行** |
 | `research_scout.py` shim | 理由是「MCP Server 兼容，`mcp_server.py` 无需改动」 | 仓里**没有** `mcp_server.py`。而 `research/cache.py` 那个 shim 反过来是真正承重的——7 处活调用 |
 | AGENTS.md / 工具文档 | `weekly_summary.py`·`monthly_summary.py` 是 re-export shim；发布顺序是「压媒体 → 翻译 → 预检」 | 两者都是完整实现（831 + 952 行，各带 `main()`）；翻译是第 1 步，压媒体在它之后 |
-| 未被任何想法认领的代码 | — | `tools/summarize/remote.py`（257）· `daily_summary.py`（110）· `common/html_text.py`（101）· `common/hugo.py`（64）· `common/paths.py`（25）· `translate_documents_batch`（`document.py:162-273`，**零调用方**）· `tools/benchmark/scripts/` 的排行榜提交与入库流水线（609 行，为一个**不存在的** CI 工作流写的——仓里没有 `.github/` 目录）· `scripts/wsl_local_llm_cleanup.sh`（127） |
+| 未被任何想法认领的代码 | — | `tools/summarize/remote.py`（257）· `daily_summary.py`（110）· `common/html_text.py`（101）· `common/hugo.py`（64）· `common/paths.py`（25）· `scripts/language.py`（716）· `translate_documents_batch`（`document.py:162-273`，**零调用方**）· `tools/benchmark/scripts/` 的排行榜提交与入库流水线（609 行，为一个**不存在的** CI 工作流写的——仓里没有 `.github/` 目录）· `scripts/wsl_local_llm_cleanup.sh`（127）。**复核后补：本提案漏了 `scripts/language.py`，已在 I-073 里认领并保留**——它是人手动叫的纠偏侧门（`hugo` 子命令审计并补站点双语对，`reports` 子命令给历史报告改名补译），有自己的测试与冒烟项，只需把审计判定改成调共用的 `wrong_language` |
 
 ## 八 · 逐条审计：60 个想法各自的去向
 
@@ -308,7 +316,7 @@ class O1,O2 out
 | I-019 | 用 ssh 把远端机器的对话日志拉回本机 | 待办 | **删除** | ssh 加 scp 这条通道删掉。它今天是坏的（ssh_pull.py:73 的 glob 少一层目录，拉不到任何文件，而 test_ssh_pull.py:16,18 把这条错路径锁进了测试），而 rclone 那条已经在用并且不要求两台机器同时在线。能力由 I-068 承担。 |
 | I-020 | 模型输出结构跑偏时自动修回合法的报告，而不是崩溃 | 已完成 | **合并** | → I-064。信封拆解、概览回套、列表兜底、重试一次全部原样保留，和 research 那侧的两道闸门合成一套。 |
 | I-021 | 按 AI 工具逐个统计 token 用量并累积历史 | 已完成 | **合并** | → I-065。逐源抓 token 用量原样保留，归一成同一种素材形状。 |
-| I-022 | 把 token 用量画成图表和卡片嵌进报告 | 已完成 | **简化** | → I-070。HTML 用量卡片保留；matplotlib 那张 PNG 删掉——它今天**已经是死代码**（charts.generate_daily_chart 无活调用方，227 行），而 weekly:741 / monthly:875 / period_report.py:152-157 三处还在等它产出的文件。这个想法的状态是 done，但它描述的产物早就没有了。 |
+| I-022 | 把 token 用量画成图表和卡片嵌进报告 | 已完成 | **保留**（原判「简化」，你改了） | → I-070。HTML 用量卡片与 matplotlib PNG **都保留**。原提案主张删 PNG——理由是 charts.generate_daily_chart 当时无活调用方（227 行），而 weekly:741 / monthly:875 / period_report.py:152-157 三处还在等它产出的文件。你的决定是**接上那三处**，已在 `4faab70` 落地：日/周/月三级都生成 PNG，并在 markdown 里插 `![AI Usage · …](/images/{daily,weekly,monthly}/<name>.png)`，否则文件只会被拷进 static/ 而没人引用。 |
 | I-023 | 把一段时间的日报再汇总成周报和月报 | 已完成 | **合并** | → I-070（版式）+ I-062（缓存）。周报月报不再是两份代码，是同一个函数的两份版式数据。 |
 | I-024 | 把报告作为中英双语文章发到博客上 | 已完成 | **合并** | → I-075（发布）+ I-070（成稿）。报告当双语文章发出去这件事不变。 |
 | I-025 | 一条命令跑完从拉日志到发布的整个日报流程 | 已完成 | **合并** | → I-077。原终点之一。 |
@@ -326,7 +334,7 @@ class O1,O2 out
 | I-037 | 用 rclone 在多台设备之间同步数据文件 | 已完成 | **合并** | → I-068。rclone 同步成为全仓唯一的跨机通道，顺带吸收图里没人认领的 tools/summarize/remote.py（257 行，另一套 rclone 参数表）。 |
 | I-038 | 一个带密码保护的网页，总览所有项目的进度 | 进行中 | **移出** | → I-083（blocked，需你先拍板）。能力保留，但搬去 ../ai-companion 生成，本仓只留「它是又一个内容生成器」。今天它是 scripts/sync.py:526-608——一个 rclone 工具里藏着一条调隔壁仓库 TypeScript 脚本的发布链，是全仓唯一一处向仓库外伸手的代码。 |
 | I-039 | 新机器填一张表、跑一条命令就完成全部环境配置 | 已完成 | **合并** | → I-078。装机六步原样保留。 |
-| I-040 | 一条命令快速检查每个工具还能不能正常启动 | 已完成 | **简化** | → I-078。冒烟保留，与装机合并（同一件事的两头：装完就该冒烟，冒烟失败就回去看装机哪步没成）。但它的「缺依赖 vs 真坏了」分类器过宽：smoke.sh:24 的 grep 里那个 `|not found` 会把「文件不存在」「命令不存在」这类真失败报成跳过——而跳过是不会让人去看的。去掉那个分支。 |
+| I-040 | 一条命令快速检查每个工具还能不能正常启动 | 已完成 | **简化** | → I-078。冒烟保留，与装机合并（同一件事的两头：装完就该冒烟，冒烟失败就回去看装机哪步没成）。但它的「缺依赖 vs 真坏了」分类器过宽：smoke.sh:24 的 grep 里那个 `\|not found` 会把「文件不存在」「命令不存在」这类真失败报成跳过——而跳过是不会让人去看的。去掉那个分支。**已修（`03dad36`）。** |
 | I-041 | 不需要网络、GPU 或 API key 也能全部跑通的测试基线 | 已完成 | **合并** | → I-079。纯打桩、不需要网络显卡密钥的基线原样保留。但它标的是已完成而断言「每个模块自带 tests/」——tools/benchmark/ 3126 行至今没有 tests/ 目录，该工具自己的 AGENTS.md:20 写着「No pytest suite」。 |
 | I-042 | 文档中英各一份，给人读的和给 agent 读的分开写 | 进行中 | **简化** | → I-080。结构一字不改，但人工验证换成一条能跑的命令。原来那条（「对照目录确认章节一一对应」）查的正好是已经对的那一半，漏掉的是坏的那一半——内容漂移：tools/website/AGENTS.md:3 写的发布顺序与代码不符，AGENTS.md:40 的 scripts/ 清单漏了两个文件，AGENTS.md:50 少记了一个配置节。真正的工作量是逐个修内容漂移。 |
 | I-043 | 任何人 clone 下来装上就能用的五件套工具箱 | 进行中 | **保留** | → I-081。终点保留，但前置从十四条换成六条：九条已并进别处，另外去掉四条本来就不 gate「别人能不能装」的（测试、用哪个模型 tag、那张总览页），**加上一条原图漏掉的——拆公开/私有两仓**。原图让这个终点在仓库私有的前提下声称「任何人都能装」，而唯一能交付它的节点却挂在它后面。 |
@@ -388,9 +396,12 @@ class O1,O2 out
 `create_project_from_query` 与 `list` 里 `status=='ask'` 的过滤、`--all`、零结果 `rmtree`
 那个分支（`ask` 不再是一种项目）· `scoring_config` 的每次重读与 `set_top_venues` 的
 全局改写（三个加权打分器按「有好默认值就别加旋钮」统一硬编码）·
-翻译时对 `num_ctx` 的覆盖（它现在每次切换都在逼运行时重载）·
-`repair_json_with_llm` 里那条 haiku→sonnet→opus 升级链（默认后端会丢掉 model 参数，
-所以它今天就是把同一个调用发三遍）。
+翻译时对 `num_ctx` 的覆盖（**已删，`8300726`**：现在只有显式设了
+`OLLAMA_TRANSLATION_NUM_CTX` 才发，不设就由已加载的运行时上下文说了算）·
+`repair_json_with_llm` 里那条 haiku→sonnet→opus 升级链的**三个写死的模型名**
+（默认后端会丢掉 model 参数，所以它今天并不是三级升级，而是同一个模型重采样三次）
+——**注意删的是那个假象，不是那三次重试**：重采样本身有用，换成
+「一次修复调用，失败重采样重试 N 次」。
 （frontmatter 的模型复核本来在这张单子上，已经撤回——见第十三节第 1 条。）
 
 **顺手该删的死代码（不损失任何能力，约 1,400 行）**
@@ -398,7 +409,7 @@ class O1,O2 out
 
 | 处 | 行数 | 为什么是死的 |
 |---|---|---|
-| `tools/summarize/charts.py` + 三处悬空消费点 | ~250 | 无活调用方；而 `weekly:741`、`monthly:875`、`period_report.py:152-157` 还在等它产出的 PNG |
+| ~~`tools/summarize/charts.py` + 三处悬空消费点~~ | ~~~250~~ | **撤回（`4faab70`）**：按你的决定接上而不是删——三级都生成 PNG 并插链接，它现在有活调用方了 |
 | `common/translation/document.py:162-273` `translate_documents_batch` | 112 | 第二套整文档翻译流水线，零调用方 |
 | `tools/benchmark/scripts/` 排行榜提交与入库 | 609 | 为 `.github/workflows/daily-publish.yml` 写的，而仓里**没有 `.github/` 目录** |
 | `weekly/monthly` 的影子缓存包装函数 4 个 | ~30 | `run_cached_period_llm` 早就取代了它们 |
@@ -407,7 +418,7 @@ class O1,O2 out
 | `translator/core.count_chunks` | 10 | 重复实现了已导出的 `common.count_translation_chunks` |
 | `research/config.py:223-230` `resolve_output_dir` · `openreview_client.py:51` `SEARCH_YEARS` | ~15 | 零调用方 / 零消费者 |
 | `sync.py` 的 `CATEGORY_ALIASES`（`test`→`benchmark`）+ 三个只服务这一个别名的函数 | ~20 | 一个改名的遗留；旧对象本来也没迁移 |
-| `sync.py:99,119` 同步一个没人写的跑分 CSV 路径 | — | 真实路径是 `tools/benchmark/benchmark_results.csv`；而 `TUTORIAL.md`（中英）与 `docs/reference/tools.md` 共 7 处还在教用户去看那个不存在的路径 |
+| ~~`sync.py:99,119` 同步一个没人写的跑分 CSV 路径~~ | — | **已修（`93dee44`）**：改指 `tools/benchmark/benchmark_results.csv`，并加了一条从 `BenchmarkResults` 反推期望路径的测试，两边再漂移就会红 |
 | `--summarize` 设备级预摘要 | — | 唯一的产出者，但 `auto.py:195` 不传它，所以实际流水线里从不执行 |
 
 **移出本仓 —— 1 个**
@@ -420,14 +431,14 @@ class O1,O2 out
 | 1 | `--api anthropic` / `--api claude_cli` 用 Claude 生成报告 | 只剩 `ollama` 与 `openai`；要用 Claude 得经一个 OpenAI 协议兼容网关 | **中，待你拍板。** 仓库的既定默认是全本地无密钥，云端那条本来就是二等公民（`call_openai` 刻意停在 `json_object`，因为云端的严格 schema 会拒掉这些定义） |
 | 2 | 只装了 vLLM 或只有 GGUF 的机器自动选到对应后端翻译 | 要么跑 Ollama，要么 `pip install transformers` | 小。没有证据表明这两条路在任何一台在用的机器上被选中过；`llamacpp` 连批量都没实现 |
 | 3 | `auto` 用 ssh 去远端跑导出再 scp 回来 | 每台机器自己定时导出并 rclone 推到远端，汇总机拉下来 | 小，而且是修好不是退化：今天那条 scp 路径少一层目录，拉回零个文件；而 `onboarding.py:84-101` 已经把 rclone 远端做成 `auto` 的硬性前置了 |
-| 4 | 报告里嵌一张 matplotlib 的 PNG | 只有 HTML 用量卡片 | **无。** 那条路今天已经是死的 |
+| 4 | 报告里嵌一张 matplotlib 的 PNG | ~~只有 HTML 用量卡片~~ **撤回：两个都要** | **无变化（`4faab70`）。** 原提案要删，你决定接上——现在日/周/月三级都出 PNG 并在正文插链接，HTML 卡片照旧 |
 | 5 | `touch` 一个媒体文件强制重压 | 只有内容真的变了才压；要强制就加显式的 `--force` | 小，但是行为变化，写出来 |
 | 6 | `GADGET_DEFER_HUGO_UPDATE=1` 控制中间步骤不构建站点 | 不需要了——整条链里发布只在最后调一次 | 无。这个开关存在的唯一原因是每一步各自会去发布 |
 | 7 | `scripts/sync.py --category dag` 在本仓生成并发布进度总览页 | 这条命令从本仓消失，生成移到 ai-companion | **中，待你拍板。** 能力不删，换仓库 |
 | 8 | 周报和月报各一份 Python 文件，可单独改其中一份的渲染 | 两份合一，差异在版式数据里改 | 小，但顺序要对：这次合并曾因「没有单元覆盖、回归风险高」被拒过一次，所以 I-070 的前置是 I-079（补测试），不能倒 |
 | 9 | 预检的可修档会就地补出缺的那一侧语言 | 预检只报不修，补齐统一发生在发布链第一步 | **小，而且是修好：**今天这第二份实现不写状态文件，它补出来的那一对下一轮会被再翻一遍 |
 | 10 | frontmatter 翻完会再跑一次模型复核 | **本轮不动**；等 I-071 的判据立起来后量一次再定 | 本来想删（保证由那条确定性闸门给，不是复核给），但「没人发现它关掉了」有两种解释，今天分不出来——见第十三节第 1 条。所以这一条从「删」退回「先量」 |
-| 11 | 每次「总结↔翻译」切换，Ollama 重载一次运行时（约 10 秒） | 不重载 | **这是修好，不是变化。** 停掉翻译对 `num_ctx` 的覆盖即可；前提（两个模型抢显存）早就不存在了 |
+| 11 | 每次「总结↔翻译」切换，Ollama 重载一次运行时（约 10 秒） | 不重载 | **已修（`8300726`）。** 停掉翻译对 `num_ctx` 的覆盖；前提（两个模型抢显存）早就不存在了。`keep_alive` 与 `GADGET_TRANSLATION_CONCURRENCY` 两个旋钮都没动 |
 | 12 | 换翻译模型或改措辞后，要有人去改 `common/bilingual.py` 的版本号才能让整站重译 | 指纹带上配方版本，自己失效；另加一个 `--retranslate` | 小，而且是 I-072 那一轮的必要条件 |
 | 13 | 翻译界面的模型下拉框列 HuggingFace 仓库名 | 列本机 `ollama list` 的 tag | 小，而且是修好：今天选非默认那项会悄悄卸掉聊天模型 |
 | 14 | 预检中止或构建失败后重跑，已压过的图片会被再压一次 | 压完立刻记账，不再二次压 | **这是修好。** 今天每次中途失败都让图片画质再降一档 |
@@ -507,7 +518,7 @@ class O1,O2 out
 | 受阻节点 | 1（阻塞量错了） | 0（重新量过，改成待办） |
 | 干净克隆能否跑文档里写的测试命令 | 不能（pytest 没在任何 extras 里声明） | 能 |
 | 同一份 CSV 表头声明几次 | 3（零处交叉校验） | 1 |
-| 没有调用方/驱动者的代码 | 约 1,400 行 | 0 |
+| 没有调用方/驱动者的代码 | 约 1,400 行（`charts.py` 的 ~250 行改成接上，实删约 1,150） | 0 |
 
 但真正的理由不是这些数字，是**能一口气读完**：
 四种原料进来 → 统一成素材 → 本地模型读成结构 → 渲染成稿 → 翻成两份 → 过那道门 → 发布。
@@ -552,5 +563,41 @@ class O1,O2 out
 | `ideas/graph.claude.html` | 生成物，不手改。批准并写进 `graph.yaml` 后由 `render` 重新生成 |
 | `ideas/log.md` · `log.claude.md` | 只追加，不动 |
 | `.companion/FORMAT.md` | 本提案的格式依据。遵守：D5 编号不复用 · 八个问题 · `steps` 三到七步且每步说得出新增的能力 · 终点节点以「终点：」开头 · 一个想法一个节点一种边 |
-| 代码 | **完全没动。** 本阶段是设计 |
+| 代码 | 本文件写成时完全没动。之后按你「去做哪些没有做的、或者做错的 case」的要求，审计查出的 10 处缺陷已经修掉，分成 11 个提交（`5da90f3`..`e7fd4d5`）——**逐条见附二**。23 个节点那套结构本身还没有被实现，仍等你批准 |
 
+
+---
+
+## 附二 · 本提案写成之后已经落地的改动
+
+本文件最初写成时一行代码都没改。之后你让我「去做哪些没有做的、或者做错的 case」，
+于是审计查出的缺陷按**从证据最硬到最软**的顺序逐条修掉了。
+**每一条都用变异测试验过**：先把修好的代码临时改坏，确认新测试变红，再还原。
+架构本身（六步主路、23 个节点）**没有动**，仍然等你批准。
+
+| # | 提交 | 修的是审计里的哪一条 | 做了什么 | 新测试 |
+|---|---|---|---|---|
+| 1 | `5da90f3` | 第六节「怎么把别的机器上的素材弄过来」：`ssh_pull.py:73` 的 glob 少一层目录，拉回零个文件，而测试断言的正是这条错路径 | 远端相对路径改成从 `_DEFAULT_LOGS_DIR` 反推（`GADGET_ROOT` 相对化，带 `ValueError` 兜底），测试跟着改对 | `test_ssh_pull.py` |
+| 2 | `03dad36` | 第七节：pytest 没在任何 extras 里声明，干净克隆跑不了文档写的测试命令；`smoke.sh` 还把真失败当「缺依赖跳过」 | 加 `dev` extra；`smoke.sh` 的缺依赖匹配去掉裸 `not found` 那一支 | — |
+| 3 | `8300726` | 第七节 I-008 整条：`num_ctx` 压到 8192 逼 Ollama 每次切换重载运行时 | 只有显式设了 `OLLAMA_TRANSLATION_NUM_CTX` 才发 `num_ctx`；超长提示词护栏拆成「钉住了就抬 / 没钉住只告警」两条——直接删那一行会让 `options.get("num_ctx", 0)` 读到 0，每个请求都判超、比原 bug 更糟 | `test_engine_ollama.py` |
+| 4 | `05d32cf` | 第七节 I-032：学者画像走 `write_site_content`，所以从来没有中文孪生页 | 改走 `write_bilingual`，`force`/`overwrite_human` 一并接上 | `test_profile_publish.py` |
+| 5 | `bb1eee6` | 第七节「压缩的增量」的一半：重跑会对已压过的图片再有损压一次 | 读 PNG 的 IHDR 颜色类型（不需要 Pillow），已经被 pngquant 调色板化的直接跳过 | `test_compress_idempotent.py` |
+| 6 | `0984632` | 第七节 I-038：`/dag/` 会被自己的依赖删掉 | 按你的决定把 dag 类目整个从本仓移走（`sync.py` 去掉 122 行，`.gitignore`、两份 `TUTORIAL` 与 `docs/reference/tools.md` 同步），生成归 `../ai-companion` | — |
+| 7 | `05cfb7d` | 第七节 I-027：第三轮引用影响分析根本不在流水线函数里，硬编码前 5 篇、无缓存无闸门 | 搬进 `evaluate_papers_for_project`，上限提成 `MAX_CITATION_ANALYSIS` 常量，加缓存键与可用性闸门，结果挂 `paper["citation_analysis"]` | `test_citation_stage.py`（9 个） |
+| 8 | `4faab70` | 第七节 I-022：PNG 路径已死，三处代码在等一个没人写的文件 | **按你的决定接上而不是删**：日/周/月三级都生成 PNG，并在 markdown 里插 `![AI Usage · …](/images/{daily,weekly,monthly}/<name>.png)`——只传 `chart_path` 会让文件被拷进 `static/` 却没人引用 | `test_usage_chart_wired.py`（7 个，含 AST 可达性断言） |
+| 9 | `546b4a3` | 第七节 I-041：`tools/benchmark/`（3126 行）没有 tests/ | 建 `tools/benchmark/tests/`，22 个纯 mock 测试（追加式 CSV 语义、计时器剔异常、无 GPU/无 torch 的降级路径）；顺带修了测试查出来的 `get_gpu_info` 只捕 `ImportError`——一个厂商探测炸掉会吞掉另外两个 | 22 个 |
+| 10 | `93dee44` | 第九节死代码表：`sync.py` 同步一个没人写的跑分 CSV 路径 | 改指 `tools/benchmark/benchmark_results.csv`，加一条从 `BenchmarkResults` 反推期望路径的测试——两边再漂移就会红。**同时更正我自己的一个错判**：我曾说那份 CSV「在版本控制之外」，实际上它从第一个提交起就是被跟踪的（155 行），错误源头是想法图 I-055 | `test_sync.py` |
+| 11 | `e7fd4d5` | 第 3 条的文档尾巴 | `docs/guides/summarize-local-llm.md` 里两条还在讲旧行为的说明改掉（不再有「默认 8192」，也不再讲「共驻」） | — |
+
+**验证状态**（全绿）：
+`common/tests + scripts/tests` 123 passed ·
+`tools` 各套件 290 passed / 1 skipped ·
+`tools/benchmark/tests` 22 passed ·
+`bash scripts/smoke.sh` 18 passed / 0 skipped / 0 failed。
+
+**还没做的**：第十一节那六件要你拍板的事一件都没动（`anthropic` 后端去留、
+`daily_summary.py` 与 `common/html_text.py` 的归属、跑分排行榜那 609 行的驱动者、
+`--summarize` 设备级预摘要）；23 个节点的合并本身也一个都没开始。
+另有一处标成高风险、刻意没动：让 `resolve_ollama_tag` 认它的参数、
+同时对没 pull 的 tag 硬报错——这会把今天「故意忽略抽象名字」（`json_utils` 传的
+sonnet/haiku/opus）变成硬失败，必须和调用方的改动在同一个提交里做。

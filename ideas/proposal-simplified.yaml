@@ -112,11 +112,18 @@ ideas:
       {global_hash, total_chunks}。加上它之后把块缓存、.last_build、
       .translation_state.json 三处逐个换成 DiskCache；
       站点文件的 src-hash 标记保留，但它唯一的职责变成「产物自证来历」，不再兼任缓存。
+      **research 的检索缓存也不并进来**：审计后复核发现它的文件名布局本身就是数据——
+      load_known_paper_ids（search.py:123）按 `<日期>_<项目>[_<来源>]_search.json` 去 glob
+      整个缓存目录，把历史上出现过的 paper_id 全收起来当「这篇是不是已经推过了」的去重账。
+      内容哈希取键没有日期这一维、也没有可枚举的项目范围，换过去这本账就没东西可扫了。
+      所以它留在原地，职责写清楚：**它是按日期分区的去重账本，顺带充当当日缓存**，
+      不是第八套「算过了吗」。
     why_this_way: >
-      留两种机制而不是一种，是因为它们答的是两个问题：缓存答「这次要不要算」，
-      文件里的标记答「盘上这个文件是从哪份源内容来的」。后者必须跟着产物走，
-      否则删一次缓存目录就会把整站重译一遍。其余三个状态存放点答的都是第一个问题，
-      所以并掉。
+      留三种机制而不是一种，是因为它们答的是三个不同的问题：缓存答「这次要不要算」，
+      文件里的标记答「盘上这个文件是从哪份源内容来的」，检索缓存的日期分区答
+      「这篇论文以前推过没有」。后两个都必须跟着各自的数据走——删一次缓存目录，
+      前者会把整站重译一遍，后者会把所有旧论文当成新的再推一次。
+      其余三个状态存放点答的都是第一个问题，所以并掉。
     code:
       - file: common/cache.py
         symbol: skip_if_unchanged
@@ -135,6 +142,10 @@ ideas:
           合并自 I-002、I-013 的 .last_build 判据、I-014 的状态文件、I-023 的
           source_hash、I-026/I-027 的缓存闸门、I-011 的跳过判据。
           实测依据：grep 到 15 个非测试文件在各自实现这件事。
+      - date: "2026-09-15"
+        by: ccthink
+        note: >
+          复核后加了一条豁免：research 的检索缓存不并进内容哈希缓存——load_known_paper_ids 靠它的日期分区文件名当去重账本，换取键方式这本账就没了。
 
   - id: I-063
     step: 共用底座
@@ -153,7 +164,9 @@ ideas:
       「翻译用哪个本机运行时」留 ollama 与 transformers 两个（删 vLLM 与 llama.cpp，
       以及只服务后三个的抽象基类）。
       **并且停止为翻译覆盖 num_ctx**：详见下面「为什么这样实现」——那个旋钮现在是在帮倒忙。
-      keep_alive 与固定 4 路并发保留。
+      （这一条已经在 8300726 落地了，本节点余下部分仍是提案。）
+      keep_alive 与固定 4 路并发保留——**这两个旋钮都不动**，
+      GADGET_TRANSLATION_CONCURRENCY 也照旧可调。
     why: >
       今天是两套并行的模型栈、八个后端：聊天四个（ollama / anthropic / openai /
       claude_cli），翻译四个（ollama / vLLM / llama.cpp / transformers，engine/ 共 966 行，
@@ -209,6 +222,11 @@ ideas:
       单次请求的 num_ctx），原生接口却会认它。结果是每次「总结↔翻译」切换都逼 Ollama
       重载一次运行时——正是这个想法声称要省掉的那约 10 秒，现在每次切换都在付。
       所以这里停掉 num_ctx 覆盖，不是省事，是修 bug。
+      **这一条已经做掉了**（8300726）：现在只有显式设了 OLLAMA_TRANSLATION_NUM_CTX 才发
+      num_ctx，不设就由已加载的运行时上下文说了算。顺带记一个当时差点踩进去的坑：
+      直接删掉那行 options["num_ctx"] 会让后面的 options.get("num_ctx", 0) 读到 0，
+      于是每个请求都判成「超了」去抬高上下文并重载——比原来的 bug 更糟。
+      所以实现上是把超长提示词的护栏拆成两条：钉住了就抬，没钉住只告警。
     code:
       - file: common/engine/ollama.py
         symbol: resolve_ollama_tag
@@ -230,6 +248,10 @@ ideas:
         note: >
           合并自 I-003、I-006、I-008、I-051、I-052、I-053。
           删掉的能力已逐条列在 ideas/proposal-simplified.md 的「行为会变的地方」里。
+      - date: "2026-09-15"
+        by: ccthink
+        note: >
+          停掉翻译 num_ctx 覆盖那一条已经在 8300726 落地，本节点其余部分仍是提案；同时写明 keep_alive 与并发这两个旋钮都不动。
 
   - id: I-064
     step: 共用底座
@@ -247,8 +269,12 @@ ideas:
       「别把一次失败冻成缓存里的权威结果」这条纪律也被发明了四次，四种形状：
       检索用 None 与空列表的返回约定、筛选与深评用结果形状闸门、
       insight 用「成功才写」、common 的块缓存用「拒绝 parse_error」——
-      收成一个 cache_if(结果, 可用吗)，所有阶段共用一个闸门，
-      硬失败直接抛异常，而不是返回一个每个调用方都要记得判一次的特殊值。
+      收成一个 cache_if(结果, 可用吗)，所有阶段共用一个闸门。
+      **但收的只是「要不要写进缓存」那一半，不是返回约定那一半**——审计后复核发现
+      search.py:748 的 None-vs-[] 还兼着第二个职责：单个来源硬失败时它记一条警告并返回 []，
+      让另外两个来源的结果照常回到调用方。所以「硬失败直接抛异常」只适用于单次调用这一层；
+      多来源检索那一层保持「一个源塌了不拖垮另外两个」，
+      由 collect_papers（I-066）按来源逐个 try 承接。
       还有一件更要紧的：这整条抢救链**今天只保护日报**——_finalize_report 的调用点只有
       summarizer.py:460 与 503，周报月报走的是不带抢救的 timed_llm_call，
       只靠渲染器里的类型判断兜着。所以把它收进 common/ 不只是去重，
@@ -269,9 +295,12 @@ ideas:
       一起上提到 common/llm.py，合成一个 call_llm_structured(材料, schema, prompt)；
       summarize 与 research 两侧都改成调它，各自只留自己的 schema 与 prompt。
       三处顺手的收拢：约束解码那 23 行**一个字不动**（它是唯一「防止」而不是「事后补救」
-      的机制，也是唯一有实测表和测试的）；修复梯只留两步（try_parse_json 的三级非 LLM 修复
-      + 一次交给模型重排），把 repair_json_with_llm 里那条 haiku→sonnet→opus 升级链删掉
-      ——默认后端会丢掉 model 参数，所以它今天就是把同一个调用发三遍；
+      的机制，也是唯一有实测表和测试的）；修复梯只留两步（try_parse_json 的三级非 LLM 修复 + 一次交给模型重排，
+      失败再重采样重试 N 次、默认 N=3），把 repair_json_with_llm 里那条
+      haiku→sonnet→opus 升级链**换掉而不是删掉**——默认后端会丢掉 model 参数，
+      所以它今天并不是三个模型依次升级，而是同一个模型重采样三次。
+      重采样本身是有用的（采样带随机性，第二次可能就解析得开），
+      删的是「这是在升级模型」这个假象和那三个写死的名字，**不是那三次重试**；
       chunk_text 多一个 length_of 回调，summarize 里那份 chunk_conversations 的抄写随之消失；
       超时判定那 6 行抽成一个 helper（今天在 llm.py:463 / 563 / 585 抄了三遍，
       而且每份都写着 except (subprocess.TimeoutExpired, Exception)——那等于 except Exception）。
@@ -295,6 +324,10 @@ ideas:
       - date: "2026-09-12"
         by: ccthink
         note: "合并自 I-004、I-005、I-020、I-027 的两道缓存闸门，以及 json_utils 的修复梯。"
+      - date: "2026-09-15"
+        by: ccthink
+        note: >
+          复核后收窄了两处：「硬失败直接抛异常」只管单次调用，多来源检索保留「一个源塌了不拖垮另外两个」；修复梯那条升级链是换成重采样重试，不是把三次重试一起删掉。
 
   # ─────────────────────────── 取素材 ───────────────────────────
   - id: I-065
@@ -729,6 +762,10 @@ ideas:
       common/bilingual.py 作为唯一入口，内部依次调 common/translation/ 下的
       protect / document / frontmatter；tools/website/translate_site_batch.py 瘦成
       「扫出成对文件、逐对调 write_bilingual」，删掉 plan_pair 与状态文件那一套。
+      **scripts/language.py（716 行）归这个节点管，而且留着**——它不在发布链上，
+      是人手动叫的纠偏工具（hugo 子命令审计并补站点的双语对，reports 子命令给历史报告
+      改名并补译），有自己的测试与冒烟项。它要改的只有一处：审计判定从自己那份
+      改成直接调 common 的 wrong_language，跟别的入口用同一道闸门。
     why_this_way: >
       判定放在「结果落盘之前」而不是「模型返回之后」，是因为它判的是结果、
       不关心是谁产生的——站点批量翻译、日报发布、翻译网页三个入口共用同一道闸门。
@@ -760,6 +797,10 @@ ideas:
         note: >
           合并自 I-007、I-009、I-010、I-011、I-014。
           I-014 的 .translation_state.json 被删掉：它与文件里的指纹回答的是同一个问题。
+      - date: "2026-09-15"
+        by: ccthink
+        note: >
+          把 scripts/language.py 明确归到这个节点并保留——它是手动纠偏侧门，只改成调共用的 wrong_language。
 
   - id: I-074
     step: 翻成两种语言并发到站上
@@ -767,9 +808,13 @@ ideas:
     status: done
     needs: [I-062]
     what: >
-      所有生成的站点内容都经同一个函数写进 tools/website/content|static，
-      每个文件盖 gadget_generated: true。写入前先判归属：目标路径上是没有标记的人写文件
-      就抛错停下；强制覆盖前先备份并记一笔账。归属只认文件里的标记，不认目录约定。
+      所有生成的站点内容都经同一个函数写进 tools/website/content|static。
+      **两棵树的判据不同，这是刻意的**：content/ 里每个文件盖 gadget_generated: true，
+      写入前先判归属——目标路径上是没有标记的人写文件就抛错停下，
+      归属只认文件里的标记、不认目录约定；static/ 里放的是 PNG、CSS 这类没地方盖标记的
+      二进制与资源文件，归属按命名空间划分（images/{daily,weekly,monthly}、
+      benchmark-report 各归各的流水线），写入不设人写内容闸门。
+      两棵树上强制覆盖都先备份。
     why: >
       生成内容和手写文章住在同一棵内容树里，而那棵树是不进版本库的——
       一次路径写错就能悄悄把一篇手写博客替换成自动日报，覆盖了找不回来。
@@ -781,7 +826,8 @@ ideas:
       common/site_staging.py 与 common/website_backup.py 合成一份 common/site.py
       （两者一共 293 行，且只被彼此和落站调用），对外只露 write_site_content /
       copy_site_static 两个函数。另外三件事要一起做：
-      （一）归属只认文件里的 gadget_generated 标记，只经 classify_file 一个入口读；
+      （一）content/ 的归属只认文件里的 gadget_generated 标记，只经 classify_file
+      一个入口读（static/ 不走这条——它没有可盖标记的地方，见上）；
       tools/website/generated_paths.py 降级成纯性能捷径（省去读几千个文件），
       由 publish / preflight / translate_site_batch **统一 import** 并用同一套匹配语义
       ——今天三个消费者三种语义，而 publish.py:128-135 还额外按文件名匹配，
@@ -813,6 +859,10 @@ ideas:
       - date: "2026-09-12"
         by: ccthink
         note: "原样保留 I-012 的能力；只把 site_staging.py 与 website_backup.py 两份文件并成一份。"
+      - date: "2026-09-15"
+        by: ccthink
+        note: >
+          复核后把「只认标记」收窄到 content/；static/ 没有可盖标记的地方，归属本来就是按命名空间划分的（copy_site_static 的 docstring 写着）。
 
   - id: I-075
     step: 翻成两种语言并发到站上
