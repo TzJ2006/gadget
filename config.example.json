@@ -78,7 +78,8 @@
     "default_lookback_days": 7,
     "default_max_results": 50,
     "default_top_papers_in_report": 5,
-    "max_high_relevance": 20,
+    "default_max_high_relevance": 20,
+    "default_max_citation_analysis": 5,
     "default_insight_top_n": 3,
     "semantic_scholar_api_key": ""
   },
