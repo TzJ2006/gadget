@@ -295,7 +295,7 @@ features:
         - "Frontmatter matched by a leading --- ... --- block; absent it, split_frontmatter returns ('', text)"
         - "Always-translatable keys: summary: and description:; title:/keywords:/tags:/categories: are included only when translating TO English (include_labels=target_lang=='en')"
         - "Protected fragment order: fenced code, Hugo shortcodes, HTML comments, inline code, then http(s) URLs"
-        - "chunk_ceiling is 5000 chars for zh source (CJK token density vs Ollama num_ctx 8192) and 7000 for en"
+        - "chunk_ceiling is 5000 chars for zh source (CJK token density) and 7000 for en. It no longer tracks an Ollama num_ctx default: translation sends num_ctx only when OLLAMA_TRANSLATION_NUM_CTX is pinned, otherwise the loaded runner context governs"
         - "detect_language: CJK (U+4E00..U+9FFF) ratio > 5% => 'zh', else 'en'; empty => 'en'"
         - "validate_translated_output rejects output shorter than 15% of original, marker-only garbage, missing frontmatter delimiters, and same-language echo (wrong_language)"
         - "Frontmatter-field translations use max_new_tokens=512; body chunks use 4096"
@@ -1208,21 +1208,22 @@ features:
   # ===== Scripts / ops =====
 
   - feature: "Rclone Data Synchronization"
-    description: "scripts/sync.py push/pull/status/bootstrap/config plus a special --category dag that builds an encrypted DAG site from ../ai-companion and triggers website update. Categories: summarize, website, research, benchmark, backups. Pre-2026-08 alias test still maps to benchmark."
+    description: "scripts/sync.py push/pull/status/bootstrap/config. Categories: summarize, website, research, benchmark, backups. Pre-2026-08 alias test still maps to benchmark. The --category dag path (encrypted DAG site built from ../ai-companion) was removed: its output directory is gitignored and unsynced, so every publish from another machine deleted the live page."
     purpose: "Cross-device data sync against one rclone remote; new machines bootstrap from that remote."
     implementation:
-      approach: "sync section of repo-root config.json (rclone_remote, rclone_path). SYNC_DIRS maps local trees; SYNC_FILES staged then copied. bootstrap writes a minimal sync section, rclone lsd, pulls remote config/config.json → local config.json, optional tokens, then all data. dag is not GDrive sync: npx tsx ../ai-companion/scripts/build-dag-site.ts stage (STATICRYPT_PASSWORD) then update.sh."
+      approach: "sync section of repo-root config.json (rclone_remote, rclone_path). SYNC_DIRS maps local trees; SYNC_FILES staged then copied. bootstrap writes a minimal sync section, rclone lsd, pulls remote config/config.json → local config.json, optional tokens, then all data."
       key_files:
         - "scripts/sync.py"
       constraints:
         - "Config is repo-root config.json section sync — not ~/.config/gadget/sync.json"
         - "get_remote() sys.exit(1) if rclone_remote is unset (no silent derive from summarize except historically; current code is fail-fast)"
-        - "--category dag is accepted at top-level; push/pull/status choices are SYNC_DIRS keys plus alias test→benchmark (rclone_category_choices)"
-        - "SYNC_DIRS/SYNC_FILES key for the benchmark bucket is 'benchmark' (local outputs/data/benchmark; remote benchmark/data). CATEGORY_ALIASES maps test→benchmark; old GDrive test/ objects are not auto-migrated"
+        - "push/pull/status choices are SYNC_DIRS keys plus alias test→benchmark (rclone_category_choices)"
+        - "SYNC_DIRS/SYNC_FILES key for the benchmark bucket is 'benchmark'. SYNC_DIRS[benchmark] is empty — the ledger is the tracked file tools/benchmark/benchmark_results.csv, mapped in SYNC_FILES to remote benchmark/data/. CATEGORY_ALIASES maps test→benchmark; old GDrive test/ objects are not auto-migrated"
         - "rclone binary required on PATH (or sync.rclone_path); missing → hard exit"
         - "status performs network I/O (rclone check) but no writes"
         - "tokens/ and config backup are opt-in (--include-tokens / --include-config)"
-        - "AI_COMPANION_ROOT env overrides the sibling ../ai-companion path for dag"
+        - "APPEND_ONLY_FILES: pull append-merges tools/benchmark/benchmark_results.csv instead of replacing it (a whole-file copy would discard rows this machine added since its last push); mismatched headers refuse to merge"
+        - "status walks both SYNC_DIRS and SYNC_FILES, so a category whose mappings are all files is still reported"
         - "BOOTSTRAP_CONFIGS pulls remote config/config.json onto the unified root config path"
     entry_points:
       - "python scripts/sync.py push|pull|status"
@@ -1237,7 +1238,7 @@ features:
       - "cmd_status"
       - "cmd_bootstrap"
       - "cmd_config"
-      - "sync_dag"
+      - "merge_append_only_csv"
       - "resolve_category"
       - "rclone_category_choices"
 

@@ -22,6 +22,7 @@ from research.scout.config import (
     MAX_PAPERS_PER_PROJECT,
     TOP_PAPERS_IN_REPORT,
     MAX_HIGH_RELEVANCE,
+    MAX_CITATION_ANALYSIS,
     DEFAULT_LANGUAGE,
     load_scout_config,
     resolve_param,
@@ -690,7 +691,10 @@ def _config_show():
     print(f"  default_lookback_days:    {cfg.get('default_lookback_days', DEFAULT_LOOKBACK_DAYS)}")
     print(f"  default_max_results:      {cfg.get('default_max_results', MAX_PAPERS_PER_PROJECT)}")
     print(f"  default_top_papers_in_report: {cfg.get('default_top_papers_in_report', TOP_PAPERS_IN_REPORT)}")
-    print(f"  max_high_relevance:       {cfg.get('max_high_relevance', MAX_HIGH_RELEVANCE)}")
+    # resolve_param reads "default_<name>", so show the key that actually wins
+    # — the bare name displayed here made an inert config entry look effective.
+    print(f"  default_max_high_relevance:   {cfg.get('default_max_high_relevance', MAX_HIGH_RELEVANCE)}")
+    print(f"  default_max_citation_analysis: {cfg.get('default_max_citation_analysis', MAX_CITATION_ANALYSIS)}")
     s2k = cfg.get("semantic_scholar_api_key", "")
     print(f"  semantic_scholar_api_key: {'****' + s2k[-4:] if len(s2k) > 4 else '(未设置)' if not s2k else s2k}")
 
