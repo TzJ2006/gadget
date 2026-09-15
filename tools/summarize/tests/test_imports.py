@@ -1,38 +1,17 @@
 """Migration smoke test — verifies all external import contracts survive the refactor.
 
 Run BEFORE and AFTER the split to ensure nothing broke.
+
+The daily_summary groups are gone with the shim they guarded. They asserted two
+consumers: mcp_server.py, which is not in this repository and never has been,
+and monthly/weekly, which do not import it (grep both files -- they reach for
+common/ and summarize submodules directly). weekly_summary and monthly_summary
+remain real implementations, so their contracts below still mean something.
 """
 
 import importlib
 import pytest
 
-
-# ── Symbols that mcp_server.py imports from daily_summary ──────────────
-DAILY_SUMMARY_SYMBOLS = [
-    "discover_all_dates",
-    "_resolve_output_dir",
-    "collect_conversations",
-    "_get_device_name",
-    "_atomic_write",
-    "_call_summarize",
-    "_sort_report_by_importance",
-    "generate_markdown",
-    "save_report",
-    "MERGE_PROMPT_PREFIX",
-    "SUMMARY_PROMPT",
-    "MERGE_DEVICE_SUMMARY_PREFIX",
-    "ChunkTimeoutError",
-    "load_ccusage_for_date",
-    "_merge_token_usages",
-]
-
-# ── Symbols that monthly_summary.py / weekly_summary.py import ─────────
-DAILY_SHARED_SYMBOLS = [
-    "_atomic_write",
-    "_resolve_output_dir",
-    "_load_config",
-    "run_hugo_update",
-]
 
 MONTHLY_SYMBOLS = [
     "format_reports_for_llm",
@@ -55,20 +34,6 @@ WEEKLY_SYMBOLS = [
     "generate_weekly_markdown",
     "save_weekly_report",
 ]
-
-
-@pytest.mark.parametrize("symbol", DAILY_SUMMARY_SYMBOLS)
-def test_daily_summary_exports(symbol):
-    """mcp_server.py depends on these symbols from daily_summary."""
-    mod = importlib.import_module("summarize.daily_summary")
-    assert hasattr(mod, symbol), f"daily_summary missing: {symbol}"
-
-
-@pytest.mark.parametrize("symbol", DAILY_SHARED_SYMBOLS)
-def test_daily_shared_exports(symbol):
-    """monthly/weekly depend on these symbols from daily_summary."""
-    mod = importlib.import_module("summarize.daily_summary")
-    assert hasattr(mod, symbol), f"daily_summary missing: {symbol}"
 
 
 @pytest.mark.parametrize("symbol", MONTHLY_SYMBOLS)

@@ -435,7 +435,6 @@ summarize/                   # pip-installable package (python -m summarize)
 ├── auto.py                  # Full-pipeline automation: daily export → merge → weekly → monthly
 ├── monthly_summary.py       # Monthly summary (generate / list)
 ├── weekly_summary.py        # Weekly summary (generate / list)
-├── daily_summary.py         # Backward-compat re-export shim (old import paths still work)
 ├── llm_backends.py          # Re-export shim → common/
 ├── requirements.txt         # Python dependencies
 └── tests/                   # pytest test suite
@@ -485,7 +484,7 @@ pip install -e .
 pip install -r tools/summarize/requirements.txt
 ```
 
-> **CLI usage change**: After the refactor, the recommended form is `python -m summarize daily ...`. The old `python tools/summarize/daily_summary.py ...` still works (backward compatible). All commands in this tutorial use the new form.
+> **CLI usage change**: After the refactor, the form is `python -m summarize daily ...`. The old `python tools/summarize/daily_summary.py ...` no longer exists — that file was a re-export shim for a consumer outside this repository and has been removed. All commands in this tutorial use the new form.
 
 > Install with `pip install -e .`, then run `python -m summarize` from the repository root.
 
@@ -1268,7 +1267,7 @@ The generated daily report contains the following sections:
 
 ISO 8601 weeks (Monday to Sunday). Each item in tasks/problems/learnings carries `level: "high"|"low"` and `importance: 1-10`, used for priority sorting.
 
-**Import contract**: `daily_summary.py` is a backward-compatible re-export shim and is a stable API surface (referenced by the monthly/weekly pipelines and external consumers). The key exports consumed externally: `_atomic_write`, `_resolve_output_dir`, `_load_config`, `run_hugo_update`, `format_reports_for_llm`, `aggregate_token_usage`. `tests/test_imports.py` parametrically verifies that all expected symbols are still importable after the refactor; it must be run after structural changes. New code should import the specific submodules directly.
+**Import contract**: `weekly_summary.py` and `monthly_summary.py` are stable API surfaces — full implementations that each expose a documented symbol set. `tests/test_imports.py` parametrically verifies those symbols stay importable after structural changes; run it after any refactor. New code should import the specific submodules directly. (`daily_summary.py` used to be listed here as a shim "referenced by the monthly/weekly pipelines"; neither file ever imported it, and it has been removed.)
 
 ### `--api` parameter description
 
