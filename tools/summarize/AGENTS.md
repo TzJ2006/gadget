@@ -23,4 +23,5 @@ LLM backend via `--api`: `ollama` (default) / `claude_cli` / `anthropic` / `open
 - `auto` first fans out over `summarize.ssh_hosts` (`ssh_pull.py`): runs `daily export` on each host, scp's its logs back, then merges everything locally. `--no-ssh` skips it. Remote checkouts are reached via the `~/.gadget` symlink that `python scripts/onboard.py --only link` creates.
 - `auto` unloads resident Ollama models when the pipeline completes; set `GADGET_KEEP_OLLAMA=1` to keep them warm (e.g. back-to-back cron runs).
 - Keep JSON field names stable (`token_usage`, `conversation_summaries`, `device_name`, `_finalized`) — merge and renderers parse them across devices.
+- `daily export --summarize` writes a per-device pre-summary to `device_summary`; `auto` does not pass it, so the field is present only for hand-exported days. `daily_merge` reads it when present and works without it — don't make either side assume it exists.
 - Exported logs and reports go to `outputs/{logs,reports,cache}/` and may contain sensitive conversation content — never commit them.

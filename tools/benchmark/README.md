@@ -60,11 +60,17 @@ python -m benchmark.cli --duration 60
 
 Output paths are relative to the project root (`gadget/`). Override with `--output` (CSV) and `--report-output` (HTML).
 
-## Website Auto-Update Pipeline
+## Website Auto-Update Pipeline (designed, not built)
 
-This repo includes a GitHub-based pipeline to publish `benchmark_report.html` as a website and keep it updated from queued submissions.
+> **There is no CI driving any of this.** The submission helpers below are
+> real and work when you run them by hand, but this repository has no
+> `.github/` directory and never has — so nothing receives a dispatch, nothing
+> consumes the queue on a schedule, and nothing deploys a leaderboard page.
+> `data/ingest_log.json` records zero submissions ever processed. Treat this
+> section as manual tooling plus a design for a pipeline that has not been
+> built, not as a service you can submit to.
 
-### Workflow Files
+### Workflow Files (none of these exist)
 
 - `.github/workflows/accept-submission.yml`
   - Receives `repository_dispatch` event `benchmark_submission`
@@ -193,10 +199,10 @@ tools/benchmark/               # https://github.com/TzJ2006/gadget/tree/main/too
 │   ├── gpu.py         # GPU benchmarks (CUDA, MPS, XPU)
 │   ├── report.py      # HTML report generation (Plotly charts, leaderboards)
 │   └── README.md      # Detailed module documentation
-├── scripts/           # Submission helpers (submit_result.py, ingest_submissions.py)
-├── data/              # Queue/audit files (pending/rejected submissions)
+├── scripts/           # Submission helpers, manual only (submit_result.py, ingest_submissions.py)
+├── data/              # Queue/audit files (pending/rejected submissions) — empty; nothing has run
 ├── results/           # Historical GPU test screenshots
-├── .github/workflows/ # CI/CD (accept-submission, daily-publish, pages-deploy)
+├── tests/             # Pure-mock pytest suite (append-only CSV, timer, no-GPU paths)
 ├── README.md          # This file
 ├── CLAUDE.md          # Dev guide
 └── requirements.txt   # Dependencies

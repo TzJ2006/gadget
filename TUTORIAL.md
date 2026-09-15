@@ -685,6 +685,14 @@ python -m summarize daily export --date 2026-02-13 --summarize
 
 Adding `--summarize` calls the API to first produce a summary of this device's conversations; the result is stored in the log's `device_summary` field. Later, merge uses these summaries as context to improve the quality of the final daily report.
 
+> **This is a manual-only option.** `auto` runs `daily export` without it
+> (`auto.py`), so a `device_summary` exists only for days you exported by hand
+> with this flag. Merge reads the field when it is there and does without it
+> when it is not, so mixing the two is safe. Whether the pipeline should pass
+> it by default is an open question: it costs one extra model call per device
+> per day, and nothing has yet measured whether summarize-then-merge beats
+> merging the raw conversations.
+
 #### Phase 2: Merge (run on any device)
 
 There are two ways to provide log files to merge:
@@ -2602,6 +2610,14 @@ Deployment copies the HTML report into `tools/website/static/benchmark-report/`,
 
 ### 8. Submitting Results to the Public Leaderboard
 
+> **There is no CI driving any of this.** The submission helpers below are
+> real and work when you run them by hand, but this repository has no
+> `.github/` directory and never has — so nothing receives a dispatch, nothing
+> consumes the queue on a schedule, and nothing deploys a leaderboard page.
+> `data/ingest_log.json` records zero submissions ever processed. Treat this
+> section as manual tooling plus a design for a pipeline that has not been
+> built, not as a service you can submit to.
+
 If a relay server is configured, you can submit your test results to the public leaderboard:
 
 ```bash
@@ -2666,9 +2682,11 @@ Validation rules in `ingest_submissions.py`:
 - PII redaction: emails, IPs, hostnames, and user paths are masked
 - SHA-256 fingerprint deduplication (based on date + hardware + benchmark type + result)
 
-#### Website Auto-Update Pipeline
+#### Website Auto-Update Pipeline (designed, not built)
 
-The repository contains a GitHub-based pipeline that publishes benchmark reports as a website and continuously updates from queued submissions:
+The workflow files below **do not exist in this repository**. They describe the
+pipeline the submission helpers were written against; building it is an open
+decision, and until then `ingest_submissions.py` is something you run by hand.
 
 - `.github/workflows/accept-submission.yml` — receives the `repository_dispatch` event `benchmark_submission` and appends the payload to `data/pending_submissions.ndjson`
 - `.github/workflows/daily-publish.yml` — runs daily (`00:00 UTC`) or manually: consumes the queue with strict validation/deduplication/redaction and regenerates the report when the dataset changes
