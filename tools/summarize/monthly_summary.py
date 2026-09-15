@@ -517,7 +517,7 @@ def _call_monthly_summarize_chunked(api: str, daily_reports: list[dict],
 
 def _generate_chart(usage_by_source: dict, year: int, month: int) -> Optional[Path]:
     """生成月报 usage 图表（单 PNG 三子图，按来源）。"""
-    return generate_period_chart(usage_by_source, date(year, month, 1))
+    return generate_period_chart(usage_by_source, date(year, month, 1), "monthly")
 
 
 # ─── 4. 输出渲染 ───────────────────────────────────────────────────
@@ -878,11 +878,11 @@ def cmd_deploy(args):
         print("[ok] All monthly reports already deployed")
         return
 
-    from common.paths import IMAGES_DIR
+    from .charts import chart_path_for
     for md_file in to_deploy:
         month_str = md_file.stem[:-len("-monthly")]
         year, month = int(month_str[:4]), int(month_str[5:7])
-        chart = IMAGES_DIR / "summarize" / f"{date(year, month, 1).isoformat()}-usage.png"
+        chart = chart_path_for("monthly", date(year, month, 1))
         generate_monthly_hugo_post(
             md_file.read_text(encoding="utf-8"), year, month, hugo_site,
             chart_path=chart if chart.exists() else None,

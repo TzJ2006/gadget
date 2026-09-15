@@ -58,6 +58,13 @@ SYNC_DIRS: dict[str, list[tuple[str, str]]] = {
         ("tools/website/content/bugJournal/weekly", "website/bugJournal/weekly"),
         ("tools/website/content/bugJournal/monthly", "website/bugJournal/monthly"),
         ("tools/website/content/research", "website/research"),
+        # One entry per level that publishes a usage chart. A published level
+        # whose directory is missing here self-deletes: static/images/ is
+        # gitignored, and publish.py wipes public/ and rebuilds from static/,
+        # so the next publish from a machine without the PNGs stages their
+        # deletion while the markdown keeps linking them. That is exactly how
+        # /dag/ deleted itself before 0984632.
+        ("tools/website/static/images/daily", "website/static/images/daily"),
         ("tools/website/static/images/weekly", "website/static/images/weekly"),
         ("tools/website/static/images/monthly", "website/static/images/monthly"),
         ("tools/website/static/benchmark-report", "website/static/benchmark-report"),
