@@ -31,6 +31,13 @@ from pathlib import Path
 
 SITE_ROOT = Path(__file__).resolve().parent
 
+# Loose sibling scripts, the same way preflight_check.py reaches them: this is
+# run as `python publish.py` from its own directory, but also imported by tests.
+if str(SITE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SITE_ROOT))
+
+from generated_paths import is_generated_path  # noqa: E402
+
 SRC_DIR = SITE_ROOT / "content"
 IMAGE_DIR = SITE_ROOT / "static" / "images"
 VIDEO_DIR = SITE_ROOT / "static" / "videos"
@@ -46,15 +53,6 @@ TRANSLATE_SCRIPT = SITE_ROOT / "translate_site_batch.py"
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
-
-# Pipeline-managed trees — Step 2 rewrite is handwritten content only.
-GENERATED_CONTENT_DIRS = (
-    "bugJournal/daily",
-    "bugJournal/weekly",
-    "bugJournal/monthly",
-    "research",
-)
-GENERATED_CONTENT_FILES = ("benchmark.md", "benchmark.zh.md")
 
 _STATIC_RE = re.compile(r"\.\./\.\./static")
 # Word-boundary so `.jpeg` does not become `.pngpeg` (bash s/\.jpg/ bug).
@@ -128,13 +126,12 @@ def ensure_timestamp(path: Path) -> float:
 
 
 def _is_generated(path: Path) -> bool:
-    try:
-        rel = path.resolve().relative_to(SRC_DIR.resolve()).as_posix()
-    except ValueError:
-        return False
-    if path.name in GENERATED_CONTENT_FILES or rel in GENERATED_CONTENT_FILES:
-        return True
-    return any(rel == d or rel.startswith(d + "/") for d in GENERATED_CONTENT_DIRS)
+    """Step 2's rewrite is hand-written content only.
+
+    This had its own copy of the path lists and its own matching rule; it now
+    asks the one matcher, so preflight and publish cannot disagree about a file.
+    """
+    return is_generated_path(path, SRC_DIR)
 
 
 def _newer_files(root: Path, exts: set[str], since: float) -> list[Path]:

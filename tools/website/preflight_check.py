@@ -43,7 +43,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from common.translation import detect_language
-from generated_paths import GENERATED_CONTENT_DIRS, GENERATED_CONTENT_FILES
+from generated_paths import (
+    GENERATED_CONTENT_DIRS, GENERATED_CONTENT_FILES, is_generated_path,
+)
 
 STALE_LINK_PATTERN = re.compile(r"\.\./\.\./static")
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?\n)---\s*\n?(.*)$", re.DOTALL)
@@ -71,13 +73,7 @@ def get_last_build_time(timestamp_file: Path) -> float:
 
 
 def _is_generated(path: Path, root: Path) -> bool:
-    try:
-        rel = path.relative_to(root).as_posix()
-    except ValueError:
-        return False
-    if rel in GENERATED_CONTENT_FILES:
-        return True
-    return any(rel.startswith(d + "/") for d in GENERATED_CONTENT_DIRS)
+    return is_generated_path(path, root)
 
 
 def find_modified_files(directory: Path, since: float, suffix: str = ".md") -> list[Path]:
