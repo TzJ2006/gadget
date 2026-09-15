@@ -107,7 +107,7 @@ python tools/research/research_scout.py citations 2301.12597               # 引
 python tools/research/research_scout.py deploy                              # 部署报告到 Hugo
 ```
 
-所有 LLM 功能支持 `--api` 切换后端：`ollama`（默认——本地 Ollama，无需 key，Gemma4-26B）、`claude_cli`（无需 API key）、`anthropic`、`openai`。
+所有 LLM 功能支持 `--api` 切换后端：`ollama`（默认——本地 Ollama，无需 key，Gemma4-26B）、`anthropic`、`openai`。
 
 详细分步操作见 [TUTORIAL.zh.md — Research](TUTORIAL.zh.md#research) 与源文档 [tools/research/TUTORIAL.md](../tools/research/TUTORIAL.md)。
 
@@ -157,7 +157,7 @@ python -m translator             # 启动 Gradio GUI（浏览器打开）
 
 被所有工具依赖的共享层，通过 `pip install -e .` 安装为 Python 包：
 
-- LLM 调用（统一两层 API，支持 `ollama`（默认）/ `claude_cli` / `anthropic` / `openai` 四后端）
+- LLM 调用（统一两层 API，支持 `ollama`（默认）/ `anthropic` / `openai` 三后端）
 - JSON 解析与修复
 - SHA-256 磁盘缓存（命名空间 + TTL）
 - 原子写入与内容哈希
@@ -216,7 +216,7 @@ Hugo 站点内容直接写入 `tools/website/content|static`（已无单独的 `
 - GPU 基准测试会自动检测 CUDA / Apple MPS / Intel XPU
 - `tokens/` 目录存放 API 密钥与 onboarding sheet，已 gitignore，切勿提交其内容
 - 所有生成文件输出到 `outputs/` 目录，已 gitignore
-- 四个 LLM 后端统一通过 `--api` 参数切换：`ollama`（默认，本地 Gemma4-26B）、`claude_cli`、`anthropic`、`openai`
+- 三个 LLM 后端统一通过 `--api` 参数切换：`ollama`（默认，本地 Gemma4-26B）、`anthropic`、`openai`
 - 翻译链路不走 `--api`，而是使用 `GADGET_TRANSLATION_BACKEND` 选择的本地推理引擎：`ollama`（默认，走本地 Ollama 服务，复用聊天 tag `gemma4:26b`）→ `llamacpp`/`vllm`/`transformers`（进程内，模型 `tencent/Hy-MT2-1.8B`）
 - 跨设备数据同步使用 `python scripts/sync.py push/pull`（需配置 rclone）
 - 永远不要 `git add` 自动生成内容、rclone 同步的数据、构建产物（`build/`、`gadget.egg-info/`）或 `tools/website/` 下的部署/主题仓库

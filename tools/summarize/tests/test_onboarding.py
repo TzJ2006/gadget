@@ -17,21 +17,15 @@ def test_auto_requirements_block_without_rclone_remote(monkeypatch, tmp_path):
     monkeypatch.setattr(onboarding, "_CONFIG_PATH", tmp_path / "missing.json")
     monkeypatch.setattr(onboarding, "_load_config", lambda: {})
     monkeypatch.setattr(onboarding, "_ccusage_version", lambda: None)
-    monkeypatch.setattr(
-        onboarding.shutil,
-        "which",
-        lambda name: "/usr/bin/claude" if name == "claude" else None,
-    )
-
-    results = onboarding.check_auto_requirements(api="claude_cli")
+    results = onboarding.check_auto_requirements(api="ollama")
     by_key = _by_key(results)
 
     assert by_key["rclone-remote"].status == "fail"
-    assert by_key["llm-claude-cli"].status == "ok"
+    assert by_key["llm-ollama-endpoint"].status == "ok"
     assert onboarding.has_blocking_failures(results)
 
 
-def test_auto_requirements_pass_with_remote_rclone_and_claude(monkeypatch, tmp_path):
+def test_auto_requirements_pass_with_remote_rclone_and_ollama(monkeypatch, tmp_path):
     monkeypatch.setattr(onboarding, "_CONFIG_PATH", tmp_path / "missing.json")
     monkeypatch.setattr(
         onboarding,
@@ -40,18 +34,17 @@ def test_auto_requirements_pass_with_remote_rclone_and_claude(monkeypatch, tmp_p
     )
     monkeypatch.setattr(onboarding, "_find_rclone", lambda: "/usr/bin/rclone")
     monkeypatch.setattr(onboarding, "_ccusage_version", lambda: (20, 0, 1))
-    monkeypatch.setattr(
-        onboarding.shutil,
-        "which",
-        lambda name: "/usr/bin/claude" if name == "claude" else None,
-    )
+    # The ollama branch checks for the openai package (Ollama speaks that
+    # protocol). Stub it so this asserts the readiness logic, not whether this
+    # particular checkout happens to have the summarize extras installed.
+    monkeypatch.setattr(onboarding.importlib.util, "find_spec", lambda _n: object())
 
-    results = onboarding.check_auto_requirements(api="claude_cli")
+    results = onboarding.check_auto_requirements(api="ollama")
     by_key = _by_key(results)
 
     assert by_key["rclone-remote"].status == "ok"
     assert by_key["rclone-binary"].status == "ok"
-    assert by_key["llm-claude-cli"].status == "ok"
+    assert by_key["llm-ollama-endpoint"].status == "ok"
     assert not onboarding.has_blocking_failures(results)
 
 
@@ -107,15 +100,11 @@ def test_init_config_rechecks_freshly_written_config(monkeypatch, tmp_path):
     monkeypatch.setattr("summarize.daily._config_init", fake_init)
     monkeypatch.setattr(onboarding, "_find_rclone", lambda: "/usr/bin/rclone")
     monkeypatch.setattr(onboarding, "_ccusage_version", lambda: (20, 0, 1))
-    monkeypatch.setattr(
-        onboarding.shutil,
-        "which",
-        lambda name: "/usr/bin/claude" if name == "claude" else None,
-    )
+    monkeypatch.setattr(onboarding.importlib.util, "find_spec", lambda _n: object())
 
     args = type("Args", (), {
         "init_config": True,
-        "api": "claude_cli",
+        "api": "ollama",
         "deploy": False,
         "hugo_site": None,
         "json": False,
@@ -148,7 +137,7 @@ def test_ensure_auto_ready_prints_blocking_guidance(monkeypatch):
 def test_cmd_auto_exits_before_work_when_readiness_fails(monkeypatch):
     args = type("Args", (), {
         "date": None,
-        "api": "claude_cli",
+        "api": "ollama",
         "deploy": False,
         "force": False,
         "hugo_site": None,

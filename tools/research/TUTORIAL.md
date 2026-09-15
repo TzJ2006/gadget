@@ -46,7 +46,7 @@ python -m research.scout config --init
 ```
 
 会交互式询问：
-- **默认 LLM 后端**：`ollama`（默认，本地、无需 API key，需要已运行的 Ollama）/ `claude_cli` / `anthropic` / `openai`
+- **默认 LLM 后端**：`ollama`（默认，本地、无需 API key，需要已运行的 Ollama）/ `anthropic` / `openai`
 - **Hugo 站点路径**：用于将周报部署到博客（可选，默认 `tools/website`）
 - **默认回溯天数**：搜索最近几天的论文（默认 7 天）
 - **默认最大结果数**：每个项目每次搜索最多返回多少篇（默认 50）
@@ -60,7 +60,7 @@ python -m research.scout config --init
 python -m research.scout config --show
 ```
 
-> **注意**：`ollama` 需要本机 Ollama；`anthropic` 需要 `ANTHROPIC_API_KEY`；`openai` 需要 `OPENAI_API_KEY`；`claude_cli` 需要已安装 Claude CLI。全局还可设 `GADGET_LLM_BACKEND`。
+> **注意**：`ollama` 需要本机 Ollama；`anthropic` 需要 `ANTHROPIC_API_KEY`；`openai` 需要 `OPENAI_API_KEY`。全局还可设 `GADGET_LLM_BACKEND`。
 
 ---
 
@@ -203,7 +203,7 @@ python -m research.scout report --project robot-manipulation
 
 python -m research.scout report --project robot-manipulation --api anthropic
 python -m research.scout report --project robot-manipulation --api openai
-python -m research.scout report --project robot-manipulation --api claude_cli
+python -m research.scout report --project robot-manipulation --api anthropic
 ```
 
 ### 选择输出语言
@@ -610,6 +610,7 @@ composite_score 最高的 3 篇，可用 `--insight-top-n`，不超过报告展�
 
 https://www.semanticscholar.org/product/api 。可在 Profiler `config --init` 写入根 `config.json` 的 `research` 段；不配则匿名访问。
 
-### Q: 默认后端是 claude_cli 吗？
+### Q: 还有 claude_cli 后端吗？
 
-不是。CLI 与 `config.json` 的 `default_api` 默认都是 **`ollama`**。`claude_cli` 是可选后端之一。
+没有了，已删除。它是通过子进程调 `claude --print` 的，失败形态和另外三个 HTTP 后端不是一类。
+要用 Claude 请走 `anthropic`。CLI 与 `config.json` 的 `default_api` 默认一直都是 **`ollama`**。

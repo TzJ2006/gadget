@@ -172,7 +172,7 @@ def discover_homepage_urls(
     affiliation: str,
     s2_homepage: str = "",
     cache: DiskCache | None = None,
-    backend: str = "claude_cli",
+    backend: str = "ollama",
 ) -> list[str]:
     """Multi-strategy URL discovery for a researcher's homepage/lab page.
 
@@ -215,7 +215,7 @@ def extract_students_from_homepage(
     researcher_name: str,
     model: str = "sonnet",
     cache: DiskCache | None = None,
-    backend: str = "claude_cli",
+    backend: str = "ollama",
 ) -> list[StudentCandidate]:
     """Use LLM to extract student/postdoc names from homepage text."""
     if not page_text or len(page_text.strip()) < 100:
@@ -267,7 +267,7 @@ def discover_students_from_homepage(
     homepage_url: str = "",
     model: str = "sonnet",
     cache: DiskCache | None = None,
-    backend: str = "claude_cli",
+    backend: str = "ollama",
 ) -> list[StudentCandidate]:
     """Top-level orchestrator: find URLs -> fetch -> extract -> deduplicate.
 

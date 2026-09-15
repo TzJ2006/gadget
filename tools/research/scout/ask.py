@@ -156,7 +156,7 @@ def validate_ask_plan(plan: dict) -> dict:
 
 # ─── Intent parsing (FEAT-001) ─────────────────────────────────────
 
-def parse_ask_intent(query: str, api: str = "claude_cli",
+def parse_ask_intent(query: str, api: str = "ollama",
                      timeout: int = 600) -> dict:
     """Parse natural language query into a structured search plan via LLM.
 

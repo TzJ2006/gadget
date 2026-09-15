@@ -107,7 +107,7 @@ python tools/research/research_scout.py citations 2301.12597               # Cit
 python tools/research/research_scout.py deploy                              # Deploy reports to Hugo
 ```
 
-All LLM features support switching the backend via `--api`: `ollama` (default — local Ollama, keyless, Gemma4-26B), `claude_cli` (no API key needed), `anthropic`, `openai`.
+All LLM features support switching the backend via `--api`: `ollama` (default — local Ollama, keyless, Gemma4-26B), `anthropic`, `openai`.
 
 For detailed step-by-step instructions see [TUTORIAL.md — Research](TUTORIAL.md#research) and the source doc [tools/research/TUTORIAL.md](tools/research/TUTORIAL.md).
 
@@ -157,7 +157,7 @@ For detailed step-by-step instructions see [TUTORIAL.md — Translator](TUTORIAL
 
 The shared layer depended on by all tools, installed as a Python package via `pip install -e .`:
 
-- LLM invocation (a unified two-tier API, supporting the four backends `ollama` (default) / `claude_cli` / `anthropic` / `openai`)
+- LLM invocation (a unified two-tier API, supporting the three backends `ollama` (default) / `anthropic` / `openai`)
 - JSON parsing and repair
 - SHA-256 disk cache (namespaces + TTL)
 - Atomic writes and content hashing
@@ -216,7 +216,7 @@ Hugo site content is written directly into `tools/website/content|static` (there
 - GPU benchmarking automatically detects CUDA / Apple MPS / Intel XPU
 - The `tokens/` directory holds API keys and the onboarding sheet; it is gitignored — never commit its contents
 - All generated files are output to the `outputs/` directory, which is gitignored
-- The LLM backends are switched uniformly via the `--api` parameter: `ollama` (default), `claude_cli`, `anthropic`, `openai` (or `GADGET_LLM_BACKEND` globally)
+- The LLM backends are switched uniformly via the `--api` parameter: `ollama` (default), `anthropic`, `openai` (or `GADGET_LLM_BACKEND` globally)
 - The translation path uses a local inference engine selected by `GADGET_TRANSLATION_BACKEND`: `ollama` (default — the local Ollama server, reusing the served chat tag `gemma4:26b`) → `llamacpp`/`vllm`/`transformers` (in-process, model `tencent/Hy-MT2-1.8B`)
 - Cross-device data sync uses `python scripts/sync.py push/pull` (requires rclone configuration)
 - Never `git add` auto-generated content, rclone-synced data, build artifacts (`build/`, `gadget.egg-info/`), or the deployment/theme repos under `tools/website/`

@@ -78,7 +78,7 @@ gadgets:                                # → repo-root config.json sections; om
     hugo_site: "tools/website"          # (optional) repo-relative Hugo site root
     rclone_remote: "gdrive:gadget/summarize"  # (optional) default shown
     rclone_path: ""                     # (optional) blank = remote default / PATH
-    default_api: claude_cli             # (optional) ollama | claude_cli | anthropic | openai; default: ollama
+    default_api: anthropic             # (optional) ollama | anthropic | openai; default: ollama
   research:                             # (optional) -> config.json "research"
     model: sonnet                       # (optional) default: sonnet
     default_mode: fast                  # (optional) default: fast
@@ -87,7 +87,7 @@ gadgets:                                # → repo-root config.json sections; om
     output_dir: ""                      # (optional) blank = outputs default
     semantic_scholar_api_key: ""        # (optional) raises rate limits if set
   research_scout:                       # (optional) -> config.json "research_scout"
-    default_api: claude_cli             # (optional) default: ollama
+    default_api: anthropic             # (optional) default: ollama
     hugo_site: "tools/website"          # (optional) repo-relative; blank falls back to tools/website
     default_lookback_days: 7            # (optional) default: 7
     default_max_results: 50             # (optional) default: 50 (cap ~50 to avoid screening timeout)
