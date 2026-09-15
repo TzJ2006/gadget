@@ -439,7 +439,7 @@ def save_report(report: dict, markdown: str, reports_dir: Path,
 # ─── Hugo deployment ────────────────────────────────────────────────
 
 def generate_hugo_post(markdown_body: str, report_date: date,
-                       hugo_site: Path, api: str = "claude_cli",
+                       hugo_site: Path, api: str = "ollama",
                        force: bool = False,
                        overwrite_human: bool = False) -> Path:
     """Render research report as Hugo post with frontmatter (bilingual)."""

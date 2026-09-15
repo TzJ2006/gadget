@@ -4,7 +4,7 @@
 
 ## 1. 整体功能
 
-学术研究辅助工具包，两大块共用同一套 CLI 后端开关（`--api`：`ollama` 默认 / `claude_cli` / `anthropic` / `openai`）：
+学术研究辅助工具包，两大块共用同一套 CLI 后端开关（`--api`：`ollama` 默认 / `anthropic` / `openai`）：
 
 - **Research Scout**（`research.scout`）— 论文发现与评估。从 arXiv / bioRxiv / PubMed 搜索，经三阶段 LLM 管线（筛选 → 深度分析 → 引用影响）生成研究报告，可选 `--insight`（全文 + OpenReview），可部署到 Hugo。推荐入口：`python -m research.scout`。`research_scout.py` 只是弃用 shim（转发到 `research.scout`，发 `DeprecationWarning`），不是 2934 行单文件实现。
 - **Researcher Profiler** — 学术研究者画像。聚合 ArXiv + Semantic Scholar，LLM 轨迹分析、层级打分、师生关系推断，输出 JSON profile + Markdown。入口：`python -m research`，或 `python -m research.scout profile`。
@@ -174,7 +174,7 @@ outputs/
 - 两个配置**段**（同文件）：`research_scout` vs `research`。
 - `scoring.py` 层级阈值（75/50/30）和权重、`student_discovery.py` 阈值 0.4 与权重，默认仍写在函数里（可经参数覆盖，未进 config.json）。
 - `semantic_scholar.py` 的 `TOP_VENUES` 仍硬编码。
-- 不少 Scout 内部函数签名默认 `api="claude_cli"`；**CLI / config / `main()` 的用户默认是 `ollama`**，调用方会覆盖签名默认值。
+- Scout 内部函数签名的 `api` 默认值已统一为 `"ollama"`，与 CLI / config / `main()` 的用户默认一致（此前签名默认是 `"claude_cli"`，靠调用方覆盖才没出事）。
 
 ### 错误处理与安全
 

@@ -4,7 +4,7 @@
 
 This is the **detailed usage guide** for the gadget toolkit, covering setup, step-by-step usage of the five tools (Summarize / Research / Benchmark / Website / Translator), plus cross-device data sync and new-machine onboarding. Each tool also keeps its own source docs (under `tools/<tool>/`); this file is their consolidated, unified entry point.
 
-> All LLM tools accept `--api` to switch backends (`ollama` default / `claude_cli` / `anthropic` / `openai`); the translation path uses a local inference engine and does not go through `--api`.
+> All LLM tools accept `--api` to switch backends (`ollama` default / `anthropic` / `openai`); the translation path uses a local inference engine and does not go through `--api`.
 
 ## Table of Contents
 
@@ -156,7 +156,6 @@ All LLM-using tools support the `--api` flag to switch backends:
 | `--api` value | Backend | Required |
 |-----------|------|------|
 | `ollama` (default) | Local Ollama server, keyless | A running Ollama with the chat model pulled |
-| `claude_cli` | Local Claude Code CLI | `claude` CLI installed and logged in |
 | `anthropic` | Anthropic API | Environment variable `ANTHROPIC_API_KEY` |
 | `openai` | OpenAI API | Environment variable `OPENAI_API_KEY` |
 
@@ -365,7 +364,7 @@ gadgets:
     hugo_site: "tools/website"          # repo-relative Hugo site root
     rclone_remote: "gdrive:gadget/summarize"
     rclone_path: ""                     # empty = remote default
-    default_api: claude_cli             # ollama | claude_cli | anthropic | openai; default: ollama
+    default_api: anthropic             # ollama | anthropic | openai; default: ollama
   research:                             # -> config.json "research"
     model: sonnet
     default_mode: fast
@@ -374,7 +373,7 @@ gadgets:
     output_dir: ""
     semantic_scholar_api_key: ""        # setting this can raise the rate limit
   research_scout:                       # -> config.json "research_scout"
-    default_api: claude_cli
+    default_api: anthropic
     hugo_site: "tools/website"          # repo-relative Hugo site root
     default_lookback_days: 7
     default_max_results: 50             # recommended ~50 or fewer, to avoid screening timeouts
@@ -502,10 +501,10 @@ npm install -g @anthropic-ai/claude-code
 claude --version
 ```
 
-Select it with `--api claude_cli`:
+Select it with `--api anthropic`:
 
 ```bash
-python -m summarize daily export --summarize --date 2026-02-13 --api claude_cli
+python -m summarize daily export --summarize --date 2026-02-13 --api anthropic
 ```
 
 #### Option 2: Anthropic API
@@ -742,7 +741,7 @@ Each subprocess's timeout is computed dynamically based on the log file size (us
 python -m summarize daily merge --sync-all --workers 4
 ```
 
-The default is `--workers 1` (sequential, preserving the original behavior); the effective worker count is capped at the number of dates to process. This flag **only affects the `--sync-all` batch merge** — single-date merge and export are unaffected. Each worker is an independent subprocess, with its log written separately under `outputs/logs/summarize/merge_logs/`. Higher concurrency means more simultaneous requests to the LLM backend — keep it modest when using `claude_cli` or a rate-limited API.
+The default is `--workers 1` (sequential, preserving the original behavior); the effective worker count is capped at the number of dates to process. This flag **only affects the `--sync-all` batch merge** — single-date merge and export are unaffected. Each worker is an independent subprocess, with its log written separately under `outputs/logs/summarize/merge_logs/`. Higher concurrency means more simultaneous requests to the LLM backend — keep it modest when using `anthropic` or another rate-limited API.
 
 **Option 2: specify files manually**
 
@@ -809,7 +808,7 @@ python -m summarize auto --date 2026-04-18 --api anthropic --deploy --force
 | Parameter | Default | Description |
 |------|------|------|
 | `--date YYYY-MM-DD` | Yesterday | Aggregation target date. Determines which week the weekly report covers and which month the monthly report covers. **Does not affect** `daily export` / `merge --sync-all`, which still process all dates that are not yet exported / not yet finalized |
-| `--api {ollama,claude_cli,anthropic,openai}` | `ollama` | LLM backend, passed through to all LLM-calling steps |
+| `--api {ollama,anthropic,openai}` | `ollama` | LLM backend, passed through to all LLM-calling steps |
 | `--deploy` | Off | Appends `--deploy` to merge / weekly / monthly, publishing the daily / weekly / monthly reports together to Hugo |
 | `--force` | Off | Appends `--force` to all four steps, ignoring caches and existing output files and forcing a rerun |
 | `--workers N` | 1 | Passed through to `daily merge --sync-all`: run N workers in parallel to merge multiple days (default 1 = sequential). See the "Parallel speedup" note for `--sync-all` above |
@@ -864,7 +863,7 @@ python -m summarize auto --date 2026-04-18 --api anthropic --force --deploy
 
 #### Onboarding / readiness check
 
-`auto` first checks the run conditions before actually executing export / merge / weekly / monthly. If a required item is missing (for example `rclone_remote`, `rclone`, a reachable Ollama endpoint for the default `ollama` backend (or the `claude` CLI when using `claude_cli`), or the Hugo site/binary needed by `--deploy`), the command stops and gives repair steps, avoiding failing halfway through.
+`auto` first checks the run conditions before actually executing export / merge / weekly / monthly. If a required item is missing (for example `rclone_remote`, `rclone`, a reachable Ollama endpoint for the default `ollama` backend, or the Hugo site/binary needed by `--deploy`), the command stops and gives repair steps, avoiding failing halfway through.
 
 ```bash
 python -m summarize onboard                 # Check the requirements for summarize auto
@@ -1284,11 +1283,10 @@ All commands that need AI summarization (`export --summarize`, `merge`, `weekly 
 | Value | Description | API key required? |
 |----|------|-----------------|
 | `ollama` | Calls a local Ollama server (default) | No, keyless local server |
-| `claude_cli` | Calls the local Claude Code CLI | No, reuses the CLI's login state |
 | `anthropic` | Calls the Anthropic Claude API | Yes, requires `ANTHROPIC_API_KEY` |
 | `openai` | Calls the OpenAI API | Yes, requires `OPENAI_API_KEY` |
 
-The `claude_cli` mode passes the prompt to the Claude Code CLI via `claude --print`. It requires Claude Code to be installed and logged in beforehand.
+The `claude_cli` mode was removed. It shelled out to `claude --print`, which made it the only backend whose failure modes were a missing binary, a non-zero exit and empty stdout rather than an HTTP error — and it needed its own copy of both the plain-text and the JSON path. Use `anthropic` to reach Claude.
 
 #### `--timeout` parameter
 
@@ -1388,7 +1386,7 @@ python tools/research/research_scout.py config --init
 ```
 
 This interactively asks for the following configuration items:
-- **Default LLM backend**: `ollama` (default, keyless local Ollama server) / `claude_cli` (calls the Claude CLI directly) / `anthropic` / `openai`
+- **Default LLM backend**: `ollama` (default, keyless local Ollama server) / `anthropic` / `openai`
 - **Hugo site path**: Used to deploy weekly reports to your blog (optional)
 - **Default lookback days**: How many recent days of papers to search (default 7 days)
 - **Default max results**: Maximum number of papers returned per project per search (default 50)
@@ -1402,7 +1400,7 @@ View the current configuration:
 python tools/research/research_scout.py config --show
 ```
 
-> **Note**: Using the `anthropic` backend requires setting the environment variable `ANTHROPIC_API_KEY`; using the `openai` backend requires `OPENAI_API_KEY`. The `claude_cli` backend requires no additional configuration, but the Claude CLI must be installed.
+> **Note**: Using the `anthropic` backend requires setting the environment variable `ANTHROPIC_API_KEY`; using the `openai` backend requires `OPENAI_API_KEY`. `ollama` needs neither, only a running local server.
 
 ### 2. Creating a Research Project
 
@@ -1551,7 +1549,7 @@ python tools/research/research_scout.py report --project robot-manipulation --ap
 python tools/research/research_scout.py report --project robot-manipulation --api openai
 
 # Use the Claude CLI (default, no API key needed)
-python tools/research/research_scout.py report --project robot-manipulation --api claude_cli
+python tools/research/research_scout.py report --project robot-manipulation --api anthropic
 ```
 
 #### Choosing the output language
@@ -1920,7 +1918,7 @@ It can also be used via the standalone module CLI:
 
 ```bash
 python -m research analyze "Sergey Levine"                  # Analyze a researcher
-python -m research analyze "Sergey Levine" --api anthropic  # Choose a backend (ollama/claude_cli/anthropic/openai)
+python -m research analyze "Sergey Levine" --api anthropic  # Choose a backend (ollama/anthropic/openai)
 python -m research show "Sergey Levine"                     # View a cached profile
 python -m research list                                     # List all analyzed researchers
 python -m research config --init                            # Initialize the Profiler config
@@ -2278,14 +2276,13 @@ The generated Markdown weekly report contains the following parts:
 
 - Edit `overview.md` to add more research background and current progress. Stage 2 reads this content to make a more precise evaluation
 - Modify the `open_questions` in `project.json` to make it clearer to the LLM what you care about
-- Try a different LLM backend (`--api anthropic` vs `--api claude_cli`)
+- Try a different LLM backend (`--api anthropic` vs `--api anthropic`)
 - Try English output: `--language en`
 
 #### Q: The LLM call times out?
 
 - The default timeout is 600 seconds (10 minutes); you can increase it with `--timeout 900`
 - Reduce `--max-results` to lower the number of papers (the single Stage 1 screening call tends to time out at ~100 papers; it is recommended to keep `--max-results` within ~50, or raise `--timeout` accordingly)
-- Using `--api anthropic` is usually more stable than `claude_cli`
 
 #### Q: How do I pause/resume a project?
 
@@ -2323,7 +2320,7 @@ A match failure does not affect the Stage 4 insight analysis, only the reviews s
 
 Full-text download + LLM analysis takes 1-3 minutes per paper. You can:
 - Reduce the number analyzed: `--insight-top-n 1`
-- Use a faster API: `--api anthropic` (usually faster than claude_cli)
+- Use a faster API: `--api anthropic`
 - Full-text and insight analysis results are cached, so running the same project a second time will be fast
 
 #### Q: Do I need to install openreview-py?

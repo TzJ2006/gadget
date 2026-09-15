@@ -27,7 +27,7 @@ features:
   # ===== Shared Foundation (common/) =====
 
   - feature: "Unified LLM Dispatch"
-    description: "Backend-agnostic LLM calling layer with two tiers: call_llm_raw returns raw text, call_llm returns a parsed JSON dict. Dispatches to ollama, anthropic, openai, or claude_cli."
+    description: "Backend-agnostic LLM calling layer with two tiers: call_llm_raw returns raw text, call_llm returns a parsed JSON dict. Dispatches to ollama, anthropic, or openai."
     purpose: "Lets every gadget tool issue LLM requests through one interface and switch providers via a single --api flag / GADGET_LLM_BACKEND without duplicating SDK/subprocess plumbing."
     implementation:
       approach: "call_llm_raw and call_llm both validate against LLM_BACKENDS and raise ValueError on unknown names (no silent else→claude_cli). ollama and openai share OpenAI-SDK HTTP helpers (_chat_raw / _chat_json); ollama pins a keyless client at 127.0.0.1:11434/v1. Claude CLI shells out to 'claude --print --model ...' via subprocess with a cleaned env. Anthropic lazily imports its SDK, supports optional tool_use and thinking. LLMCallConfig carries prompt, timeouts, max_tokens, per-backend model overrides."
@@ -37,7 +37,7 @@ features:
         - "common/tests/test_dispatch.py"
       constraints:
         - "DEFAULT_BACKEND = os.environ.get('GADGET_LLM_BACKEND') or 'ollama' (empty env still falls back to ollama)"
-        - "LLM_BACKENDS is exactly ('ollama', 'anthropic', 'openai', 'claude_cli'); unknown values raise ValueError listing that tuple"
+        - "LLM_BACKENDS is exactly ('ollama', 'anthropic', 'openai'); claude_cli was removed (a subprocess call to a CLI, unlike the three HTTP clients); unknown values raise ValueError listing that tuple"
         - "Default served Ollama chat tag is gemma4:26b (DEFAULT_OLLAMA_CHAT_MODEL); OLLAMA_MODEL > OPENAI_MODEL > that tag; abstract sonnet/opus/haiku aliases are ignored for Ollama"
         - "call_ollama constrains decoding with the caller's anthropic_tools[0].input_schema (response_format json_schema) and promotes every top-level property to required; call_openai stays on json_object because cloud json_schema is strict-only. Without the schema qwen3.8 returns daily_overview's contents as the whole report ~half the time; without the promotion it returns only the declared-required fields"
         - "Ollama base URL: OLLAMA_BASE_URL > OPENAI_BASE_URL > http://127.0.0.1:11434/v1 — never localhost (Windows IPv6 stall)"
@@ -55,8 +55,6 @@ features:
       - "call_anthropic"
       - "call_openai"
       - "call_ollama"
-      - "call_claude_cli"
-      - "_raw_claude_cli"
       - "_raw_anthropic"
       - "_raw_openai"
       - "_raw_ollama"
@@ -64,7 +62,7 @@ features:
       - "_openai_client"
       - "_clean_env"
       - "LLMCallConfig"
-    notes: "common/__init__.py re-exports call_llm/call_llm_raw/call_anthropic/call_openai/call_claude_cli but not call_ollama. tools/summarize/llm_backends.py is a backward-compat shim over common.llm/json_utils/io."
+    notes: "common/__init__.py re-exports call_llm/call_llm_raw/call_anthropic/call_openai but not call_ollama. tools/summarize/llm_backends.py is a backward-compat shim over common.llm/json_utils/io."
 
   - feature: "LLM Chunking, Timeout Detection and Hierarchical Merge"
     description: "Splits large text inputs into char-bounded chunks, runs per-chunk LLM calls with timeout detection, and recursively merges per-chunk JSON summaries until they fit in one call. Includes a per-chunk disk cache that refuses to store parse_error entries."
@@ -416,7 +414,7 @@ features:
       key_files:
         - "tools/summarize/summarizer.py"
       constraints:
-        - "Public wrappers summarize_with_anthropic / openai / claude_cli remain; ollama goes through _call_single_summarize → call_llm"
+        - "Public wrappers summarize_with_anthropic / openai remain (the claude_cli one went with the backend); ollama goes through _call_single_summarize → call_llm"
         - "Conversation chunking default max_chars 150000"
         - "_normalize_report is required for ollama/qwen renamed keys; it must not replace a top-level report with a thin nested decoy"
         - "_finalize_report retries the report call once when _report_content_score is 0 (qwen3.8 answers daily_overview's contents as the whole report ~1/3 of merges even under schema-constrained decoding); _renest_overview is the last resort, re-nesting that payload and lifting global.what into summary so the report is degraded, never blank"
@@ -526,7 +524,7 @@ features:
     description: "python -m summarize {daily,weekly,monthly,auto,onboard} unified CLI; daily subcommands export/merge/deploy/config; legacy daily_summary.py / weekly_summary.py / monthly_summary.py remain as re-export shims."
     purpose: "One module entry for the whole conversation-report pipeline."
     implementation:
-      approach: "__main__.main applies apply_env_from_config first (so auto subprocesses inherit Ollama/translation env), intercepts auto/onboard, else rewrites argv and delegates. Daily cli --api choices are anthropic|openai|ollama|claude_cli with default ollama; cli_defaults() overlays config."
+      approach: "__main__.main applies apply_env_from_config first (so auto subprocesses inherit Ollama/translation env), intercepts auto/onboard, else rewrites argv and delegates. Daily cli --api choices are LLM_BACKENDS (anthropic|openai|ollama) with default ollama; cli_defaults() overlays config."
       key_files:
         - "tools/summarize/__main__.py"
         - "tools/summarize/cli.py"
@@ -534,7 +532,7 @@ features:
         - "tools/summarize/llm_backends.py"
         - "tools/summarize/tests/test_imports.py"
       constraints:
-        - "--api choices are exactly anthropic|openai|ollama|claude_cli with argparse default ollama (config default_api can overlay)"
+        - "--api choices come from LLM_BACKENDS (anthropic|openai|ollama) with argparse default ollama (config default_api can overlay)"
         - "No-subcommand daily args still default to export"
         - "daily_summary.py / llm_backends.py shims must keep exporting the symbols test_imports.py parametrizes (including historical mcp_server import names)"
     entry_points:
@@ -640,7 +638,7 @@ features:
         - "tools/research/scout/__main__.py"
       constraints:
         - "No ~/.config/research_scout; GADGET_CONFIG or repo-root config.json only"
-        - "config --init validates default_api into {ollama, anthropic, openai, claude_cli}; invalid → ollama"
+        - "config --init validates default_api into LLM_BACKENDS ({ollama, anthropic, openai}); invalid → ollama"
         - "Projects live in tools/research/projects/<id>/ (project.json + overview.md)"
         - "DEFAULT_LANGUAGE is zh; DEFAULT_LOOKBACK_DAYS 7; MAX_PAPERS_PER_PROJECT 50"
         - "research_scout.py inserts repo root on sys.path and emits DeprecationWarning"
@@ -694,7 +692,7 @@ features:
         - "tools/research/scout/evaluate.py"
         - "tools/research/tests/test_pipeline_contracts.py"
       constraints:
-        - "CLI/config default backend is ollama; some helper signatures still default api='claude_cli' (callers pass the resolved api)"
+        - "CLI/config default backend is ollama; helper signatures now default api='ollama' too (they used to say claude_cli and relied on callers pass the resolved api)"
         - "Unusable cached screening/deep-eval (parse_error / missing fields) is discarded"
         - "All LLM calls go through common.llm — no provider SDKs in this module"
     function_names:
@@ -741,7 +739,7 @@ features:
       key_files:
         - "tools/research/scout/ask.py"
       constraints:
-        - "parse_ask_intent signature default is still api='claude_cli'; CLI passes resolved default_api (ollama unless configured)"
+        - "parse_ask_intent signature default is api='ollama'; CLI passes resolved default_api (ollama unless configured)"
     entry_points:
       - "python tools/research/research_scout.py ask \"natural-language query\""
     function_names:
@@ -883,8 +881,8 @@ features:
       key_files:
         - "tools/research/llm.py"
       constraints:
-        - "call_llm default backend is ollama (not claude_cli)"
-        - "parse_json_response repair backend default remains 'claude_cli' for existing callers; analyze CLI passes resolved api"
+        - "call_llm default backend is ollama; claude_cli no longer exists"
+        - "parse_json_response repair backend default is 'ollama'; analyze CLI passes resolved api"
         - "Failed repairs saved under outputs/logs/research/json_repair_failed/"
     function_names:
       - "call_llm"

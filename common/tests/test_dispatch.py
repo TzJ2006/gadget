@@ -1,5 +1,10 @@
 """Backend dispatch validation — unknown backends must fail loudly, not silently
-degrade to claude_cli / auto-select (Phase 2)."""
+degrade to some other backend / auto-select (Phase 2).
+
+The stub loop below is deliberately driven by LLM_BACKENDS rather than a literal
+list: it is what catches a backend declared but not wired, or wired but not
+declared. Removing claude_cli was one line in llm.py and this kept passing.
+"""
 
 import pytest
 
@@ -10,7 +15,7 @@ from common.llm import call_llm, call_llm_raw, LLMCallConfig, LLM_BACKENDS
 
 def test_call_llm_raw_rejects_unknown_backend():
     with pytest.raises(ValueError, match="Unknown LLM backend"):
-        call_llm_raw("hi", backend="anthropci")  # typo → must raise, not hit claude_cli
+        call_llm_raw("hi", backend="anthropci")  # typo → must raise, not silently route
 
 
 def test_call_llm_rejects_unknown_backend():
@@ -21,8 +26,10 @@ def test_call_llm_rejects_unknown_backend():
 def test_valid_backends_still_dispatch(monkeypatch):
     # every declared backend must route to a real branch, never the ValueError.
     # Stub each raw impl so no network/subprocess is touched (repo test convention).
-    for name in ("_raw_anthropic", "_raw_openai", "_raw_ollama", "_raw_claude_cli"):
-        monkeypatch.setattr(llm, name, lambda *a, **k: "ok")
+    for b in LLM_BACKENDS:
+        impl = f"_raw_{b}"
+        assert hasattr(llm, impl), f"{b} is declared but has no {impl}"
+        monkeypatch.setattr(llm, impl, lambda *a, **k: "ok")
     for b in LLM_BACKENDS:
         assert call_llm_raw("hi", backend=b) == "ok"
 

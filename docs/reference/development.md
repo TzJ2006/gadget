@@ -41,14 +41,14 @@ Then add the name to the **9 argparse `choices=[...]` lists** gating `--api`:
 `research/cli.py:163`.
 
 - **Do not touch**: `research/llm.py` and `research/scout/evaluate.py` — they only delegate to `common.llm.call_llm_raw`.
-- **Loud failure**: miss a dispatch `elif` (or misspell a backend anywhere — env, config `default_api`, `backend=` param) and the call raises `ValueError: Unknown LLM backend ...` naming `LLM_BACKENDS` (`:208`, `:382`) — the old silent `else → claude_cli` fallthrough is gone. Missing a `choices=` list is also loud (argparse hard-errors).
+- **Loud failure**: miss a dispatch `elif` (or misspell a backend anywhere — env, config `default_api`, `backend=` param) and the call raises `ValueError: Unknown LLM backend ...` naming `LLM_BACKENDS` (`:208`, `:382`) — the old silent `else → claude_cli` fallthrough is gone, and so is that backend. Missing a `choices=` list is also loud (argparse hard-errors).
 - **Residual quiet path**: config-file `default_api` values bypass argparse `choices` validation (they enter via `set_defaults`), so a bad config value only surfaces at the first LLM call — not at parse time — and the error names the value, not the config file it came from.
 
 ### 3. Add a summarize daily report field
 
 Four anchors that must stay in sync by hand:
 
-- `summarizer.py` — add to `SUMMARY_PROMPT` JSON + Requirements (`:39`, what ollama/openai/claude_cli obey) **and** `_daily_tool_schema()` properties/`required` (`:251`, what the anthropic backend obeys) **and** `CHUNK_MERGE_PROMPT` (`:165`, so days > 150K chars don't drop it during hierarchical merge). If overview-shaped, also `_OVERVIEW_FLAT_BLOCK`/`_REQ` (`:120-126`).
+- `summarizer.py` — add to `SUMMARY_PROMPT` JSON + Requirements (`:39`, what ollama/openai obey) **and** `_daily_tool_schema()` properties/`required` (`:251`, what the anthropic backend obeys) **and** `CHUNK_MERGE_PROMPT` (`:165`, so days > 150K chars don't drop it during hierarchical merge). If overview-shaped, also `_OVERVIEW_FLAT_BLOCK`/`_REQ` (`:120-126`).
 - `formatter.py` — render it in `generate_markdown()` (`:127`); if it's a level/importance list, add its key to `_sort_report_by_importance()` (`:58`).
 - **Silent failures**: prompt-but-not-schema ⇒ field omitted on the anthropic path only (output differs by `--api`); schema-but-not-`generate_markdown` ⇒ field in JSON but never rendered; miss the sort key ⇒ unsorted; miss `CHUNK_MERGE_PROMPT` ⇒ dropped only on large days (passes small-day tests).
 - **Cross-period**: adding to daily does **not** propagate to weekly/monthly — those have their own copy-pasted schemas/renderers (`weekly_summary.py`, `monthly_summary.py`) and strip fields in `format_reports_for_llm`. You must repeat the change there.

@@ -103,7 +103,7 @@ claude --version
 ```
 
 ```bash
-python -m summarize daily export --summarize --date 2026-02-13 --api claude_cli
+python -m summarize daily export --summarize --date 2026-02-13 --api anthropic
 ```
 
 ### 方式三：Anthropic API
@@ -332,7 +332,7 @@ python -m summarize daily merge --sync-all --api anthropic --timeout 300
 python -m summarize daily merge --sync-all --workers 4
 ```
 
-默认 `--workers 1`（顺序处理，保持原有行为），实际并行数会被裁剪到「待处理日期数」。该参数**仅对 `--sync-all` 批量合并生效**，单日期 merge 与 export 不受影响。每个 worker 是独立子进程，日志分别写到 `outputs/logs/summarize/merge_logs/`。`auto` 子命令也接受 `--workers N` 并透传给这一步。并发越高对 LLM 后端的瞬时请求越多——用 `claude_cli` 或有速率限制的 API 时不宜调太大。
+默认 `--workers 1`（顺序处理，保持原有行为），实际并行数会被裁剪到「待处理日期数」。该参数**仅对 `--sync-all` 批量合并生效**，单日期 merge 与 export 不受影响。每个 worker 是独立子进程，日志分别写到 `outputs/logs/summarize/merge_logs/`。`auto` 子命令也接受 `--workers N` 并透传给这一步。并发越高对 LLM 后端的瞬时请求越多——用 `anthropic` 或其它有速率限制的 API 时不宜调太大。
 
 **方式二：手动指定文件**
 
@@ -399,7 +399,7 @@ python -m summarize auto --date 2026-04-18 --api anthropic --deploy --force
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `--date YYYY-MM-DD` | 昨天 | 聚合目标日期。决定周报取哪一周、月报取哪一月。**不影响** `daily export` / `merge --sync-all`，它们仍处理所有未导出 / 未 finalized 日期 |
-| `--api {ollama,claude_cli,anthropic,openai}` | `ollama`（config `default_api` 可改） | LLM 后端，透传给所有调 LLM 的步骤 |
+| `--api {ollama,anthropic,openai}` | `ollama`（config `default_api` 可改） | LLM 后端，透传给所有调 LLM 的步骤 |
 | `--deploy` | 关 | 对 merge / weekly / monthly 都追加 `--deploy`，把日报 / 周报 / 月报一并发布到 Hugo |
 | `--force` | 关 | 对所有四步追加 `--force`，忽略缓存和已存在的输出文件，强制重跑 |
 
@@ -821,13 +821,12 @@ python -m summarize daily deploy --hugo-site /path/to/site --reports-dir /path/t
 | 值 | 说明 | 是否需要 API key |
 |----|------|-----------------|
 | `ollama` | 调用本地 Ollama 服务（默认，Gemma4-26B） | 否，本地 keyless |
-| `claude_cli` | 调用本地 Claude Code CLI | 否，复用 CLI 登录状态 |
 | `anthropic` | 调用 Anthropic Claude API | 是，需 `ANTHROPIC_API_KEY` |
 | `openai` | 调用 OpenAI API | 是，需 `OPENAI_API_KEY` |
 
 默认后端可用 `GADGET_LLM_BACKEND` 环境变量或 config 的 `default_api` 覆盖。
 
-`claude_cli` 模式通过 `claude --print` 将 prompt 传给 Claude Code CLI。需要提前安装并登录 Claude Code。
+`claude_cli` 模式已删除；要用 Claude 请走 `anthropic`。
 
 ### `--timeout` 参数
 

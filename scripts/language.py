@@ -32,7 +32,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.io import atomic_write
-from common.llm import call_llm_raw
+from common.llm import LLM_BACKENDS, call_llm_raw
 from common.translation import (
     _scan_frontmatter_fields,
     detect_language,
@@ -287,7 +287,7 @@ Verdicts:
 Be conservative — only say "ok" if the content is genuinely acceptable for its intended language."""
 
 
-def audit_issues(issues: list[Issue], root: Path, *, backend: str = "claude_cli") -> None:
+def audit_issues(issues: list[Issue], root: Path, *, backend: str = "ollama") -> None:
     """Phase 2: Use Claude to review each flagged file."""
     auditable = [i for i in issues if i.kind in (
         "zh_low_cjk", "en_high_cjk", "prompt_leak",
@@ -695,9 +695,9 @@ def main() -> int:
     p_hugo.add_argument("--fix", action="store_true", help="All phases: scan + audit + fix")
     p_hugo.add_argument("--dry-run", action="store_true", help="Preview fixes without writing")
     p_hugo.add_argument("--dir", type=Path, help="Scan a specific directory")
-    p_hugo.add_argument("--api", default="claude_cli",
-                        choices=["claude_cli", "anthropic", "openai", "ollama"],
-                        help="LLM backend for audit phase (default: claude_cli)")
+    p_hugo.add_argument("--api", default="ollama",
+                        choices=list(LLM_BACKENDS),
+                        help="LLM backend for audit phase (default: ollama)")
     p_hugo.set_defaults(func=cmd_hugo)
 
     p_reports = sub.add_parser(
