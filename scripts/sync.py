@@ -68,6 +68,16 @@ SYNC_DIRS: dict[str, list[tuple[str, str]]] = {
         ("tools/website/static/images/weekly", "website/static/images/weekly"),
         ("tools/website/static/images/monthly", "website/static/images/monthly"),
         ("tools/website/static/benchmark-report", "website/static/benchmark-report"),
+        # Built by ../ai-companion, not by this repo (the dag category was
+        # removed here), but it lands in this site tree and is published from
+        # it — so it needs a way onto the other machines for exactly the reason
+        # above. Without this the page deletes itself again the moment a second
+        # machine publishes.
+        ("tools/website/static/dag", "website/static/dag"),
+        # Same story, never yet triggered: both are gitignored and published,
+        # so a machine without them stages their deletion on the next publish.
+        ("tools/website/static/videos", "website/static/videos"),
+        ("tools/website/static/pdfs", "website/static/pdfs"),
         ("tools/website/content/leetcode", "website/leetcode"),
         ("tools/website/content/posts", "website/posts"),
     ],

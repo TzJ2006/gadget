@@ -176,3 +176,61 @@ def test_status_reports_file_mappings_too():
     assert "SYNC_FILES" in src, (
         "cmd_status ignores SYNC_FILES, so a category whose mappings are all "
         "files reports nothing")
+
+
+# ─── every published-but-untracked static tree needs transport ───────
+
+def test_no_gitignored_static_tree_is_left_without_transport():
+    """A gitignored static/ directory with no sync entry deletes itself.
+
+    publish.py wipes public/ and rebuilds it from whatever static/ holds, then
+    commits and pushes the result. So a directory that git does not carry and
+    rclone does not carry exists only on the machine that made it, and the next
+    publish from anywhere else stages its deletion — while the markdown goes on
+    linking it. That is how /dag/ was lost, and how /images/daily/ would have
+    been the moment the chart was wired in.
+
+    This walks the .gitignore rules rather than a hardcoded list, so a new
+    ignored namespace fails here instead of failing silently in production.
+    """
+    import re
+
+    from common.paths import GADGET_ROOT
+
+    rules = (GADGET_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    ignored_dirs = []
+    for line in rules:
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("!"):
+            continue
+        m = re.fullmatch(r"(tools/website/static/[\w\-./]+)/", line)
+        if m:
+            ignored_dirs.append(m.group(1))
+    assert ignored_dirs, ".gitignore no longer ignores any static tree — check the parser"
+
+    synced = {local for local, _remote in sync.SYNC_DIRS["website"]}
+
+    def covered(d: str) -> bool:
+        # A parent entry carries its children (static/images/ vs images/daily).
+        return any(s == d or s.startswith(d + "/") or d.startswith(s + "/")
+                   for s in synced)
+
+    orphans = [d for d in ignored_dirs if not covered(d)]
+    assert not orphans, (
+        "gitignored and published but never synced: " + ", ".join(orphans) +
+        " -- these exist only on the machine that generated them")
+
+
+def test_the_named_static_namespaces_are_all_present():
+    """Spelled out, so deleting an entry fails loudly rather than by inference."""
+    synced = {local for local, _remote in sync.SYNC_DIRS["website"]}
+    for required in (
+        "tools/website/static/images/daily",
+        "tools/website/static/images/weekly",
+        "tools/website/static/images/monthly",
+        "tools/website/static/benchmark-report",
+        "tools/website/static/dag",
+        "tools/website/static/videos",
+        "tools/website/static/pdfs",
+    ):
+        assert required in synced, f"{required} lost its sync entry"
