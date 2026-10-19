@@ -2,26 +2,64 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import time
+from urllib.parse import urlparse
 
 from common.engine.base import SAMPLING_DEFAULTS, TranslationEngine, build_chat_messages
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434/v1"
+
+
+def llm_route() -> str:
+    """Explicit text route. Empty means callers choose a backend themselves."""
+    return (os.environ.get("GADGET_LLM_ROUTE") or os.environ.get("LC_LLM_ROUTE") or "").strip().lower()
+
+
+def _host_is_local(host: str) -> bool:
+    name = (host or "").strip().lower().strip("[]")
+    if name in {"localhost", "127.0.0.1", "::1"} or name.endswith(".local"):
+        return True
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return bool(address.is_private or address.is_loopback or address.is_link_local)
+
+
+def _is_local_http(url: str) -> bool:
+    parsed = urlparse(url if "://" in url else "http://" + url)
+    return _host_is_local(parsed.hostname or "")
+
+
+def resolve_local_ollama_base() -> str:
+    """OpenAI-compatible base URL for a local Ollama server.
+
+    A public ``OPENAI_BASE_URL`` is ignored. A public ``OLLAMA_BASE_URL`` raises.
+    The local client never sends text to a cloud host.
+    """
+    explicit = os.environ.get("OLLAMA_BASE_URL", "").strip().rstrip("/")
+    if explicit:
+        if not _is_local_http(explicit):
+            raise RuntimeError("OLLAMA_BASE_URL 不是本机或局域网地址，已拒绝把文本发到该地址。")
+        return explicit if explicit.endswith("/v1") else explicit + "/v1"
+    compat = os.environ.get("OPENAI_BASE_URL", "").strip().rstrip("/")
+    if compat and _is_local_http(compat):
+        return compat if compat.endswith("/v1") else compat + "/v1"
+    return _DEFAULT_OLLAMA_BASE
+
 
 def ollama_native_host() -> str:
-    """Root URL of the local Ollama server (native /api/*), derived from the same
-    env the chat backend uses. Strips a trailing /v1 (that's the OpenAI-compat path).
+    """Root URL of the local Ollama server (native /api/*). Strips a trailing /v1.
 
     Default is 127.0.0.1, NOT localhost: on Windows, localhost resolves IPv6-first
     and stalls ~2s per request before falling back to IPv4 (measured in
     test/performance/results/localhost_overhead.json)."""
-    base = (os.environ.get("OLLAMA_BASE_URL")
-            or os.environ.get("OPENAI_BASE_URL")
-            or "http://127.0.0.1:11434/v1")
-    host = base.rstrip("/")
+    host = resolve_local_ollama_base().rstrip("/")
     if host.endswith("/v1"):
         host = host[:-len("/v1")]
     return host
@@ -62,41 +100,30 @@ def _ollama_available(model: str) -> bool:
     return tags is not None and _model_in_tags(model, tags)
 
 
-def free_ollama_vram() -> None:
-    """Best-effort: unload models a local Ollama server is holding, before we
-    load a translation model onto the same GPU.
+def free_ollama_vram() -> tuple[bool, str]:
+    """Ask the shared authority to unload this Ollama instance.
 
-    On a single-GPU box the summarizer's resident model (e.g. ~18GB for
-    gemma4-26B) leaves little room for the GGUF translator, so both co-resident
-    can hit the VRAM ceiling. Freeing it first avoids the OOM. Probes the local
-    Ollama endpoint (OLLAMA_BASE_URL > OPENAI_BASE_URL > 127.0.0.1:11434); if
-    nothing is there the /api/ps probe fails fast and this no-ops. All errors
-    swallowed.
-
-    Evicting Ollama means the *next* summarize call cold-reloads (~8s); set
-    GADGET_KEEP_OLLAMA=1 to skip eviction on boxes where co-residence fits (multi-GPU
-    or small chat model) and that reload costs more than the VRAM it frees.
+    GADGET_KEEP_OLLAMA=1 does not unload and does not free the residency slot.
+    A probe failure or another active caller leaves the models loaded.
+    Unmanaged GPU processes are not killed.
     """
     import json
     import urllib.request
 
     if os.environ.get("GADGET_KEEP_OLLAMA", "").strip().lower() in ("1", "true", "yes"):
         logger.debug("GADGET_KEEP_OLLAMA set — skipping Ollama VRAM eviction")
-        return
+        return False, "GADGET_KEEP_OLLAMA 已设置，未卸载，驻留槽仍保留"
+
+    try:
+        from model_access.resources import evict_endpoint
+    except ImportError as exc:
+        logger.warning("未安装 model_access，拒绝卸载 Ollama")
+        return False, "未安装 model_access，拒绝卸载 Ollama"
 
     host = ollama_native_host()
 
-    try:  # which models are resident? fall back to the configured one.
-        with urllib.request.urlopen(host + "/api/ps", timeout=3) as resp:
-            loaded = [m.get("model") for m in json.load(resp).get("models", [])]
-    except Exception:
-        loaded = []
-    if not loaded:
-        cfg = os.environ.get("OLLAMA_MODEL") or os.environ.get("OPENAI_MODEL")
-        loaded = [cfg] if cfg else []
-
-    for model in filter(None, loaded):
-        try:  # keep_alive=0 tells Ollama to unload immediately
+    def _unload(model: str) -> bool:
+        try:
             req = urllib.request.Request(
                 host + "/api/generate",
                 data=json.dumps({"model": model, "keep_alive": 0}).encode("utf-8"),
@@ -104,8 +131,14 @@ def free_ollama_vram() -> None:
             )
             urllib.request.urlopen(req, timeout=5).read()
             logger.info("Freed Ollama VRAM: unloaded %s", model)
+            return True
         except Exception:
-            pass
+            return False
+
+    ok, reason = evict_endpoint("gadget-engine", host, unload=_unload)
+    if not ok:
+        logger.warning("Ollama unload was not confirmed: %s", reason)
+    return ok, reason
 
 
 _free_ollama_vram = free_ollama_vram
@@ -133,10 +166,25 @@ class OllamaEngine(TranslationEngine):
         self._timeout = timeout or int(os.environ.get("OLLAMA_TRANSLATION_TIMEOUT", "300"))
         self._raw_hy = "hy-mt" in model_id.lower()
 
+    def _admit(self):
+        try:
+            from model_access.resources import require_local
+        except ImportError as exc:
+            raise RuntimeError(
+                "未安装 model_access，拒绝在没有统一 GPU 租约的情况下加载模型。"
+            ) from exc
+        if getattr(self, "_lease_id", ""):
+            return
+        gate = require_local(
+            self.model_id, holder="gadget-engine", backend="ollama", endpoint=self._host, purpose="text",
+        )
+        self._lease_id = gate.lease_id
+
     def load(self) -> None:
         # Fail loud up front (server down / model not pulled) rather than erroring
         # per-chunk mid-translation. Callers that select ollama explicitly get a
         # clear pull hint; the auto-detect path pre-gates on _ollama_available().
+        self._admit()
         tags = _ollama_tags(self._host, timeout=5)
         if tags is None:
             raise RuntimeError(
@@ -158,6 +206,7 @@ class OllamaEngine(TranslationEngine):
         *,
         max_new_tokens: int = 4096,
     ) -> list[str]:
+        self._admit()
         options = {
             "temperature": SAMPLING_DEFAULTS["temperature"],
             "top_p": SAMPLING_DEFAULTS["top_p"],
@@ -257,5 +306,13 @@ class OllamaEngine(TranslationEngine):
                 (data.get("load_duration") or 0) / 1e9)
 
     def unload(self) -> None:
-        # The model is owned by the Ollama server; nothing to release in-process.
-        pass
+        # The server still owns the weights. Drop our use lease only.
+        lease_id = getattr(self, "_lease_id", "")
+        self._lease_id = ""
+        if not lease_id:
+            return
+        try:
+            from model_access.resources import ResourceBoard
+        except ImportError:
+            return
+        ResourceBoard().release(lease_id)

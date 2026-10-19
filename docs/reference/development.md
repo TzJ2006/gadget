@@ -16,17 +16,18 @@ first for the layering rules.
 
 ### 1. Add a translation backend — the clean one ⭐
 
-Localized to **`common/engine.py`**: add a `TranslationEngine` subclass
-(template: the 4 existing classes — implement `load()`,
+Localized to **`common/engine/`**: add a `TranslationEngine` subclass
+(template: the four classes in `ollama.py`, `vllm.py`, `transformers.py`, and
+`llamacpp.py` — implement `load()`,
 `generate_batch(prompts, *, max_new_tokens=4096)`, `unload()`), add the name to
-`_TRANSLATION_BACKENDS` (`:797`), and add one `elif` in `create_engine()`'s
-explicit-branch block (`:826-834`). Consumers call `create_engine()`
+`_TRANSLATION_BACKENDS`, add one `elif` in `create_engine()`, and export the
+class from `common/engine/__init__.py`. Consumers call `create_engine()`
 generically, so **no tool code changes**.
 
-- For auto-selection: add an availability probe (pattern `_vllm_available` / `_llamacpp_available` / `_ollama_available`) + a branch in the auto chain (`:835-860`).
-- For a **server-side** backend (no in-process GPU): add it to the `isinstance(eng, OllamaEngine)` VRAM-eviction gate at `:864` so it doesn't needlessly evict the Ollama chat model.
-- **Loud failure**: an explicit `GADGET_TRANSLATION_BACKEND` value outside `_TRANSLATION_BACKENDS` raises `ValueError` before dispatch (`:808-811`); empty/unset still auto-selects.
-- **Silent failure**: a name that IS in `_TRANSLATION_BACKENDS` but has no `elif` branch passes validation and falls into the auto-select chain, whose final else (`:858-860`) returns `TransformersEngine` — your new backend is silently never used.
+- For auto-selection: add an availability probe (pattern `_vllm_available` / `_llamacpp_available` / `_ollama_available`) + a branch in the auto chain.
+- For a **server-side** backend (no in-process GPU): add it to the `isinstance(eng, OllamaEngine)` VRAM-eviction gate so it doesn't needlessly evict the Ollama chat model.
+- **Loud failure**: an explicit `GADGET_TRANSLATION_BACKEND` value outside `_TRANSLATION_BACKENDS` raises `ValueError` before dispatch; empty/unset still auto-selects.
+- **Silent failure**: a name that IS in `_TRANSLATION_BACKENDS` but has no `elif` branch passes validation and falls into the auto-select chain, whose final else returns `TransformersEngine` — your new backend is silently never used.
 
 ### 2. Add an LLM chat backend
 

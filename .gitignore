@@ -111,12 +111,6 @@ node_modules/
 tools/website/content/Resume.md
 tools/website/content/Resume.zh.md
 
-# >>> AI Dev Companion (managed)
-# 3a tests-preserving (aidev init / HistoryStore; installer may replace this block)
-.devcompanion/*
-!.devcompanion/tests/
-# <<< AI Dev Companion
-
 # ai-companion (local tooling, not part of this project)
 .companion/
 .devcompanion/

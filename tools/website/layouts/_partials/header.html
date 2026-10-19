@@ -60,7 +60,7 @@
                 
                 {{- if (not site.Params.disableLangToggle) }}
                     {{- $lang := .Lang}}
-                    {{- with site.Home.Translations }}
+                    {{- with (.Translations | default site.Home.Translations) }}
                     {{- $separator := or $label_text (not site.Params.disableThemeToggle)}}
                     {{- if $separator }}<span class="nav-sep">|</span>{{ end }}
                     <ul class="lang-menu">
@@ -93,6 +93,10 @@
             {{- $is_search := eq (site.GetPage .KeyName).Layout `search` }}
             {{- $is_active := or (eq $menu_item_url $page_url) (and .HasChildren (hasPrefix $page_url $menu_item_url)) }}
             <li class="{{ if .HasChildren }}has-submenu{{ end }}">
+                {{- if .HasChildren }}
+                <details class="menu-disclosure">
+                    <summary>{{ .Name }} <span class="submenu-caret" aria-hidden="true">▾</span></summary>
+                {{- else }}
                 <a href="{{ .URL | absLangURL }}" title="{{ .Title | default .Name }} {{- cond $is_search (" (Alt + /)" | safeHTMLAttr) ("" | safeHTMLAttr ) }}"
                 {{- cond $is_search (" accesskey=/" | safeHTMLAttr) ("" | safeHTMLAttr ) }}>
                     <span {{- if $is_active }} class="active" {{- end }}>
@@ -112,6 +116,7 @@
                     </svg>
                     {{- end }}
                 </a>
+                {{- end }}
                 {{- if .HasChildren }}
                 <ul class="submenu" aria-label="{{ .Name }}">
                     {{- range .Children }}
@@ -127,6 +132,7 @@
                     </li>
                     {{- end }}
                 </ul>
+                </details>
                 {{- end }}
             </li>
             {{- end }}

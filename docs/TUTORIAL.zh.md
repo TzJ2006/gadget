@@ -358,12 +358,11 @@ claude:
     ANTHROPIC_AWS_BASE_URL: ""                 # (optional) 公司代理
   ```
 
-**`install`** — pip extras + ai-companion + Claude 插件 + 额外全局 npm：
+**`install`** — pip extras + Claude 插件 + 额外全局 npm：
 
 ```yaml
 install:
   enabled: true
-  ai_companion: true                    # npx tsx ../ai-companion/scripts/install.ts . --enforce（skills/hooks/harness，claude+codex）
   claude_plugins: []                    # RISKY（提示确认）：`claude plugin install <id>` 列表
   pip_extras: [all]                     # 要安装的 extras；默认 [all] = summarize+research+benchmark+website，不含 translator
   global_npm: []                        # RISKY（提示确认）：额外 `npm i -g` 包

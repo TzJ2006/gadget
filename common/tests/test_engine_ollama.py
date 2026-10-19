@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 import common.engine as engine
 
 
@@ -118,8 +120,20 @@ def test_oversized_prompt_bumps_num_ctx(monkeypatch):
     assert seen["body"]["options"]["num_ctx"] == 16384
 
 
+class _Allow:
+    allowed = True
+    allow_unload = True
+    reason = ""
+
+
+def _allow_resources(monkeypatch):
+    """Backend-selection tests are not the lease policy. That has its own cases."""
+    monkeypatch.setattr(engine, "_resource_gate", lambda backend, model: _Allow())
+
+
 def test_factory_selects_ollama_when_backend_env_set(monkeypatch):
     engine._engine_cache.clear()
+    _allow_resources(monkeypatch)
     monkeypatch.setenv("GADGET_TRANSLATION_BACKEND", "ollama")
     monkeypatch.setenv("OLLAMA_TRANSLATION_MODEL", "hf.co/tencent/Hy-MT2-1.8B-GGUF")
     # Pretend the server is up with the model pulled, so load() passes offline.
@@ -135,6 +149,7 @@ def test_factory_selects_ollama_when_backend_env_set(monkeypatch):
 
 def test_factory_auto_prefers_ollama_when_available(monkeypatch):
     engine._engine_cache.clear()
+    _allow_resources(monkeypatch)
     monkeypatch.delenv("GADGET_TRANSLATION_BACKEND", raising=False)
     monkeypatch.delenv("GADGET_TRANSLATION_MODEL", raising=False)
     monkeypatch.delenv("OLLAMA_TRANSLATION_MODEL", raising=False)
@@ -154,6 +169,7 @@ def test_factory_auto_skips_ollama_for_overridden_model(monkeypatch):
     """A custom model (not the default) must NOT be silently routed to ollama's
     default tag — it falls through to an in-process backend that honors it."""
     engine._engine_cache.clear()
+    _allow_resources(monkeypatch)
     monkeypatch.delenv("GADGET_TRANSLATION_BACKEND", raising=False)
     monkeypatch.setenv("GADGET_TRANSLATION_MODEL", "some-org/custom-translator")
     monkeypatch.setattr(engine, "_ollama_available", lambda model: True)  # ollama IS up
@@ -172,6 +188,7 @@ def test_cache_keyed_by_backend(monkeypatch):
     """Same model under two backends must yield two distinct engines — the old
     model-id-only key silently returned the first backend's engine for the second."""
     engine._engine_cache.clear()
+    _allow_resources(monkeypatch)
     monkeypatch.setattr(engine.OllamaEngine, "load", lambda self: None)
     monkeypatch.setattr(engine.LlamaCppEngine, "load", lambda self: None)
     monkeypatch.setattr(engine, "free_ollama_vram", lambda: None)
@@ -211,6 +228,56 @@ def test_ollama_native_host_defaults_to_ipv4(monkeypatch):
 
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1/")
     assert engine.ollama_native_host() == "http://127.0.0.1:11434"
+
+
+def test_ollama_host_ignores_public_openai_base(monkeypatch):
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("LC_LLM_ROUTE", "local_only")
+    assert engine.ollama_native_host() == "http://127.0.0.1:11434"
+
+
+def test_ollama_host_refuses_public_ollama_base(monkeypatch):
+    monkeypatch.setenv("OLLAMA_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("GADGET_LLM_ROUTE", "local_only")
+    with pytest.raises(RuntimeError, match="本机或局域网"):
+        engine.ollama_native_host()
+
+
+def test_create_engine_fails_closed_without_model_access(monkeypatch):
+    import builtins
+
+    engine._engine_cache.clear()
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.setenv("GADGET_TRANSLATION_BACKEND", "ollama")
+    monkeypatch.setattr(engine.OllamaEngine, "load", lambda self: (_ for _ in ()).throw(AssertionError("loaded")))
+    monkeypatch.setattr(engine, "free_ollama_vram", lambda: (_ for _ in ()).throw(AssertionError("evicted")))
+    real_import = builtins.__import__
+
+    def blocked(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "model_access" or name.startswith("model_access."):
+            raise ImportError("hidden")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    with pytest.raises(RuntimeError, match="model_access"):
+        engine.create_engine()
+    engine._engine_cache.clear()
+
+
+def test_create_engine_does_not_start_backend_when_lease_denied(monkeypatch):
+    engine._engine_cache.clear()
+    monkeypatch.setenv("GADGET_TRANSLATION_BACKEND", "llamacpp")
+    monkeypatch.setattr(
+        engine, "_resource_gate",
+        lambda backend, model: type("G", (), {"allowed": False, "allow_unload": False, "reason": "已有租约"})(),
+    )
+    monkeypatch.setattr(engine, "free_ollama_vram", lambda: (_ for _ in ()).throw(AssertionError("evicted")))
+    monkeypatch.setattr(engine.LlamaCppEngine, "load", lambda self: (_ for _ in ()).throw(AssertionError("loaded")))
+    with pytest.raises(RuntimeError, match="已有租约"):
+        engine.create_engine()
+    engine._engine_cache.clear()
 
 
 def test_free_ollama_vram_uses_native_host(monkeypatch):

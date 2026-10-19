@@ -261,3 +261,14 @@ python -m summarize weekly generate --week 2026-W12 --deploy
 ## 详细教程
 
 参见 [tutorial.md](tutorial.md)。
+
+## File map
+
+Entry is `python -m summarize`. This package stays flat: new modules go in `tools/summarize/`, not a new subpackage. The long command list is in [tutorial.md](tutorial.md). LLM calls go through `common.llm`.
+
+| Role | Files |
+|---|---|
+| Daily pipeline | `daily.py`, `daily_export.py`, `daily_merge.py`, `daily_deploy.py`, `daily_helpers.py` |
+| Period implementations | `weekly_summary.py`, `monthly_summary.py` |
+| Shared period helper | `period_report.py` |
+| Shim (leave in place) | `daily_summary.py` |

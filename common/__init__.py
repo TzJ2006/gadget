@@ -6,6 +6,13 @@ LLM or translation engines.
 
 Public modules: bilingual, cache, config, engine, hugo, io, json_utils,
 llm, paths, site_staging, translation, website_backup.
+
+Consumers identify this install by the ``gadget`` distribution, not by the
+import name ``common``.
 """
+
+DISTRIBUTION = "gadget"
+CAPABILITY = "gadget.common"
+INTERFACE_VERSION = "1.0"
 
 __all__ = []

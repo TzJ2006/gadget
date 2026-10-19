@@ -36,7 +36,6 @@ summarize/                   # pip 可安装包（python -m summarize）
 ├── monthly_summary.py       # 月度总结 (generate / list)
 ├── weekly_summary.py        # 周报总结 (generate / list)
 ├── daily_summary.py         # 向后兼容 re-export shim（旧 import 路径仍可用）
-├── llm_backends.py          # 重导出 shim → common/
 ├── requirements.txt         # Python 依赖
 └── tests/                   # pytest 测试套件
     ├── test_imports.py      # 导入契约测试（重构后必跑）
@@ -61,6 +60,8 @@ outputs/                     # 所有生成文件（项目根目录下，已 git
 
 config.json                  # 仓库根统一配置（summarize 段：设备别名、输出路径、rclone 远端；config --init 写入，gitignored，模板 config.example.json）
 ```
+
+LLM 调用走 `common.llm`。文件角色见 [README.md](README.md) 的 File map。
 
 ## 前置条件
 

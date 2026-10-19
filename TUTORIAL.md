@@ -358,12 +358,11 @@ claude:
     ANTHROPIC_AWS_BASE_URL: ""                 # (optional) corporate proxy
   ```
 
-**`install`** — pip extras + ai-companion + Claude plugins + extra global npm:
+**`install`** — pip extras + Claude plugins + extra global npm:
 
 ```yaml
 install:
   enabled: true
-  ai_companion: true                    # npx tsx ../ai-companion/scripts/install.ts . --enforce (skills/hooks/harness, claude+codex)
   claude_plugins: []                    # RISKY (prompts for confirmation): list of `claude plugin install <id>`
   pip_extras: [all]                     # extras to install; default [all] = summarize+research+benchmark+website, NOT translator
   global_npm: []                        # RISKY (prompts for confirmation): extra `npm i -g` packages

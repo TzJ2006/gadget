@@ -398,16 +398,17 @@ def cmd_merge(args):
             print(f"[error] {e}")
             sys.exit(1)
 
-        # 保存缓存
-        try:
-            _atomic_write(cache_path, json.dumps(report, ensure_ascii=False, indent=2))
-            print(f"[info] AI 总结已缓存: {cache_path}")
-        except OSError as e:
-            print(f"[warn] 缓存写入失败: {e}")
+        # --no-cache 只强制重算，不把这次结果写回默认缓存。
+        if use_cache:
+            try:
+                _atomic_write(cache_path, json.dumps(report, ensure_ascii=False, indent=2))
+                print(f"[info] AI 总结已缓存: {cache_path}")
+            except OSError as e:
+                print(f"[warn] 缓存写入失败: {e}")
 
-        # 最终报告缓存成功后，清理 chunk 缓存
-        if chunk_cache_dir:
-            _cleanup_chunk_cache(chunk_cache_dir)
+            # 最终报告缓存成功后，清理 chunk 缓存
+            if chunk_cache_dir:
+                _cleanup_chunk_cache(chunk_cache_dir)
 
     _sort_report_by_importance(report)
 

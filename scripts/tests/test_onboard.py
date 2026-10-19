@@ -49,6 +49,29 @@ def test_run_steps_catches_exception(monkeypatch):
     assert results["install"].status == "ok"          # loop continued
 
 
+# --- install ---------------------------------------------------------------
+
+
+def test_install_ignores_retired_companion_option(monkeypatch):
+    """Old onboarding sheets must not reinstall repository interception hooks."""
+    calls = []
+    plugins = []
+    monkeypatch.setattr(onboard, "_which", lambda name: name)
+    monkeypatch.setattr(onboard.Path, "is_file", lambda self: True)
+    monkeypatch.setattr(onboard, "_run", lambda cmd, **kw: calls.append(cmd) or True)
+    monkeypatch.setattr(onboard, "_install_claude_plugin", lambda pid, ctx: plugins.append(pid))
+    ctx = onboard.Ctx(dry_run=True, assume_yes=True, sheet={})
+
+    onboard.step_install({
+        "ai_companion": True,
+        "pip_extras": ["research"],
+        "claude_plugins": ["example-plugin"],
+    }, ctx)
+
+    assert calls == [[onboard.sys.executable, "-m", "pip", "install", "-e", ".[research]"]]
+    assert plugins == ["example-plugin"]
+
+
 # --- claude auth ------------------------------------------------------------
 
 

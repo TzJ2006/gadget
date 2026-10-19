@@ -8,7 +8,15 @@ version = "0.1.0"
 description = "Toolkit of five standalone tools: AI conversation reports, paper discovery, CPU/GPU benchmarking, Hugo blog publish, and Gradio document translation"
 license = {text = "GPL-3.0-or-later"}
 requires-python = ">=3.10"
-dependencies = []
+# Loading or unloading a managed local model imports the installed package
+# `model_access` (distribution name model-access). Do not put the personalAgent
+# checkout on PYTHONPATH. model-access is not on PyPI. Install that local project
+# first, then this one, both without -e:
+#   python -m pip install D:/GitHub/personalAgent/shared
+#   python -m pip install D:/GitHub/gadget
+# If model-access is absent, model load/unload fails instead of starting an unmanaged backend.
+# Heavy extras stay optional.
+dependencies = ["model-access>=0.1,<1"]
 classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
 ]
@@ -25,4 +33,10 @@ all = ["gadget[summarize,research,benchmark,website]"]
 
 [tool.setuptools]
 package-dir = {"summarize" = "tools/summarize", "research" = "tools/research", "translator" = "tools/translator", "benchmark" = "tools/benchmark/benchmark"}
-packages = ["common", "common.engine", "common.translation", "summarize", "research", "research.apis", "research.scout", "translator", "benchmark"]
+packages = ["common", "common.engine", "common.translation", "summarize", "research", "research.apis", "research.scout", "translator", "translator.text_entry", "benchmark"]
+
+[tool.setuptools.package-data]
+summarize = ["PROVIDER.toml"]
+"research.scout" = ["PROVIDER.toml"]
+translator = ["PROVIDER.toml"]
+"translator.text_entry" = ["PROVIDER.toml"]

@@ -7,8 +7,9 @@
 {{- if not .IsHome | and .Title }}
 <header class="page-header">
   {{- partial "breadcrumbs.html" . }}
+  <p class="blog-kicker">{{ site.Title }} / {{ if eq .Section "posts" }}{{ if eq .Language.Lang "zh" }}博文与笔记{{ else }}BLOG & NOTES{{ end }}{{ else }}{{ .Section | humanize | upper }}{{ end }}</p>
   <h1>
-    {{ .Title }}
+    {{ if eq .Section "posts" }}{{ if eq .Language.Lang "zh" }}实验、观察与思考。{{ else }}Experiments, observations & ideas.{{ end }}{{ else }}{{ .Title }}{{ end }}
     {{- if and (or (eq .Kind `term`) (eq .Kind `section`)) (.Param "ShowRssButtonInSectionTermList") }}
     {{- with .OutputFormats.Get "rss" }}
     <a href="{{ .RelPermalink }}" title="RSS" aria-label="RSS">
@@ -22,6 +23,9 @@
     {{- end }}
     {{- end }}
   </h1>
+  {{- if eq .Section "posts" }}
+  <p class="blog-intro">{{ if eq .Language.Lang "zh" }}关于模型、工具，以及我们如何与 AI 一起工作的博文与笔记。{{ else }}Notes from programming, research, and everyday learning.{{ end }}</p>
+  {{- end }}
   {{- if .Description }}
   <div class="post-description">
     {{ .Description | markdownify }}
@@ -53,6 +57,7 @@
 
 {{- if and .IsHome site.Params.homeInfoParams (eq $paginator.PageNumber 1) }}
 {{- partial "home_info.html" . }}
+<h2 class="blog-kicker">{{ if eq .Language.Lang "zh" }}最新博文{{ else }}LATEST POSTS{{ end }}</h2>
 {{- end }}
 
 {{- $term := .Data.Term }}

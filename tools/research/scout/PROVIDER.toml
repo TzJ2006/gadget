@@ -1,0 +1,39 @@
+# Public contract for gadget research. This package owns the version.
+
+capability = "research.report"
+interface = "1.0"
+entry = "usage.py"
+sources = ["usage.py", "cli.py"]
+distribution = "gadget"
+business_entry = "python -m research.scout"
+
+[input]
+positional = ["command"]
+commands = ["list", "search", "ask", "report", "profile", "citations"]
+
+[output]
+stdout = "text"
+
+[errors]
+usage_exit = 2
+failure_exit = 1
+stream = "stderr"
+
+[effects]
+reads_input = true
+writes_caller_files = true
+network = "configured-search-and-model"
+gpu = "caller-configured-model"
+downloads = "none-by-this-boundary"
+
+[dependencies]
+packages = ["gadget"]
+optional_packages = ["arxiv", "openai"]
+env = ["OLLAMA_HOST"]
+
+[resources]
+resident_model = "caller-selected"
+loads_weights_at_discovery = false
+
+[optional]
+commands = []

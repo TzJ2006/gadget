@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable
@@ -51,9 +52,24 @@ _TRUTHY = ("1", "true", "yes", "on")
 def _split_field(line: str, prefix: str) -> tuple[str, str]:
     """Return (quote_char, unquoted_value) for the part of *line* after *prefix*."""
     raw_value = line[len(prefix):].strip()
-    if raw_value[:1] in {'"', "'"} and raw_value[-1:] == raw_value[:1]:
-        return raw_value[:1], raw_value[1:-1]
+    if len(raw_value) >= 2 and raw_value[0] == '"' and raw_value[-1] == '"':
+        # Decode YAML escapes (`$\\pi$` → `$\pi$`) so the model sees real text;
+        # _quote_field re-escapes on write. Hand-written non-JSON escapes fall back.
+        try:
+            return '"', json.loads(raw_value)
+        except ValueError:
+            return '"', raw_value[1:-1]
+    if len(raw_value) >= 2 and raw_value[0] == "'" and raw_value[-1] == "'":
+        return "'", raw_value[1:-1]
     return "", raw_value
+
+
+def _quote_field(quote: str, value: str) -> str:
+    """Inverse of _split_field: a translated `$\\pi$` must not reach Hugo as
+    the invalid YAML escape `"\\p"`."""
+    if quote == '"':
+        return json.dumps(value, ensure_ascii=False)
+    return f"{quote}{value}{quote}"
 
 
 def _scan_frontmatter_fields(
@@ -105,7 +121,7 @@ def _apply_translated_fields(
         _, raw_value = _split_field(lines[line_idx], prefix)
         _, protected_map = protect_fragments(raw_value)
         restored = restore_fragments(translated, protected_map).strip().strip('"').strip("'")
-        result_lines[line_idx] = f"{prefix} {quote}{restored}{quote}".rstrip()
+        result_lines[line_idx] = f"{prefix} {_quote_field(quote, restored)}".rstrip()
     return result_lines
 
 

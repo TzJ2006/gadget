@@ -47,7 +47,7 @@ IS_WINDOWS = platform.system() == "Windows"
 SSH_DIR = Path("~/.ssh").expanduser()
 SSH_CONFIG = SSH_DIR / "config"
 # User-level Claude Code settings (every OS). NOT the repo's project .claude/settings.json
-# (which carries the dev hooks) — secrets belong here, outside the repo.
+# — secrets belong in user settings, outside the repo.
 CLAUDE_USER_SETTINGS = Path("~/.claude/settings.json").expanduser()
 SENTINEL = "managed-by: gadget-onboard"
 DEFAULT_SHEET = GADGET_ROOT / "tokens" / "onboard.yaml"
@@ -466,21 +466,8 @@ def step_claude(cfg: dict, ctx: Ctx) -> StepResult:
 
 
 # ---------------------------------------------------------------------------
-# Step: install  (pip extras + ai-companion + plugins + extra npm)
+# Step: install  (pip extras + plugins + extra npm)
 # ---------------------------------------------------------------------------
-
-
-def _install_ai_companion(ctx: Ctx) -> None:
-    root = Path(os.environ.get("AI_COMPANION_ROOT", GADGET_ROOT.parent / "ai-companion")).expanduser()
-    script = root / "scripts" / "install.ts"
-    if not script.is_file():
-        print(f"  [warn] ai-companion installer not found: {script} (set AI_COMPANION_ROOT)")
-        return
-    npx = _which("npx")
-    if not npx:
-        print("  [warn] npx not found; cannot run ai-companion installer (install Node.js)")
-        return
-    _run([npx, "tsx", str(script), ".", "--enforce"], dry_run=ctx.dry_run, cwd=str(GADGET_ROOT))
 
 
 def _install_claude_plugin(pid: str, ctx: Ctx) -> None:
@@ -517,9 +504,6 @@ def step_install(cfg: dict, ctx: Ctx) -> StepResult:
         _run([sys.executable, "-m", "pip", "install", "-e", f".[{','.join(extras)}]"],
              dry_run=ctx.dry_run, cwd=str(GADGET_ROOT))
         detail.append(f"pip[{','.join(extras)}]")
-    if cfg.get("ai_companion"):
-        _install_ai_companion(ctx)
-        detail.append("ai-companion")
     for pid in (cfg.get("claude_plugins") or []):
         _install_claude_plugin(pid, ctx)
     for pkg in (cfg.get("global_npm") or []):

@@ -58,8 +58,10 @@ DEFAULT_BACKEND = os.environ.get("GADGET_LLM_BACKEND") or "ollama"
 LLM_BACKENDS = ("ollama", "anthropic", "openai", "claude_cli")
 
 # The abstract model names (sonnet/opus/haiku) mean nothing to Ollama; it serves
-# real tags. When OLLAMA_MODEL/OPENAI_MODEL are unset, fall back to this tag.
+# real tags. A concrete model on the call is kept. Otherwise OLLAMA_MODEL, then
+# this tag. OPENAI_MODEL belongs to the OpenAI environment and is not borrowed.
 DEFAULT_OLLAMA_CHAT_MODEL = "gemma4:26b"
+_ABSTRACT_CHAT_ALIASES = {"sonnet", "opus", "haiku"}
 
 
 def _clean_env() -> dict:
@@ -104,29 +106,53 @@ def _openai_extra_body() -> Optional[dict]:
     return {"reasoning_effort": effort} if effort else None
 
 
+def _refuse_cloud_route(backend: str) -> None:
+    """Apply the shared route. An empty route still lets the caller name a backend."""
+    from common.engine.ollama import llm_route
+
+    route = llm_route()
+    if not route:
+        return
+    try:
+        from model_access.routing import RouteError, enforce_named_backend
+    except ImportError as exc:
+        if route == "local_only" and backend != "ollama":
+            raise RuntimeError(f"local_only 拒绝后端 {backend}，不会把文本发给云端。") from exc
+        raise RuntimeError("未安装 model_access，已设置模型路由时拒绝自行选择后端。") from exc
+    try:
+        enforce_named_backend(route, backend, purpose="text")
+    except RouteError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
 def _ollama_client():
     """OpenAI SDK client pinned at a local Ollama server (keyless).
 
-    Base URL: ``OLLAMA_BASE_URL`` > ``OPENAI_BASE_URL`` > ``127.0.0.1:11434/v1``.
+    Base URL: local ``OLLAMA_BASE_URL``, else a local ``OPENAI_BASE_URL``, else
+    ``127.0.0.1:11434/v1``. A public OpenAI URL is not reused.
     """
     try:
         import openai
     except ImportError:
         raise RuntimeError("请安装 openai: pip install openai")
-    base_url = (os.environ.get("OLLAMA_BASE_URL")
-                or os.environ.get("OPENAI_BASE_URL")
-                or OLLAMA_DEFAULT_BASE_URL)
+    from common.engine.ollama import resolve_local_ollama_base
     return openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY") or "EMPTY",
-                         base_url=base_url)
+                         base_url=resolve_local_ollama_base())
 
 
 def _ollama_model(default: str) -> str:
-    """Served model name for Ollama: ``OLLAMA_MODEL`` > ``OPENAI_MODEL`` >
-    ``DEFAULT_OLLAMA_CHAT_MODEL``. The caller's abstract *default* (sonnet/opus/haiku)
-    is not a valid Ollama tag, so it's ignored in favor of a real one."""
-    return (os.environ.get("OLLAMA_MODEL")
-            or os.environ.get("OPENAI_MODEL")
-            or DEFAULT_OLLAMA_CHAT_MODEL)
+    """Ollama tag for this call.
+
+    A concrete model name on the call wins. Abstract aliases use ``OLLAMA_MODEL``
+    or ``DEFAULT_OLLAMA_CHAT_MODEL``. ``OPENAI_MODEL`` is not a local model.
+    """
+    named = (default or "").strip()
+    if named and named not in _ABSTRACT_CHAT_ALIASES:
+        return named
+    own = (os.environ.get("OLLAMA_MODEL") or "").strip()
+    if own:
+        return own
+    return DEFAULT_OLLAMA_CHAT_MODEL
 
 
 def _log_chat_done(model: str, t0: float, response) -> None:
@@ -232,6 +258,7 @@ def call_llm_raw(
     Raises ``RuntimeError`` on failure (missing SDK, bad API key, non-zero exit, etc.).
     """
     logger.debug("LLM raw call: backend=%s model=%s prompt_chars=%d", backend, model, len(prompt))
+    _refuse_cloud_route(backend)
     if backend == "anthropic":
         return _raw_anthropic(prompt, model, timeout, max_tokens)
     elif backend == "openai":
@@ -243,11 +270,22 @@ def call_llm_raw(
     raise ValueError(f"Unknown LLM backend {backend!r}; valid: {LLM_BACKENDS}")
 
 
+def _claude_print_command(model: str) -> list[str]:
+    """Ordinary Claude print mode with tools disabled. Not a coding-agent grant."""
+    if not (model or "").strip():
+        raise RuntimeError("Claude CLI 调用没有附带模型名，不会改用其他环境的默认模型。")
+    try:
+        from model_access.providers.cli import plain_inference_args
+    except ImportError as exc:
+        raise RuntimeError("未安装 model_access，拒绝在无法限制工具权限时调用 Claude CLI。") from exc
+    return ["claude", "--print", "--model", model, *plain_inference_args("claude")]
+
+
 def _raw_claude_cli(prompt: str, model: str, timeout: int) -> str:
     logger.info("Calling Claude CLI (%s), prompt length: %d", model, len(prompt))
     try:
         result = subprocess.run(
-            ["claude", "--print", "--model", model],
+            _claude_print_command(model),
             input=prompt,
             capture_output=True, text=True, timeout=timeout,
             env=_clean_env(),
@@ -298,8 +336,24 @@ def _raw_openai(prompt: str, model: str, timeout: int, max_tokens: int) -> str:
                      prompt, timeout, max_tokens)
 
 
+def _admit_ollama_text(model: str):
+    """Shared local residency. A refused lease never builds the HTTP client."""
+    try:
+        from model_access.resources import LocalAdmissionError, lease_local
+    except ImportError as exc:
+        raise RuntimeError("未安装 model_access，拒绝在没有统一 GPU 租约的情况下调用本地模型。") from exc
+    from common.engine.ollama import ollama_native_host
+    return lease_local("gadget-llm", model, endpoint=ollama_native_host(), purpose="text"), LocalAdmissionError
+
+
 def _raw_ollama(prompt: str, model: str, timeout: int, max_tokens: int) -> str:
-    return _chat_raw(_ollama_client(), _ollama_model(model), prompt, timeout, max_tokens)
+    served = _ollama_model(model)
+    lease, denied = _admit_ollama_text(served)
+    try:
+        with lease:
+            return _chat_raw(_ollama_client(), served, prompt, timeout, max_tokens)
+    except denied as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 # ─── High-level: structured JSON calls ────────────────────────────────
@@ -322,6 +376,7 @@ class LLMCallConfig:
 
 def call_anthropic(config: LLMCallConfig) -> dict:
     """Call Anthropic Claude API and return parsed JSON dict."""
+    _refuse_cloud_route("anthropic")
     try:
         import anthropic
     except ImportError:
@@ -364,11 +419,14 @@ def call_openai(config: LLMCallConfig) -> dict:
     Real OpenAI, or an explicit ``OPENAI_BASE_URL`` override. For local Ollama use
     the ``ollama`` backend instead — it defaults to localhost and needs no key.
     """
+    _refuse_cloud_route("openai")
     return _chat_json(_openai_client(), _openai_model(config.openai_model), config)
 
 
 def call_ollama(config: LLMCallConfig) -> dict:
     """Call a local Ollama server (OpenAI protocol) and return parsed JSON dict.
+
+    The route gate runs first so an ``api`` or subscription route cannot land here.
 
     Ollama supports schema-constrained decoding, so the caller's tool schema is
     enforced rather than suggested — see ``_chat_json``. Real OpenAI is left on
@@ -376,14 +434,22 @@ def call_ollama(config: LLMCallConfig) -> dict:
     reject these schemas (no ``additionalProperties: false``, partial
     ``required``), and the cloud models honor the prompt anyway.
     """
-    return _chat_json(_ollama_client(), _ollama_model(config.openai_model), config,
-                      schema=_schema_from_tools(config.anthropic_tools))
+    _refuse_cloud_route("ollama")
+    served = _ollama_model(config.openai_model)
+    lease, denied = _admit_ollama_text(served)
+    try:
+        with lease:
+            return _chat_json(_ollama_client(), served, config,
+                              schema=_schema_from_tools(config.anthropic_tools))
+    except denied as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def call_claude_cli(config: LLMCallConfig) -> dict:
     """Call Claude Code CLI and return parsed JSON dict."""
+    _refuse_cloud_route("claude_cli")
     logger.info("Calling Claude Code CLI (timeout=%ds)...", config.timeout)
-    cmd = ["claude", "--print", "--model", config.claude_cli_model]
+    cmd = _claude_print_command(config.claude_cli_model)
     if config.thinking:
         cmd += ["--effort", "low"]
     try:
@@ -414,6 +480,7 @@ def call_claude_cli(config: LLMCallConfig) -> dict:
 def call_llm(api: str, config: LLMCallConfig) -> dict:
     """Dispatch to the appropriate backend."""
     logger.debug("LLM call: backend=%s model=%s", api, getattr(config, "model", "?"))
+    _refuse_cloud_route(api)
     if api == "anthropic":
         return call_anthropic(config)
     elif api == "openai":

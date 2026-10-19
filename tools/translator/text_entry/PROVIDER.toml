@@ -1,0 +1,40 @@
+# Public contract for gadget text translation. OCR keeps its own declaration.
+
+capability = "gadget.translator"
+interface = "1.0"
+entry = "cli.py"
+sources = ["cli.py"]
+distribution = "gadget"
+business_entry = "python -m translator.text_entry"
+
+[input]
+positional = ["json"]
+path_type = "stdin"
+
+[output]
+stdout = "json"
+
+[errors]
+usage_exit = 2
+failure_exit = 1
+stream = "stderr"
+
+[effects]
+reads_input = true
+writes_caller_files = false
+network = "configured-local-ollama"
+gpu = "caller-configured-model"
+downloads = "none-from-this-entry"
+
+[dependencies]
+packages = ["gadget", "model-access"]
+optional_packages = ["torch"]
+env = ["OLLAMA_HOST"]
+
+[resources]
+resident_model = "caller-selected"
+loads_weights_at_discovery = false
+requires_generate_batch = true
+
+[optional]
+output = ["error"]

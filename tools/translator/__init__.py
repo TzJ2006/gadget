@@ -3,3 +3,8 @@
 Logic lives in `core` (no GUI dependency, unit-tested); the Gradio UI is in
 `app`. Run with `python -m translator`.
 """
+
+DISTRIBUTION = "gadget"
+CAPABILITY = "translator"
+INTERFACE_VERSION = "1.0"
+PUBLIC_ENTRY = "python -m translator"

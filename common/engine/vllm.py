@@ -21,6 +21,8 @@ class VLLMEngine(TranslationEngine):
     def load(self) -> None:
         if self._llm is not None:
             return
+        from common.engine.llamacpp import _admit_inprocess
+        _admit_inprocess(self.model_id)
         from vllm import LLM
         from transformers import AutoTokenizer
 
@@ -76,10 +78,16 @@ class VLLMEngine(TranslationEngine):
     def unload(self) -> None:
         if self._llm is None:
             return
+        from common.engine.llamacpp import _release_inprocess
+        if not _release_inprocess(self.model_id):
+            logger.warning("refuse to unload %s while another caller is active", self.model_id)
+            return
         del self._llm
         del self._tokenizer
         self._llm = None
         self._tokenizer = None
+        from common.engine.llamacpp import _confirm_inprocess
+        _confirm_inprocess(self.model_id)
         logger.info("vLLM engine unloaded")
 
 
