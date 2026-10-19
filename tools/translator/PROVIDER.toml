@@ -1,0 +1,36 @@
+# Public contract for gadget OCR. This directory owns it; personalAgent does not invent the version.
+# interface is the CLI contract, not the OCR model version.
+
+capability = "documents.ocr"
+interface = "1.0"
+entry = "ocr_cli.py"
+sources = ["ocr_cli.py", "ocr_impl.py"]
+
+[input]
+positional = ["path"]
+path_type = "file"
+suffixes = [".png", ".jpg", ".jpeg", ".pdf", ".docx"]
+
+[output]
+stdout = "text"
+
+[errors]
+usage_exit = 2
+failure_exit = 1
+stream = "stderr"
+
+[effects]
+reads_input = true
+writes_caller_files = false
+network = "configured-local-ollama"
+gpu = "ocr-model-through-model_access"
+downloads = "only-when-TRANSLATOR_OCR_ALLOW_PULL-is-1"
+
+[dependencies]
+packages = ["model_access"]
+optional_packages = ["pymupdf"]
+env = ["TRANSLATOR_OCR_MODEL"]
+
+[optional]
+suffixes = []
+output = []

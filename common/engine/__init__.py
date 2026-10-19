@@ -129,11 +129,32 @@ def create_engine(model: str | None = None) -> TranslationEngine:
 
     # Only evict Ollama when we're about to grab the GPU in-process — never when the
     # translator IS the Ollama server (that would unload the model we just called).
+    # A lease held by another tool forbids both the unload and a second backend.
+    # Gate the model this engine will actually load, on its backend instance.
+    backend_name = "ollama" if isinstance(eng, OllamaEngine) else "inprocess"
+    gate = _resource_gate(backend_name, eng.model_id)
+    if not gate.allowed:
+        raise RuntimeError(gate.reason)
     if not isinstance(eng, OllamaEngine):
+        if not gate.allow_unload:
+            raise RuntimeError(gate.reason or "已有模型租约，拒绝卸载并拒绝启动第二个推理后端")
         free_ollama_vram()
     eng.load()
     _engine_cache[cache_key] = eng
     return _CachedEngineProxy(eng)
+
+
+def _resource_gate(backend: str, model: str):
+    """Require the installed model_access package. Do not search a parent checkout."""
+    try:
+        from model_access.resources import before_backend
+    except ImportError as exc:
+        raise RuntimeError(
+            "未安装 model_access，拒绝在没有统一 GPU 租约的情况下加载模型。"
+            "安装该包后再运行；不会改走未登记的推理后端。"
+        ) from exc
+    endpoint = ollama_native_host() if backend == "ollama" else ""
+    return before_backend(backend, model, holder="gadget-engine", endpoint=endpoint, purpose="text")
 
 
 def shutdown_engines() -> None:

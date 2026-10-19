@@ -1,0 +1,128 @@
+/* Shared reading surfaces; article content stays in the existing templates. */
+:root {
+    --nav-width: 1192px;
+    --main-width: 860px;
+    --theme: #f7f8f2;
+    --entry: #ffffff;
+    --primary: #25372b;
+    --secondary: #667160;
+    --content: #354333;
+    --tertiary: #d9f58b;
+    --code-bg: #edf1e5;
+    --border: #dce0d4;
+}
+
+:root[data-theme="dark"] {
+    --theme: #18221c;
+    --entry: #222f26;
+    --primary: #edf2e6;
+    --secondary: #adbba2;
+    --content: #d6dfcf;
+    --tertiary: #415337;
+    --code-bg: #28362a;
+    --code-block-bg: #202b23;
+    --border: #3b4a39;
+}
+
+body {
+    font-family: Arial, "Microsoft YaHei", sans-serif;
+}
+
+body.list { background: var(--theme); }
+.header { border-bottom: 1px solid var(--border); }
+.header-nav { min-height: 96px; align-items: center; }
+.logo > a { font-size: 27px; letter-spacing: -1.4px; }
+.logo > a::before {
+    content: "↗";
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: #25372b;
+    color: #d9f58b;
+    font-size: 25px;
+    line-height: 1;
+}
+.menu a, .lang-menu a { font-size: 13px; }
+.header .lang-menu a { letter-spacing: 0; }
+.main { padding-top: 40px; }
+.page-header, .post-header { margin: 16px 0 40px; }
+.breadcrumbs { margin-bottom: 25px; gap: 6px; }
+.breadcrumbs a { font-size: 12px; }
+.blog-kicker {
+    margin: 0 0 20px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.6px;
+    color: var(--secondary);
+}
+.page-header h1, .post-title {
+    font-size: clamp(32px, 4vw, 52px);
+    font-weight: 500;
+    line-height: 1.12;
+    letter-spacing: -1.8px;
+    text-wrap: balance;
+}
+.blog-intro, .post-description {
+    color: var(--secondary);
+    font-size: 17px;
+    line-height: 1.7;
+    margin-top: 20px;
+}
+.post-meta { font-size: 12px; margin-top: 20px; }
+.post-entry {
+    padding: 30px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    margin-bottom: 18px;
+}
+.post-entry:hover { border-color: var(--secondary); }
+.entry-header h2 { font-size: 25px; font-weight: 500; letter-spacing: -.5px; }
+.entry-content { font-size: 15px; line-height: 1.8; margin: 14px 0; }
+.entry-footer { font-size: 11px; letter-spacing: .3px; }
+.post-header { padding-bottom: 30px; border-bottom: 1px solid var(--border); }
+.post-content { font-size: 17px; line-height: 1.85; overflow-wrap: anywhere; }
+.post-content h2 { font-size: 29px; font-weight: 500; letter-spacing: -.6px; margin-top: 52px; }
+.post-content h3 { font-size: 23px; font-weight: 500; margin-top: 34px; }
+.post-content a { text-underline-offset: 4px; }
+.post-content blockquote {
+    margin-inline: 0;
+    padding: 16px 22px;
+    background: var(--code-bg);
+    border-inline-start: 3px solid #7e9b56;
+    border-radius: 0 8px 8px 0;
+}
+.post-content pre { border-radius: 8px; line-height: 1.65; }
+.post-content table { font-size: 13px; line-height: 1.65; }
+.post-content table th { background: var(--code-bg); font-weight: 600; }
+.post-content table td, .post-content table th { padding: 12px 14px; }
+.post-content img { border-radius: 8px; }
+details.toc { background: var(--code-bg); padding: 10px 0; font-size: 13px; }
+details.toc summary { min-height: 38px; display: list-item; }
+.paginav { margin-top: 40px; padding: 8px; font-size: 15px; }
+.post-footer { border-top: 1px solid var(--border); padding-top: 25px; }
+.footer { padding-top: 36px; padding-bottom: 36px; font-size: 11px; }
+:focus-visible { outline: 2px solid #7e9b56; outline-offset: 4px; }
+.entry-link:focus-visible { outline-offset: -3px; }
+
+@media (max-width: 767px) {
+    .header-nav { padding: 16px 20px; line-height: 38px; gap: 10px; }
+    .logo { width: 100%; justify-content: space-between; }
+    .menu { flex-wrap: wrap; gap: 0 18px; white-space: normal; }
+    .menu a { font-size: 12px; }
+    .header .submenu { display: flex; gap: 10px; }
+    .header .submenu a { padding: 2px 0; font-size: 10px; }
+    .main { padding-top: 24px; }
+    .page-header h1, .post-title { letter-spacing: -.8px; }
+    .post-entry { padding: 22px; }
+    .entry-header h2 { font-size: 22px; }
+    .post-content { font-size: 16px; line-height: 1.8; }
+    .post-content h2 { font-size: 26px; }
+    .post-content h3 { font-size: 21px; }
+}
+
+.home-info { min-height: auto; margin: 12px 0 48px; padding: 24px 0 32px; border-bottom: 1px solid var(--border); }
+.home-info .entry-header h1 { font-size: clamp(32px, 5vw, 48px); font-weight: 500; letter-spacing: -1px; }
+.home-info .entry-content { max-width: 620px; font-size: 17px; }
+.home-info .entry-footer { margin-top: 8px; }

@@ -217,3 +217,13 @@ def test_english_gate_keeps_original_if_review_still_chinese(monkeypatch):
     out = translate_frontmatter(FM, "en", EchoEng())
     # HY-MT echoed Chinese, review stayed Chinese → keep original title
     assert "Yiran Chen — 研究者分析报告" in out
+
+
+def test_double_quoted_escapes_round_trip_as_valid_yaml(monkeypatch):
+    """`$\\pi$` in the source used to come back as `$\\p` — an invalid YAML
+    escape that broke the Hugo build (2026-09-19 Bug Journal)."""
+    import yaml
+    monkeypatch.setattr("common.translation.frontmatter.resolve_review_tag", lambda: None)
+    fm = '---\nsummary: "the $\\\\pi$0.5 \\"W4A4\\" model"\n---\n'
+    out = translate_frontmatter(fm, "zh", EchoEng())
+    assert yaml.safe_load(out.strip("-\n"))["summary"] == 'the $\\pi$0.5 "W4A4" model'

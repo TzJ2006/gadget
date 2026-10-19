@@ -28,16 +28,22 @@ _DEFAULT_REPORTS_DIR = REPORTS_DIR / "summarize"
 
 
 def _unload_ollama() -> None:
-    """Free Ollama VRAM (all resident models, incl. qwen) once the pipeline is done.
+    """Free Ollama VRAM only when no other tool holds a shared lease.
 
-    Historically the chat model was evicted mid-pipeline as a side effect of the
-    translation-model swap thrash; with co-residency (translation num_ctx 8192)
-    both models now survive the run, so the 23GB chat model would otherwise sit
-    on the GPU until its idle timeout, and the translator up to keep_alive=30m.
     GADGET_KEEP_OLLAMA=1 skips (e.g. cron back-to-back runs).
     """
-    from common.engine import _free_ollama_vram  # lazy: stdlib-only helper
-
+    if os.environ.get("GADGET_KEEP_OLLAMA") == "1":
+        print("[auto] GADGET_KEEP_OLLAMA=1, left Ollama loaded")
+        return
+    try:
+        from model_access.resources import request_unload
+    except ImportError as exc:
+        raise RuntimeError("未安装 model_access，拒绝在没有统一租约的情况下卸载 Ollama") from exc
+    allowed, reason = request_unload("summarize-auto")
+    if not allowed:
+        print(f"[auto] {reason}")
+        return
+    from common.engine import _free_ollama_vram
     _free_ollama_vram()
     print("[auto] Ollama models unloaded (set GADGET_KEEP_OLLAMA=1 to keep them warm)")
 

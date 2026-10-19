@@ -35,6 +35,8 @@ class TransformersEngine(TranslationEngine):
     def load(self) -> None:
         if self._model is not None:
             return
+        from common.engine.llamacpp import _admit_inprocess
+        _admit_inprocess(self.model_id)
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -191,10 +193,16 @@ class TransformersEngine(TranslationEngine):
     def unload(self) -> None:
         if self._model is None:
             return
+        from common.engine.llamacpp import _release_inprocess
+        if not _release_inprocess(self.model_id):
+            logger.warning("refuse to unload %s while another caller is active", self.model_id)
+            return
         del self._model
         del self._tokenizer
         self._model = None
         self._tokenizer = None
+        from common.engine.llamacpp import _confirm_inprocess
+        _confirm_inprocess(self.model_id)
         try:
             import torch
             if torch.cuda.is_available():

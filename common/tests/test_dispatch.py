@@ -27,6 +27,23 @@ def test_valid_backends_still_dispatch(monkeypatch):
         assert call_llm_raw("hi", backend=b) == "ok"
 
 
+def test_local_only_does_not_call_cloud(monkeypatch):
+    monkeypatch.setenv("LC_LLM_ROUTE", "local_only")
+
+    def boom(*args, **kwargs):
+        raise AssertionError("cloud")
+
+    monkeypatch.setattr(llm, "_raw_anthropic", boom)
+    monkeypatch.setattr(llm, "_raw_openai", boom)
+    monkeypatch.setattr(llm, "_raw_claude_cli", boom)
+    with pytest.raises(RuntimeError, match="local_only"):
+        call_llm_raw("secret", backend="anthropic")
+    with pytest.raises(RuntimeError, match="local_only"):
+        call_llm("openai", LLMCallConfig(prompt="secret"))
+    with pytest.raises(RuntimeError, match="local_only"):
+        llm.call_claude_cli(LLMCallConfig(prompt="secret"))
+
+
 def test_create_engine_rejects_unknown_translation_backend(monkeypatch):
     monkeypatch.setattr(engine, "_engine_cache", {})  # force cache miss
     monkeypatch.setenv("GADGET_TRANSLATION_BACKEND", "llama_cpp")  # not "llamacpp"

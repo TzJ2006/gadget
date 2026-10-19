@@ -7,19 +7,22 @@
 
 ---
 
-## 1. 配置目录
+## 1. 配置文件
+
+没有 `~/.config/gadget`、`~/.config/summarize`、`~/.config/research_scout`、`~/.config/research` 回退，`common/paths.py` 也没有 `CONFIG_HOME`。配置是仓库根的一个 `config.json`（模板 `config.example.json`）。环境变量 `GADGET_CONFIG` 可改路径。`common/config.py` 的解析顺序是 `GADGET_CONFIG`，否则 `<仓库根>/config.json`。文件或段缺失时，该段是 `{}`。
 
 | 路径 | 用途 | 引用位置 | 必需/可选 |
 |------|------|----------|----------|
-| `~/.config/gadget/sync.json` | Rclone 同步配置（远程基础路径、rclone 二进制路径） | `sync.py` | 必需（用于同步操作）|
-| `~/.config/summarize/config.json` | Summarize 工具配置（设备名、输出目录、rclone remote、API backend、ccusage 安装偏好）— 回退路径：解析顺序为 `SUMMARIZE_CONFIG` 环境变量 > 仓库内 `summarize/config.json` > 此文件（由 `scripts/onboard.py` 写入） | `summarize/config.py`, `summarize/daily.py` | 可选（CLI 标志/环境变量优先） |
-| `~/.config/research_scout/config.json` | Research Scout 配置（论文发现主配置） | `research/scout/config.py` | 可选（CLI 标志/环境变量优先） |
-| `~/.config/research/config.json` | Researcher Profiler 配置（Scout 缺失键的回退配置） | `research/scout/config.py` | 可选（仅作回退） |
+| 仓库根 `config.json` 的 `sync` 段 | Rclone 同步配置（远程基础路径、rclone 二进制路径） | `scripts/sync.py` | 同步操作需要 |
+| 仓库根 `config.json` 的 `summarize` 段 | Summarize 工具配置（设备名、输出目录、rclone remote、API backend、ccusage 安装偏好） | `tools/summarize/config.py`, `tools/summarize/daily.py` | 可选（CLI 标志优先） |
+| 仓库根 `config.json` 的 `research_scout` 段 | Research Scout 配置（论文发现；与 `research` 段合并，scout 键优先） | `tools/research/scout/config.py` | 可选（CLI 标志优先） |
+| 仓库根 `config.json` 的 `research` 段 | Researcher Profiler 配置（同一文件里的段，不是另一份回退文件） | `tools/research/config.py` | 可选 |
 
-**初始化方式**:
+**初始化方式**（写入仓库根 `config.json` 的对应段）:
 ```bash
-python summarize/daily_summary.py config --init   # 写入仓库内 summarize/config.json（~/.config 为回退，由 scripts/onboard.py 写入）
-python research/research_scout.py config --init
+python -m summarize daily config --init
+python -m research.scout config --init   # tools/research/research_scout.py 只是兼容 shim
+python -m research config --init
 python scripts/sync.py config --init
 ```
 
@@ -29,16 +32,16 @@ python scripts/sync.py config --init
 
 | 路径 | 用途 | 引用位置 | 必需/可选 |
 |------|------|----------|----------|
-| `~/.claude/projects/` | Claude Code 对话日志（JSONL 格式，每个项目一个目录） | `summarize/parsers.py` | 必需（用于 Claude Code 汇总） |
-| `~/.codex/sessions/YYYY/MM/DD/` | Codex 对话日志（按日期组织的 JSONL） | `summarize/parsers.py` | 可选（备用 AI 助手源） |
-| ChatGPT export JSON | ChatGPT conversations.json 导出 | `summarize/parsers.py`（通过 `--chatgpt-export` 标志） | 可选（用户提供的路径） |
+| `~/.claude/projects/` | Claude Code 对话日志（JSONL 格式，每个项目一个目录） | `tools/summarize/parsers.py` | 必需（用于 Claude Code 汇总） |
+| `~/.codex/sessions/YYYY/MM/DD/` | Codex 对话日志（按日期组织的 JSONL） | `tools/summarize/parsers.py` | 可选（备用 AI 助手源） |
+| ChatGPT export JSON | ChatGPT conversations.json 导出 | `tools/summarize/parsers.py`（通过 `--chatgpt-export` 标志） | 可选（用户提供的路径） |
 
 **说明**:
 - Claude Code 日志路径可能因 OS 不同而变化：
   - **macOS**: `~/Library/Application Support/Claude Code/projects/`
   - **Linux**: `~/.claude/projects/`
   - **Windows**: `%APPDATA%\Claude Code\projects\`
-- `summarize/config.py` 会自动检测这些路径
+- `tools/summarize/parsers.py` 会自动检测这些路径
 
 **日志格式示例**:
 ```json
@@ -53,20 +56,20 @@ python scripts/sync.py config --init
 
 | 二进制 | 用途 | 引用位置 | 解析方式 |
 |--------|------|----------|----------|
-| `rclone` | Google Drive 同步个人数据 | `sync.py`, `summarize/remote.py` | `shutil.which("rclone")` 或 config 中的 `rclone_path` |
-| `hugo` | 静态站点生成和部署 | `website/update.sh`, `website/update.ps1`, `common/hugo.py` | `shutil.which("hugo")` |
-| `ollama` | 本地 LLM 服务 — 默认聊天后端（Gemma4-26B）与默认翻译后端（翻译复用同一个聊天 tag） | `common/llm.py`, `common/engine.py` | `OLLAMA_BASE_URL`（默认 `http://127.0.0.1:11434`） |
-| `torch` + `transformers` | 本地翻译推理引擎回退（`tencent/Hy-MT2-1.8B`；默认后端为 Ollama） | `common/engine.py`, `website/translate_content.py`, `website/translate_site_batch.py` | 通过 `pip install -e ".[translation]"` 安装；模型首次运行自动下载 |
+| `rclone` | Google Drive 同步个人数据 | `scripts/sync.py`, `tools/summarize/remote.py` | `shutil.which("rclone")` 或 config 中的 `rclone_path` |
+| `hugo` | 静态站点生成和部署 | `tools/website/update.sh`, `tools/website/update.ps1`, `common/hugo.py` | `shutil.which("hugo")` |
+| `ollama` | 本地 LLM 服务 — 默认聊天后端（Gemma4-26B）与默认翻译后端（翻译复用同一个聊天 tag） | `common/llm.py`, `common/engine/` | `OLLAMA_BASE_URL`（默认 `http://127.0.0.1:11434`） |
+| `torch` + `transformers` | 本地翻译推理引擎回退（`tencent/Hy-MT2-1.8B`；默认后端为 Ollama） | `common/engine/`, `tools/website/translate_content.py`, `tools/website/translate_site_batch.py` | 通过 `pip install -e ".[translation]"` 安装；模型首次运行自动下载 |
 | `bash` | Shell 脚本执行 | `common/hugo.py`, 所有 `*.sh` 脚本 | Linux/macOS 系统自带；Windows 需 Git Bash |
 
 ### 3.2 可选工具（功能扩展）
 
 | 二进制 | 用途 | 引用位置 | 缺失时行为 |
 |--------|------|----------|-----------|
-| `pngquant` | 图片压缩（JPEG→PNG 转换） | `website/compress_image.py`, `website/update.sh` | Windows `update.ps1` 跳过压缩；Linux/macOS 报错 |
-| `HandBrakeCLI` | 视频压缩（720p30，无音频） | `website/compress_video.py`, `website/update.sh` | Windows `update.ps1` 跳过压缩；Linux/macOS 报错 |
-| `ccusage` (Node.js, **>=20**) | 统一多来源 token 用量跟踪（Claude Code / Codex / Gemini 等，逐源命名空间命令） | `summarize/usage.py` | 缺失或 <20 时静默 `npm install -g ccusage@latest`，失败回退 `npx --yes ccusage@latest`；再失败则跳过 token 统计 |
-| `claude` CLI | Claude Code CLI（用于 `--api claude_cli` 模式） | `summarize/summarizer.py` | 可使用 `--api anthropic` 或 `--api openai` 替代 |
+| `pngquant` | 图片压缩（JPEG→PNG 转换） | `tools/website/compress_image.py`, `tools/website/update.sh` | Windows `update.ps1` 跳过压缩；Linux/macOS 报错 |
+| `HandBrakeCLI` | 视频压缩（720p30，无音频） | `tools/website/compress_video.py`, `tools/website/update.sh` | Windows `update.ps1` 跳过压缩；Linux/macOS 报错 |
+| `ccusage` (Node.js, **>=20**) | 统一多来源 token 用量跟踪（Claude Code / Codex / Gemini 等，逐源命名空间命令） | `tools/summarize/usage.py` | 缺失或 <20 时静默 `npm install -g ccusage@latest`，失败回退 `npx --yes ccusage@latest`；再失败则跳过 token 统计 |
+| `claude` CLI | Claude Code CLI（用于 `--api claude_cli` 模式） | `tools/summarize/summarizer.py` | 可使用 `--api anthropic` 或 `--api openai` 替代 |
 
 **安装方式**:
 ```bash
@@ -98,11 +101,11 @@ npm install -g ccusage@latest   # >=20，统一覆盖 Claude Code / Codex / Gemi
 |------|------|----------|----------|
 | `ANTHROPIC_API_KEY` | Anthropic Claude API 认证 | `common/llm.py`, 所有 `--api anthropic` 命令 | 使用 `--api anthropic` 时必需 |
 | `OPENAI_API_KEY` | OpenAI API 认证 | `common/llm.py`, 所有 `--api openai` 命令 | 使用 `--api openai` 时必需 |
-| `SUMMARIZE_LOGS_DIR` | 覆盖默认日志输出路径 | `summarize/config.py` | 可选（覆盖 config.json） |
-| `SUMMARIZE_REPORTS_DIR` | 覆盖默认报告输出路径 | `summarize/config.py` | 可选（覆盖 config.json） |
-| `GADGET_TRANSLATION_MODEL` | 覆盖翻译模型 | `common/engine.py` | 可选（默认 `tencent/Hy-MT2-1.8B`） |
-| `GADGET_TRANSLATION_BACKEND` | 强制指定推理后端（`ollama` / `vllm` / `transformers` / `llamacpp`） | `common/engine.py` | 可选（默认自动选择，Ollama 可用时优先） |
-| `GADGET_TRANSLATION_BATCH_SIZE` | 翻译批次大小 | `common/engine.py` | 可选（默认自动） |
+| `SUMMARIZE_LOGS_DIR` | 覆盖默认日志输出路径 | `tools/summarize/config.py` | 可选（覆盖 config.json） |
+| `SUMMARIZE_REPORTS_DIR` | 覆盖默认报告输出路径 | `tools/summarize/config.py` | 可选（覆盖 config.json） |
+| `GADGET_TRANSLATION_MODEL` | 覆盖翻译模型 | `common/engine/` | 可选（默认 `tencent/Hy-MT2-1.8B`） |
+| `GADGET_TRANSLATION_BACKEND` | 强制指定推理后端（`ollama` / `vllm` / `transformers` / `llamacpp`） | `common/engine/` | 可选（默认自动选择，Ollama 可用时优先） |
+| `GADGET_TRANSLATION_BATCH_SIZE` | 翻译批次大小 | `common/engine/` | 可选（默认自动） |
 
 **配置示例** (`.bashrc` / `.zshrc`):
 ```bash
@@ -115,6 +118,8 @@ export GADGET_TRANSLATION_MODEL="tencent/Hy-MT2-1.8B"
 ---
 
 ## 5. Python 包依赖（外部安装）
+
+包名和版本以仓库根 `pyproject.toml` 的 `[project].dependencies` 与 `[project.optional-dependencies]` 为准。下面的表是旧快照，这里不重列。
 
 ### 5.1 核心依赖（安装 `pip install -e .`）
 
@@ -179,14 +184,14 @@ export GADGET_TRANSLATION_MODEL="tencent/Hy-MT2-1.8B"
 
 | 远程路径 | 用途 | 同步方式 | 必需/可选 |
 |----------|------|----------|----------|
-| `gdrive:gadget/` (base) | Google Drive 根目录 | `sync.py` | 必需（同步操作） |
-| `gdrive:gadget/summarize/logs` | AI 对话日志备份 | `sync.py`, `summarize/remote.py` | 必需（多设备合并） |
-| `gdrive:gadget/summarize/reports` | 生成的摘要报告 | `sync.py`, `summarize/remote.py` | 必需（多设备合并） |
-| `gdrive:gadget/website/*` | 网站内容备份 | `sync.py` | 必需（多设备同步） |
-| `gdrive:gadget/research/*` | 研究数据备份 | `sync.py` | 必需（多设备同步） |
-| `gdrive:gadget/test/data` | Benchmark 结果 | `sync.py` | 必需（多硬件累积） |
-| `gdrive:gadget/tokens/` | API 密钥备份 | `sync.py`（with `--include-tokens`） | 可选（安全敏感，opt-in） |
-| `gdrive:gadget/config/*` | 配置文件备份（用于 bootstrap） | `sync.py`（with `--include-config`） | 可选（新设备 bootstrap） |
+| `gdrive:gadget/` (base) | Google Drive 根目录 | `scripts/sync.py` | 必需（同步操作） |
+| `gdrive:gadget/summarize/logs` | AI 对话日志备份 | `scripts/sync.py`, `tools/summarize/remote.py` | 必需（多设备合并） |
+| `gdrive:gadget/summarize/reports` | 生成的摘要报告 | `scripts/sync.py`, `tools/summarize/remote.py` | 必需（多设备合并） |
+| `gdrive:gadget/website/*` | 网站内容备份 | `scripts/sync.py` | 必需（多设备同步） |
+| `gdrive:gadget/research/*` | 研究数据备份 | `scripts/sync.py` | 必需（多设备同步） |
+| `gdrive:gadget/test/data` | Benchmark 结果 | `scripts/sync.py` | 必需（多硬件累积） |
+| `gdrive:gadget/tokens/` | API 密钥备份 | `scripts/sync.py`（with `--include-tokens`） | 可选（安全敏感，opt-in） |
+| `gdrive:gadget/config/*` | 配置文件备份（用于 bootstrap） | `scripts/sync.py`（with `--include-config`） | 可选（新设备 bootstrap） |
 
 **rclone remote 配置**:
 ```bash
@@ -210,13 +215,13 @@ rclone config
 
 | 路径 | 仓库 | 用途 | 必需/可选 |
 |------|------|------|----------|
-| `website/public/` | `tzj2006/tzj2006.github.io`（独立仓库） | GitHub Pages 部署目标 | 必需（网站部署）；**不是 submodule**，独立 git repo |
-| `website/themes/` | Hugo theme 目录 | Hugo 主题（可能是 PaperMod） | 必需（Hugo 构建）；在主 repo 中 gitignored |
+| `tools/website/public/` | `tzj2006/tzj2006.github.io`（独立仓库） | GitHub Pages 部署目标 | 必需（网站部署）；**不是 submodule**，独立 git repo |
+| `tools/website/themes/` | Hugo theme 目录 | Hugo 主题（可能是 PaperMod） | 必需（Hugo 构建）；在主 repo 中 gitignored |
 
 **说明**:
-- `website/public/` 是一个**独立的 Git 仓库**，指向 GitHub Pages 部署仓库
+- `tools/website/public/` 是一个**独立的 Git 仓库**，指向 GitHub Pages 部署仓库
 - 部署流程: `hugo` → `cd public && git add . && git commit && git push`
-- `website/themes/` 中的主题通常通过 `git clone` 或 Hugo 包管理器安装
+- `tools/website/themes/` 中的主题通常通过 `git clone` 或 Hugo 包管理器安装
 
 ---
 
@@ -234,11 +239,11 @@ rclone config
 - 通过 `GADGET_TRANSLATION_BACKEND` 环境变量可强制指定后端（`ollama` / `vllm` / `transformers` / `llamacpp`）
 
 **用途**:
-- `website/translate_content.py` — 单文件翻译
-- `website/translate_site_batch.py` — 批量增量翻译
-- `common/translation.py` — Markdown 翻译核心逻辑（collect-then-batch 管线）
-- `common/engine.py` — 推理引擎抽象层（TranslationEngine ABC + 工厂函数）
-- `summarize/formatter.py` — 日报/月报双语输出
+- `tools/website/translate_content.py` — 单文件翻译
+- `tools/website/translate_site_batch.py` — 批量增量翻译
+- `common/translation/` — Markdown 翻译核心逻辑（collect-then-batch 管线）
+- `common/engine/` — 推理引擎抽象层（TranslationEngine ABC + 工厂函数）
+- `tools/summarize/formatter.py` — 日报/月报双语输出
 
 ---
 
@@ -251,11 +256,12 @@ rclone config
 
 **路径解析策略**:
 ```python
-# common/paths.py
-GADGET_ROOT = Path(__file__).parent.parent  # 项目根目录
-OUTPUTS_DIR = GADGET_ROOT / "outputs"        # 输出目录
-CONFIG_HOME = Path.home() / ".config"        # 用户配置目录
+# common/paths.py — 没有 CONFIG_HOME
+GADGET_ROOT = Path(__file__).resolve().parent.parent  # 项目根目录
+OUTPUTS_DIR = GADGET_ROOT / "outputs"                  # 输出目录
 ```
+
+配置不在 `Path.home() / ".config"`。见第 1 节：仓库根 `config.json`，或 `GADGET_CONFIG`。
 
 ---
 
@@ -316,8 +322,8 @@ pip install -e ".[all]"
 python scripts/sync.py bootstrap --remote gdrive:gadget --include-tokens
 
 # 或手动初始化配置
-python summarize/daily_summary.py config --init
-python research/research_scout.py config --init
+python -m summarize daily config --init
+python -m research.scout config --init
 python scripts/sync.py config --init
 
 # ============ 阶段 6: 配置 API 密钥（可选）============
@@ -339,10 +345,10 @@ HandBrakeCLI --version
 
 # ============ 完成 ============
 echo "Bootstrap 完成！现在可以运行:"
-echo "  python summarize/daily_summary.py export"
-echo "  python research/research_scout.py report --project my-project"
+echo "  python -m summarize daily export"
+echo "  python -m research.scout report --project my-project"
 echo "  python -m benchmark.cli --report --deploy"
-echo "  cd website && bash update.sh"
+echo "  cd tools/website && bash update.sh"
 ```
 
 ---
@@ -355,17 +361,15 @@ echo "  cd website && bash update.sh"
 1. 安装系统工具（见 Bootstrap 流程阶段 1-3）
 2. 克隆项目 + 安装依赖（阶段 4）
 3. 运行 `python scripts/sync.py bootstrap --remote gdrive:gadget --include-tokens`（配置文件自动拉取）
-4. 验证配置: `cat ~/.config/summarize/config.json`（回退路径；若存在仓库内 `summarize/config.json` 则以其优先）
+4. 验证配置: 仓库根 `config.json`（模板 `config.example.json`；路径可用 `GADGET_CONFIG` 覆盖）。没有 `~/.config` 回退。
 
 **自动恢复的内容**:
-- `~/.config/gadget/sync.json`
-- `~/.config/summarize/config.json`（回退路径；仓库内 `summarize/config.json` 优先）
-- `~/.config/research_scout/config.json`
+- 仓库根 `config.json`（bootstrap 从远端 `config/config.json` 拉回；`scripts/sync.py` 的 `BOOTSTRAP_CONFIGS`）
 - `tokens/` 目录（API 密钥，如果使用 `--include-tokens`）
 
 **需要手动配置**:
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` 环境变量（如果不使用 `--include-tokens`）
-- GitHub Pages 部署仓库 `website/public/`（需要 `git clone`）
+- GitHub Pages 部署仓库 `tools/website/public/`（需要 `git clone`）
 
 ### 场景 2: 仅同步数据（已有配置）
 
@@ -388,7 +392,7 @@ python scripts/sync.py pull --sync-all
 rclone config
 # 选择新的 Google Drive 账号
 
-# 2. 更新 sync.json（交互式输入新的 rclone 远端，或直接编辑 ~/.config/gadget/sync.json 的 rclone_remote）
+# 2. 更新 sync 段（交互式输入新的 rclone 远端，或直接编辑仓库根 config.json 的 sync.rclone_remote）
 python scripts/sync.py config --init
 
 # 3. 首次全量推送
@@ -404,7 +408,7 @@ python scripts/sync.py push --category website
 
 ### 问题 1: 翻译引擎加载失败 / CUDA OOM
 
-**症状**: `common/engine.py` 报错 `CUDA out of memory` 或模型加载失败
+**症状**: `common/engine/` 报错 `CUDA out of memory` 或模型加载失败
 
 **解决方案**:
 ```bash
@@ -424,7 +428,7 @@ export GADGET_TRANSLATION_MODEL="tencent/Hy-MT2-1.8B"
 
 ### 问题 2: `rclone` 认证过期
 
-**症状**: `sync.py` 报错 `Failed to list remote directory: 401 Unauthorized`
+**症状**: `scripts/sync.py` 报错 `Failed to list remote directory: 401 Unauthorized`
 
 **解决方案**:
 ```bash
@@ -442,7 +446,7 @@ rclone lsd gdrive:gadget
 **解决方案**:
 ```bash
 # 安装 PaperMod 主题
-cd website
+cd tools/website
 git clone https://github.com/adityatelange/hugo-PaperMod themes/PaperMod --depth=1
 
 # 或使用 Hugo module
@@ -451,7 +455,7 @@ hugo mod get -u github.com/adityatelange/hugo-PaperMod
 
 ### 问题 4: `ccusage` 无法统计 token
 
-**症状**: `summarize/usage.py` 跳过 token 统计
+**症状**: `tools/summarize/usage.py` 跳过 token 统计
 
 **解决方案**:
 ```bash
@@ -467,7 +471,7 @@ npx ccusage parse ~/.claude/projects/<project>/session_<id>.jsonl
 
 ### 问题 5: 图片/视频压缩失败
 
-**症状**: `website/update.sh` 跳过压缩步骤
+**症状**: `tools/website/update.sh` 跳过压缩步骤
 
 **解决方案**:
 ```bash
@@ -494,11 +498,11 @@ choco install pngquant handbrake-cli
 
 - **项目主文档**: `README.md`
 - **CLAUDE.md**: 项目全局 Claude Code 指南
-- **Summarize 工具**: `summarize/README.md`, `summarize/CLAUDE.md`
-- **Research 工具**: `research/README.md`, `research/CLAUDE.md`
-- **Benchmark 工具**: `benchmark/README.md`, `benchmark/CLAUDE.md`
-- **Website 工具**: `website/README.md`, `website/CLAUDE.md`
-- **Sync 工具**: `sync.py` docstring
+- **Summarize 工具**: `tools/summarize/README.md`, `tools/summarize/CLAUDE.md`
+- **Research 工具**: `tools/research/README.md`, `tools/research/CLAUDE.md`
+- **Benchmark 工具**: `tools/benchmark/README.md`, `tools/benchmark/CLAUDE.md`
+- **Website 工具**: `tools/website/README.md`, `tools/website/CLAUDE.md`
+- **Sync 工具**: `scripts/sync.py` docstring
 
 ---
 
@@ -524,10 +528,7 @@ gadget/
 │   ├── [translation] torch, transformers, vllm (可选)
 │   └── [website] Pillow, gadget[translation]
 ├── 配置文件
-│   ├── ~/.config/gadget/sync.json
-│   ├── ~/.config/summarize/config.json（回退；仓库内 summarize/config.json 优先）
-│   ├── ~/.config/research_scout/config.json
-│   └── ~/.config/research/config.json
+│   └── 仓库根 config.json（模板 config.example.json；GADGET_CONFIG 可覆盖；无 ~/.config 回退）
 ├── 数据目录
 │   ├── ~/.claude/projects/ (Claude Code 日志)
 │   ├── ~/.codex/sessions/ (Codex 日志)
@@ -543,8 +544,8 @@ gadget/
 │   ├── [可选] gdrive:gadget/tokens/
 │   └── [可选] gdrive:gadget/config/*
 ├── 外部 Git 仓库
-│   ├── website/public/ → tzj2006/tzj2006.github.io
-│   └── website/themes/ → Hugo themes
+│   ├── tools/website/public/ → tzj2006/tzj2006.github.io
+│   └── tools/website/themes/ → Hugo themes
 └── 环境变量
     ├── ANTHROPIC_API_KEY
     ├── OPENAI_API_KEY

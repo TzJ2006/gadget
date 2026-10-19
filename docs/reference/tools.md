@@ -23,11 +23,12 @@ extra) so `common` and the tool packages are importable. Config resolution is
 
 ## research — paper scout + profiler + citation graph
 
-- **Run**: `python tools/research/research_scout.py {init,ask,list,search,report,profile,citations,deploy,config} [args]`
-  - `python tools/research/research_scout.py report --project my-project --api claude_cli`
-  - `python tools/research/research_scout.py ask "找 Pieter Abbeel 最近的机器人操作论文"`
+- **Run**: `python -m research.scout {init,ask,list,search,report,profile,citations,deploy,config} [args]`
+  - `python -m research.scout report --project my-project --api claude_cli`
+  - `python -m research.scout ask "找 Pieter Abbeel 最近的机器人操作论文"`
   - Profiler standalone: `python -m research {analyze,show,list,config}`
-- **Config**: repo-root `config.json` sections `research_scout` (scout) and `research` (profiler; merged — scout keys win). Override path with `GADGET_CONFIG`. Init: `research_scout.py config --init` (scout) and `python -m research config --init` (profiler).
+  - `python tools/research/research_scout.py` is the deprecation shim for the same scout commands.
+- **Config**: repo-root `config.json` sections `research_scout` (scout) and `research` (profiler; merged — scout keys win). Override path with `GADGET_CONFIG`. Init: `python -m research.scout config --init` (scout) and `python -m research config --init` (profiler).
 - **Outputs**: scout → `outputs/reports/research-scout/`, `outputs/cache/research-scout/{eval,papers,insight}/`, `outputs/logs/research-scout/research_scout.log`. Profiler → `outputs/data/research-profiler/profiles/`, `outputs/reports/research-profiler/`. Project defs live in `tools/research/projects/<name>/`.
 - **Gotchas**: `research_scout.py` is a **deprecation shim** (emits `DeprecationWarning`, inserts repo root on `sys.path`) — real logic in `scout/`. Stage-1 screening times out on ~100 papers → cap `--max-results ~50` or raise `--timeout`. `--conference`/`--author` are mutually exclusive. `--insight` (Stage 4/5) needs `openreview-py`; PyMuPDF optional for full-text.
 - Evidence: `research_scout.py:25-35`, `scout/cli.py:838-937`, `scout/config.py:53-54`, `config.py:10-11`.
@@ -38,7 +39,7 @@ extra) so `common` and the tool packages are importable. Config resolution is
   - `cd tools/benchmark && python -m benchmark.cli --report --deploy`
   - `cd tools/benchmark && python -m benchmark.cli --info` (prints hardware, writes nothing)
 - **Config**: none — all CLI flags. Only env fallback is `BENCHMARK_RELAY_URL` (optional leaderboard upload).
-- **Outputs**: CSV `outputs/data/benchmark/results.csv` (append-only, `--output` to override), HTML `outputs/reports/benchmark/report.html`. `--deploy` copies the HTML to `tools/website/static/benchmark-report/` + writes the `content/benchmark.md` wrapper, then runs Hugo.
+- **Outputs**: CSV `tools/benchmark/benchmark_results.csv` (append-only, `--output` to override), HTML `outputs/reports/benchmark/report.html`. `--deploy` copies the HTML to `tools/website/static/benchmark-report/` + writes the `content/benchmark.md` wrapper, then runs Hugo. `scripts/sync.py` still mirrors `outputs/data/benchmark` separately from this CLI file.
 - **Gotchas**: the `benchmark` package IS installed editable so `python -m benchmark.cli` resolves anywhere, **but importing it requires `torch/numpy/pandas/plotly/tqdm`** — in a bare env it dies at import with `ModuleNotFoundError: plotly`; install `pip install -r requirements.txt` (or `pip install -e ".[benchmark]"`). Bare `python -m benchmark.cli` (no flags) runs benchmarks and **writes CSV** — use `--info`/`--report-only` for read-only.
 - Evidence: `tools/benchmark/benchmark/cli.py:22-23,84-244,334-337`, `pyproject.toml:19`.
 
@@ -54,6 +55,8 @@ extra) so `common` and the tool packages are importable. Config resolution is
 ## translator — Gradio document/text translator
 
 - **Run**: `python -m translator` (launches Gradio UI on `127.0.0.1`).
+- **OCR**: `python -m translator.ocr_cli <file>` — exactly one image, PDF, or docx.
+- **Text entry**: `python -m translator.text_entry` — one JSON object on stdin (`model`, `base_url`, and `text` or `source_path`). Extra argv is rejected.
 - **Config**: repo-root `config.json` section `translator.models` — the model dropdown list, edited via the UI. Defaults: `tencent/Hy-MT2-1.8B` (+ `-1.8B-FP8`, `-7B`, `-7B-FP8`). Override path with `GADGET_CONFIG`.
 - **Outputs**: none persistent — file translation writes `<stem>.<lang>.md` to the OS temp dir for download.
 - **Gotchas**: needs the `translator` extra (gradio + translation-gguf). `main()` prepends `127.0.0.1,localhost` to `NO_PROXY` so Gradio's launch health-check isn't routed through an HTTP proxy (else `WinError 10061` on Windows). 7B/FP8 models download + cold-load on first use. Not in the `all` extra by design.

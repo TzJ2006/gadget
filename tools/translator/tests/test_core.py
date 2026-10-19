@@ -439,6 +439,7 @@ def test_ocr_via_ollama_success(tmp_path, monkeypatch):
         return R(json.dumps({"response": "# Hello\n\nOCR text"}).encode())
 
     monkeypatch.delenv("OLLAMA_KEEP_ALIVE", raising=False)
+    monkeypatch.setenv("PERSONALAGENT_RESOURCE_DIR", str(tmp_path / "leases"))
     with patch("urllib.request.urlopen", fake_urlopen):
         out = core.ocr_via_ollama(str(img), model="test-ocr")
     assert out == "# Hello\n\nOCR text"
@@ -478,7 +479,7 @@ def test_pdf_via_ollama_joins_pages(tmp_path, monkeypatch):
     fitz = MagicMock()
     fitz.open.return_value = doc
     with patch.dict(sys.modules, {"fitz": fitz}), \
-         patch.object(core, "ocr_via_ollama", side_effect=["page one", "page two"]):
+         patch("translator.ocr_impl.ocr_via_ollama", side_effect=["page one", "page two"]):
         out = core.pdf_via_ollama(str(pdf))
     assert out == "page one\n\npage two"
 
@@ -495,7 +496,7 @@ def test_file_to_markdown_routes_pdf_to_ollama_by_default(tmp_path):
     m.assert_called_once_with(str(pdf), pbar=None)
 
 
-def test_ocr_via_ollama_pulls_model_on_404_then_retries(tmp_path):
+def test_ocr_via_ollama_pulls_model_on_404_then_retries(tmp_path, monkeypatch):
     import io, json
     import urllib.error
     from unittest.mock import patch
@@ -520,6 +521,8 @@ def test_ocr_via_ollama_pulls_model_on_404_then_retries(tmp_path):
             def __exit__(self, *a): return False
         return R(json.dumps(body).encode())
 
+    monkeypatch.setenv("TRANSLATOR_OCR_ALLOW_PULL", "1")
+    monkeypatch.setenv("PERSONALAGENT_RESOURCE_DIR", str(tmp_path / "leases"))
     with patch("urllib.request.urlopen", fake_urlopen):
         assert core.ocr_via_ollama(str(img), model="m") == "ocr text"
     # generate(404) -> pull -> generate(ok), and no infinite retry loop
@@ -564,7 +567,38 @@ def test_pdf_via_ollama_reports_page_progress(tmp_path):
 
     pbar = Pbar()
     with patch.dict(sys.modules, {"fitz": fitz}), \
-         patch.object(core, "ocr_via_ollama", return_value="p"):
+         patch("translator.ocr_impl.ocr_via_ollama", return_value="p"):
         core.pdf_via_ollama(str(pdf), pbar=pbar)
     assert pbar.total == 3
     assert pbar.steps == [1, 1, 1]
+
+
+def test_ocr_refuses_without_model_access(tmp_path, monkeypatch):
+    import builtins
+    img = tmp_path / "a.png"
+    img.write_bytes(b"png")
+    real_import = builtins.__import__
+
+    def blocked(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "model_access" or name.startswith("model_access."):
+            raise ImportError("hidden")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
+    with pytest.raises(RuntimeError, match="model_access"):
+        core.ocr_via_ollama(str(img), model="m")
+
+
+def test_ocr_does_not_call_ollama_when_lease_denied(tmp_path, monkeypatch):
+    img = tmp_path / "a.png"
+    img.write_bytes(b"png")
+    monkeypatch.setenv("PERSONALAGENT_RESOURCE_DIR", str(tmp_path / "leases"))
+
+    def denied(backend, model, **kwargs):
+        return type("G", (), {"allowed": False, "reason": "已有超过 10B 的本地模型驻留"})()
+
+    monkeypatch.setattr("model_access.resources.before_backend", denied)
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
+    with pytest.raises(RuntimeError, match="10B"):
+        core.ocr_via_ollama(str(img), model="gemma4:26b")

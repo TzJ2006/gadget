@@ -21,6 +21,7 @@ class LlamaCppEngine(TranslationEngine):
     def load(self) -> None:
         if self._llm is not None:
             return
+        _admit_inprocess(self.model_id)
         from llama_cpp import Llama
 
         gguf_path = self._resolve_gguf_path()
@@ -91,9 +92,40 @@ class LlamaCppEngine(TranslationEngine):
     def unload(self) -> None:
         if self._llm is None:
             return
+        if not _release_inprocess(self.model_id):
+            logger.warning("refuse to unload %s while another caller is active", self.model_id)
+            return
         del self._llm
         self._llm = None
+        _confirm_inprocess(self.model_id)
         logger.info("GGUF engine unloaded")
+
+
+def _admit_inprocess(model: str) -> None:
+    try:
+        from model_access.resources import require_local
+    except ImportError as exc:
+        raise RuntimeError("未安装 model_access，拒绝在没有统一 GPU 租约的情况下加载模型。") from exc
+    require_local(model, holder="gadget-engine", backend="inprocess", purpose="text")
+
+
+def _release_inprocess(model: str) -> bool:
+    """False when another caller still holds a lease. Does not free their model."""
+    del model
+    try:
+        from model_access.resources import request_unload
+    except ImportError:
+        return False
+    allowed, _reason = request_unload("gadget-engine")
+    return allowed
+
+
+def _confirm_inprocess(model: str) -> None:
+    try:
+        from model_access.resources import confirm_unloaded
+    except ImportError:
+        return
+    confirm_unloaded("gadget-engine", model=model, backend="inprocess")
 
 
 def _llamacpp_available() -> bool:

@@ -4,7 +4,7 @@
 
 日常开发中积累的实用工具集，涵盖 AI 日报生成、论文发现、性能测试、博客自动化和文档翻译。
 
-`tools/` 下每个目录是一个独立工具，可以单独使用。共享基础设施统一放在根目录的 `common/` 包中（通过 `pip install -e .` 安装），提供 LLM 调用、JSON 解析、磁盘缓存、原子写入、翻译与 Hugo 部署等通用能力。开发工作流（规划 / 执行 / 变更追踪）和所有 Claude Code skills 由 **ai-companion** 提供——它是一个独立仓库（`git@github.com:TzJ2006/ai-companion.git`），检出在同级目录 `../ai-companion/`，通过 hooks 接入本仓库。
+`tools/` 下每个目录是一个独立工具，可以单独使用。共享基础设施统一放在根目录的 `common/` 包中（通过 `pip install -e .` 安装），提供 LLM 调用、JSON 解析、磁盘缓存、原子写入、翻译与 Hugo 部署等通用能力。本地保留可选的 Companion 想法图与规划工具，同级仓库 `../ai-companion/` 提供 DAG 发布工具。编码 agent 按 `AGENTS.md` 工作，不经过 Companion 拦截。
 
 本文是面向全部工具的**简介**；每个工具的分步操作、配置、数据格式与常见问题，请见 [TUTORIAL.zh.md](TUTORIAL.zh.md) 与各工具自带的源文档。
 
@@ -21,7 +21,7 @@
 - [common / scripts / ai-companion](#common--scripts--ai-companion)
   - [common/ — 共享基础设施包](#common--共享基础设施包)
   - [scripts/ — 运维与维护脚本](#scripts--运维与维护脚本)
-  - [AI Companion — 独立仓库](#ai-companion--独立仓库)
+  - [AI Companion — 可选工具](#ai-companion--可选工具)
   - [新服务器 Onboarding](#新服务器-onboarding)
 - [输出目录](#输出目录)
 - [环境要求](#环境要求)
@@ -46,7 +46,7 @@ gadget/
 └── pyproject.toml      # common/ + 各工具的打包配置（pip install -e .）
 ```
 
-> 开发工作流引擎与所有 skills 在独立仓库 **ai-companion**（同级 `../ai-companion/`），不在本仓库内；通过 `.claude/`、`.codex/` 的 hooks 接入。`build/` 与 `gadget.egg-info/` 是 `pip install -e .` 的生成物（已 gitignore，始终位于根目录）。数据同步运行 `python scripts/sync.py`。
+> Companion 工具按需手动调用，不通过 agent hooks 接入。`build/` 与 `gadget.egg-info/` 是 `pip install -e .` 的生成物（已 gitignore，始终位于根目录）。数据同步运行 `python scripts/sync.py`。
 
 **想改东西，看这里：**
 
@@ -169,16 +169,14 @@ python -m translator             # 启动 Gradio GUI（浏览器打开）
 ### scripts/ — 运维与维护脚本
 
 - `sync.py` — 集中式 rclone 数据同步（push / pull / status / bootstrap / config，覆盖 summarize / website / research / benchmark / backups 各类目；另含特殊 `dag` 类目用于生成 + 部署 DAG 站）。运行 `python scripts/sync.py`，配置为仓库根 `config.json` 的 `sync` 段（可用 `GADGET_CONFIG` 覆盖路径）。
-- `onboard.py` — 仓库级一次性机器 onboarding：填一张 YAML sheet（`tokens/onboard.yaml`），跑一次脚本，自动完成 SSH 配置、Claude/Codex CLI 安装与鉴权、pip extras 与 ai-companion 安装、各工具 config、rclone bootstrap。
+- `onboard.py` — 仓库级一次性机器 onboarding：填一张 YAML sheet（`tokens/onboard.yaml`），跑一次脚本，自动完成 SSH 配置、Claude/Codex CLI 安装与鉴权、pip extras 安装、各工具 config、rclone bootstrap。
 - `smoke.sh` — 只读冒烟：对各工具跑 `--help` / `--info` / import（不调 LLM、不联网、不写盘）。运行 `bash scripts/smoke.sh`。
 - `serve_local_llm.sh` — 创建 summarize 用的 Ollama 变体并打印环境变量（`eval "$(bash scripts/serve_local_llm.sh env)"`）。持久配置写在仓库根 `config.json` 的 `summarize` 段（可用 `GADGET_CONFIG` 覆盖路径）。
 - 其余：`language.py`（Hugo 双语审计 + summarize 报告重命名）、`profile_translation.py`（翻译引擎 GPU profiler）。
 
-### AI Companion — 独立仓库
+### AI Companion — 可选工具
 
-**ai-companion** 是一个独立的 Node.js 仓库（`git@github.com:TzJ2006/ai-companion.git`），检出在同级目录 `../ai-companion/`，**不在本仓库内**。它记录函数级代码变更、生成测试与 HTML 报告，提供 `/idea`→`/ccplan`→`/ccedit` 规划执行流水线，并托管全部 Claude Code skills（方法论 + 领域）。本仓库通过 `.claude/`、`.codex/` 里的 hooks 接入它。
-
-它同时打包成**标准 Claude Code 插件**和**等效的 Codex 接入**——安装即用、无需构建（变更追踪 hook 为随仓库提交的预构建单文件产物）。所有 skills（方法论 skills：ccplan 规划、optimize 优化、cchypothesis 调试、repo-audit 审计、repo-tidy 整理；领域 skills：summarize 代码概述、slurm-gpu 集群检测、nature-benchmark / NIPS-2025-paper 论文写作顾问）均在该仓库，本仓库不再包含 `skills/` 目录。安装方式见 `../ai-companion/scripts/install.ts`。
+同级仓库 `../ai-companion/` 提供 `scripts/sync.py --category dag` 使用的 DAG 发布工具。已有的本地想法图、手动图命令和技能继续保留。本仓库不接入 Companion 拦截 hooks，onboarding 也不再安装 Companion。旧 onboarding sheet 中的 `install.ai_companion` 设置不再生效。
 
 ### 新服务器 Onboarding
 
@@ -206,7 +204,7 @@ Hugo 站点内容直接写入 `tools/website/content|static`（已无单独的 `
 ## 环境要求
 
 - Python 3.10+（推荐 conda 环境 `AI`，`conda activate AI`）
-- Node.js 18+（仅独立仓库 `../ai-companion/` 需要）
+- Node.js 18+（仅可选的 Companion 想法图与 DAG 发布工具需要）
 - 各工具的具体依赖见对应目录的 `requirements.txt`
 - common 包 + summarize / research / benchmark / website extras：`pip install -e ".[all]"`（`all` **不含** `translator`；需另装 `pip install -e ".[translator]"`）
 - 网站/翻译使用本地推理引擎（默认 Ollama，直接复用同一个 `gemma4:26b` 聊天模型；Linux 兜底 vLLM，Windows 兜底 transformers，用 `tencent/Hy-MT2-1.8B`，首次运行自动下载）

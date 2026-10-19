@@ -64,7 +64,6 @@ claude:
 
 install:
   enabled: true                         # (optional) default: true
-  ai_companion: true                    # (optional) npx tsx ../ai-companion/scripts/install.ts . --enforce (skills/hooks/harness, claude+codex); default: true
   claude_plugins: []                    # (optional) RISKY (prompts): list of `claude plugin install <id>`; default: none
   pip_extras: [all]                     # (optional) subset of: summarize research benchmark website translator all; default: [all]
   global_npm: []                        # (optional) RISKY (prompts): extra `npm i -g` packages; default: none

@@ -27,7 +27,7 @@
 
 | 层级 | 位置 | 数量 | 作用范围 |
 |------|------|------|----------|
-| **Gadget 项目级** | `gadget/.claude/skills/`（已迁至 sibling `ai-companion` repo，gadget 内不再有 skills 目录） | 13 | 仅 gadget 项目 |
+| **Gadget 项目级** | `gadget/.claude/skills/`（本地可选的想法图技能，无 Companion 拦截 hooks） | 6 | 仅 gadget 项目 |
 | **全局** | `~/.claude/skills/` | 28 | 所有项目 |
 | **ECC 内置** | `everything-claude-code/skills/` | ~97 | 所有项目 (通过 ECC 框架) |
 

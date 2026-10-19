@@ -1,0 +1,38 @@
+# Public contract for gadget summarize. This package owns the version.
+
+capability = "summarize.report"
+interface = "1.0"
+entry = "public_api.py"
+sources = ["public_api.py"]
+distribution = "gadget"
+
+[input]
+positional = ["json"]
+path_type = "stdin"
+
+[output]
+stdout = "json"
+
+[errors]
+usage_exit = 2
+failure_exit = 1
+stream = "stderr"
+
+[effects]
+reads_input = true
+writes_caller_files = false
+network = "configured-model-endpoint"
+gpu = "caller-configured-model"
+downloads = "none"
+
+[dependencies]
+packages = ["gadget"]
+optional_packages = ["openai"]
+env = ["OLLAMA_HOST"]
+
+[resources]
+resident_model = "caller-selected"
+loads_weights_at_discovery = false
+
+[optional]
+output = ["coverage"]

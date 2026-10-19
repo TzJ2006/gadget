@@ -6,10 +6,14 @@ Local Gradio GUI over `common.engine` (HY-MT) for pasted text and dropped files 
 
 ```bash
 pip install -e ".[translator]"                         # from repo root: gradio + pymupdf + llama-cpp
+python -m pip install -e D:/GitHub/personalAgent/shared  # installed model_access; not a sys.path hack
 python -m translator                                   # Gradio GUI (blocks until closed)
+python -m translator.ocr_cli page.png                  # OCR/PDF/docx; same ocr_impl the GUI calls
 cd tools && python -m pytest translator/tests          # unit tests (pure mock; no network/GPU/models)
 python -m pytest tools/translator/tests/test_core.py   # same suite from repo root
 ```
+
+OCR and translation load a managed model only after `model_access` grants a lease. If that package is missing, or another tool already holds a conflicting lease, the call raises and does not start Ollama on its own. `translator.core` calls `translator.ocr_impl`; it does not import a parent checkout. `LC_LLM_ROUTE=local_only` (or `GADGET_LLM_ROUTE`) does not send text to a cloud backend. OCR does not download a model unless `TRANSLATOR_OCR_ALLOW_PULL=1`.
 
 ## Quirks
 

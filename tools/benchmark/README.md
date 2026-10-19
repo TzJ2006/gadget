@@ -2,6 +2,19 @@
 
 A unified benchmarking solution for measuring CPU and GPU FLOPS performance across different hardware platforms.
 
+The language-ability benchmark (story opening and README tutorial) is [LLM_benchmark/README.md](LLM_benchmark/README.md).
+
+## Entry point and where to add
+
+Run commands from this directory. The importable package is `tools/benchmark/benchmark/` because the directory name and the import name collide.
+
+```bash
+cd tools/benchmark
+python -m benchmark.cli
+```
+
+The CLI appends to `tools/benchmark/benchmark_results.csv`. Do not rewrite or dedupe that file. New benchmark modules go in `tools/benchmark/benchmark/`. Submission helpers stay in `scripts/`.
+
 ## Features
 
 - **Cross-platform**: macOS, Linux, Windows
@@ -62,19 +75,7 @@ Output paths are relative to the project root (`gadget/`). Override with `--outp
 
 ## Website Auto-Update Pipeline
 
-This repo includes a GitHub-based pipeline to publish `benchmark_report.html` as a website and keep it updated from queued submissions.
-
-### Workflow Files
-
-- `.github/workflows/accept-submission.yml`
-  - Receives `repository_dispatch` event `benchmark_submission`
-  - Appends payload to `data/pending_submissions.ndjson`
-- `.github/workflows/daily-publish.yml`
-  - Runs daily (`00:00 UTC`) or manually
-  - Ingests queue with strict validation/dedupe/sanitization
-  - Regenerates `benchmark_report.html` when dataset changes
-- `.github/workflows/pages-deploy.yml`
-  - Deploys `benchmark_report.html` to GitHub Pages
+Queued submissions can still be ingested locally (helpers below). This repo has no `tools/benchmark/.github/workflows/`, and no `accept-submission.yml`, `daily-publish.yml`, or `pages-deploy.yml`.
 
 ### Submission Helpers
 
@@ -192,11 +193,10 @@ tools/benchmark/               # https://github.com/TzJ2006/gadget/tree/main/too
 │   ├── detect.py      # Hardware detection (CPU, GPU, system info)
 │   ├── gpu.py         # GPU benchmarks (CUDA, MPS, XPU)
 │   ├── report.py      # HTML report generation (Plotly charts, leaderboards)
-│   └── README.md      # Detailed module documentation
+│   └── README.md      # Pointer to the parent README
 ├── scripts/           # Submission helpers (submit_result.py, ingest_submissions.py)
 ├── data/              # Queue/audit files (pending/rejected submissions)
 ├── results/           # Historical GPU test screenshots
-├── .github/workflows/ # CI/CD (accept-submission, daily-publish, pages-deploy)
 ├── README.md          # This file
 ├── CLAUDE.md          # Dev guide
 └── requirements.txt   # Dependencies
