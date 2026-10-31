@@ -272,3 +272,16 @@ Entry is `python -m summarize`. This package stays flat: new modules go in `tool
 | Period implementations | `weekly_summary.py`, `monthly_summary.py` |
 | Shared period helper | `period_report.py` |
 | Shim (leave in place) | `daily_summary.py` |
+
+
+## Reusable JSON interface (PersonalAgents integration)
+
+`python -m summarize.public_api` reads one JSON request from stdin and writes one result object to stdout. Progress goes to stderr; errors exit nonzero. `op=version` returns the implementation fingerprint without calling a model. `op=parse` accepts an explicit source kind/path and optional message-date bounds. `op=daily` accepts explicit conversations; `op=period` accepts explicit daily reports. These operations never discover unrelated history, SSH, sync, publish, or unload models.
+
+Optional `save_dir` persists canonical report files; unchanged requests reuse their result, and `force=true` explicitly regenerates. Existing CLI reports without a fingerprint are preserved unless forced. PersonalAgents reads these files directly; its single-conversation summaries stay in its database. `timeout` is a total request budget across chunks/retries, with external callers also responsible for stopping a timed-out process tree.
+
+Parsing/discovery are owned by `records.py` and `discovery.py`; legacy parser entrypoints delegate to them. Dates come from messages, never file modification times. Untimed Cursor messages are excluded from date-filtered input. Oversized messages are split without silent truncation. Gemma uses the common bounded native transport and the existing model-access lease; failed chunks cannot silently yield a partial-success report.
+
+The existing `python -m summarize auto` remains the standalone full-history orchestration command. It can perform configured SSH/sync and publishes only with `--deploy`. It now stops with a nonzero status if a subprocess fails, before downstream aggregation or publication.
+
+Verify with `python -m pytest tools/summarize/tests common/tests/test_ollama_model_selection.py common/tests/test_llm_schema.py -q -k "not e2e"`. Tests use synthetic files and mocked models. Real-model and device acceptance remain separate.

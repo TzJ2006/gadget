@@ -908,3 +908,12 @@ python -m summarize monthly generate --month 2026-02 --force     # 忽略已有�
 python -m pytest tools/summarize/tests/ -v                          # 运行所有测试
 python -m pytest tools/summarize/tests/test_imports.py -v           # 导入契约测试
 ```
+
+
+## PersonalAgents 复用入口
+
+独立命令保持可用，PersonalAgents 不再复制解析器和摘要引擎。单次摘要通过 `python -m summarize.public_api` 输入 JSON、返回 JSON；日报/周期报告可以保存到同一报告目录，网页直接读取。
+
+指定日期按每条消息的时间筛选；无日期记录不会用文件修改时间冒充当天。完整历史仍使用 `python -m summarize auto`，它可能连接配置的 SSH 主机和同步日志；不需要发布时不要加 `--deploy`。子步骤失败会停止并返回非零退出码。
+
+验证接口和请求示例见本目录 README 的 Reusable JSON interface，以及 PersonalAgents 的模块使用与验收文档。既有验收按版本/环境沿用，只重验受影响部分。

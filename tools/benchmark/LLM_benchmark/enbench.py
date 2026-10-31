@@ -1,9 +1,11 @@
-"""English counterpart of zhbench.py: same 16 models, same settings, English prompt.
+"""English counterpart of zhbench.py: same config, English prompt.
 
 Not a translation of the Chinese run -- a parallel experiment. Results go to
 enbench.json so the two runs stay independent.
 
-Stdlib only. Resumable: results are written after every run.
+The model list and run switches are config.json next to this file
+(template config.example.json). Results are written after every run.
+A model that already succeeded is skipped. Keys this run does not touch stay.
     python enbench.py --only gemma4:12b
     python enbench.py --skip-cli
 """
@@ -12,12 +14,13 @@ import os
 import re
 import statistics
 import subprocess
-import sys
 import tempfile
 import threading
 import time
 import urllib.request
 from pathlib import Path
+
+import bench_config
 
 def _repo_root() -> Path:
     """Directory that contains both outputs/ and tools/, from this file upward."""
@@ -37,43 +40,8 @@ PROMPT = (
     "portrayal of her postwar life."
 )
 
-OLLAMA_MODELS = ["gemma4:12b", "gemma4:26b", "qwen3.8-sum:latest", "qwen3.6-sum:latest"]
-
 CLI_PROMPT = PROMPT
-
-# Full paths to the .cmd shims: CreateProcess does not do PATHEXT resolution for
-# extensionless npm shims the way the shell does.
-CURSOR = r"C:\Users\tongt\AppData\Local\cursor-agent\cursor-agent.cmd"
-NPM = r"C:\Users\tongt\AppData\Roaming\npm"
-
-CODEX = [NPM + r"\codex.cmd", "exec", "--json", "--sandbox", "read-only",
-         "--skip-git-repo-check", "-c", 'model_reasoning_effort="medium"']
-# No --bare: it drops the OAuth settings source and the run 401s.
-CLAUDE = ["claude", "-p", CLI_PROMPT, "--output-format", "json",
-          "--disallowed-tools", "Bash,Edit,Write,Read,Glob,Grep"]
-CUR = [CURSOR, "--print", "--output-format", "json", "--mode", "ask", "--trust"]
-
-CLI_JOBS = [
-    ("codex/gpt-6.1-sol", CODEX + ["-m", "gpt-6.1-sol", CLI_PROMPT]),
-    ("codex/gpt-6-astra", CODEX + ["-m", "gpt-6-astra", CLI_PROMPT]),
-    ("codex/gpt-6-sol", CODEX + ["-m", "gpt-6-sol", CLI_PROMPT]),
-    ("codex/gpt-6-luna", CODEX + ["-m", "gpt-6-luna", CLI_PROMPT]),
-    ("codex/gpt-5.6-sol", CODEX + ["-m", "gpt-5.6-sol", CLI_PROMPT]),
-    ("codex/gpt-5.6-terra", CODEX + ["-m", "gpt-5.6-terra", CLI_PROMPT]),
-    ("codex/gpt-5.6-luna", CODEX + ["-m", "gpt-5.6-luna", CLI_PROMPT]),
-    ("codex/gpt-5.5", CODEX + ["-m", "gpt-5.5", CLI_PROMPT]),
-    ("codex/gpt-5.4-mini", CODEX + ["-m", "gpt-5.4-mini", CLI_PROMPT]),
-    # The other claude jobs run at the CLI's default effort; this one is pinned.
-    ("claude/fable-high", CLAUDE + ["--model", "claude-fable-5-1", "--effort", "high"]),
-    ("claude/opus-5.5", CLAUDE + ["--model", "claude-opus-5-5"]),
-    ("claude/opus", CLAUDE + ["--model", "opus"]),
-    ("claude/sonnet", CLAUDE + ["--model", "sonnet"]),
-    ("claude/haiku", CLAUDE + ["--model", "haiku"]),
-    ("cursor/composer-2.5", CUR + ["--model", "composer-2.5", CLI_PROMPT]),
-    ("cursor/grok-4.7-high", CUR + ["--model", "grok-4.7-high", CLI_PROMPT]),
-    ("cursor/grok-4.6-high", CUR + ["--model", "cursor-grok-4.6-high", CLI_PROMPT]),
-    ("cursor/gemini-3.7-flash", CUR + ["--model", "gemini-3.7-flash-high", CLI_PROMPT]),
-]
+OLLAMA_MODELS = []
 
 
 # ---------- English text stats (mirrors zhbench.py's Chinese ones) ----------
@@ -354,7 +322,7 @@ def run_cli(key: str, argv: list, workdir: str) -> dict:
     }
 
 
-CLI_BIN = {"codex": NPM + r"\codex.cmd", "claude": "claude", "cursor": CURSOR}
+CLI_BIN = bench_config.CLI_BIN
 CLI_VERSIONS = {}
 
 
@@ -376,11 +344,16 @@ def save(results: list):
 
 
 def main():
-    only = None
-    if "--only" in sys.argv:
-        only = sys.argv[sys.argv.index("--only") + 1]
-    skip_cli = "--skip-cli" in sys.argv
-    skip_ollama = "--skip-ollama" in sys.argv
+    global OUT, OLLAMA_MODELS
+    run = bench_config.prepare_run("en")
+    if not run["enabled"]:
+        print(f"suite en is not in {run['source']}; results not written")
+        return
+    OUT = run["out_dir"] / "enbench.json"
+    OLLAMA_MODELS = run["ollama"]
+    jobs = bench_config.cli_jobs(run["config"], "argv", CLI_PROMPT)
+    only, skip_cli, skip_ollama = run["only"], run["skip_cli"], run["skip_ollama"]
+    print(f"config: {run['source']}", flush=True)
 
     results = json.loads(OUT.read_text(encoding="utf-8")) if OUT.exists() else []
     done = {r["key"] for r in results
@@ -404,7 +377,7 @@ def main():
         print(f"cli versions: {CLI_VERSIONS}")
         workdir = tempfile.mkdtemp(prefix="enbench_")
         print(f"CLI sandbox cwd: {workdir}", flush=True)
-        for key, argv in CLI_JOBS:
+        for key, argv in jobs:
             if (only and only not in key) or key in done:
                 continue
             print(f"[cli] {key} ...", flush=True)

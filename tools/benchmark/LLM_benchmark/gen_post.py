@@ -7,19 +7,11 @@ same models and same settings. One small table per tool, then the full texts.
     python gen_post.py
 """
 import json
-from pathlib import Path
 
-def _repo_root() -> Path:
-    """Directory that contains both outputs/ and tools/, from this file upward."""
-    here = Path(__file__).resolve().parent
-    for p in (here, *here.parents):
-        if (p / "outputs").is_dir() and (p / "tools").is_dir():
-            return p
-    raise SystemExit("cannot find repo root (directory containing outputs/ and tools/)")
+import bench_config
 
-
-ROOT = _repo_root()
-REPORTS = ROOT / "outputs" / "reports"
+ROOT = bench_config.repo_root()
+REPORTS = bench_config.output_dir(bench_config.load_config())
 
 
 def load(name):

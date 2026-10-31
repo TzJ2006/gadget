@@ -98,7 +98,7 @@ def format_reports_for_llm(daily_reports: list[dict]) -> str:
         # 深拷贝并剥离机械聚合的字段
         stripped = {k: v for k, v in report.items()
                     if k not in ("token_usage", "codex_token_usage",
-                                 "conversation_summaries", "_source_file")}
+                                 "_generation_hash", "_source_file")}
         day_text = f"\n{'='*60}\nDate: {report.get('date', 'unknown')}\n{'='*60}\n"
         day_text += json.dumps(stripped, ensure_ascii=False, indent=2)
         parts.append(day_text)
@@ -336,6 +336,7 @@ MONTHLY_SUMMARY_PROMPT = """You are a professional monthly summary analyst. Belo
 (JSON format) for an entire month. Analyze the work patterns and trends across the month to produce a structured monthly summary.
 
 Requirements:
+In EVERY field, including the opening summary, an action that did not happen is not automatically pending, outstanding, required, incomplete, or planned. Preserve its negative wording. Preserve explicit pending work and negative facts from conversation summaries. Do not mark a project completed while its reported work is pending. Do not invent actions or plans; use empty fields when evidence is absent.
 1. Distill trends and patterns from a whole-month perspective; do not simply list each day's content
 2. project_overview sorted by days_active descending; identify key milestones
 3. key_achievements: keep only the 5-10 most important items for the month (importance >= 7)
@@ -402,6 +403,7 @@ MONTHLY_MERGE_PROMPT = """You are a professional monthly summary analyst. Below 
 (JSON format) from multiple segments of the same month. Merge them into a single complete monthly summary.
 
 Requirements:
+In EVERY field, including the opening summary, an action that did not happen is not automatically pending, outstanding, required, incomplete, or planned. Preserve its negative wording. Preserve explicit pending work and negative facts from conversation summaries. Do not mark a project completed while its reported work is pending. Do not invent actions or plans; use empty fields when evidence is absent.
 1. Merge all project_overview entries; combine days_active and key_milestones for the same project
 2. Merge key_achievements; deduplicate, keep only the 5-10 most important items
 3. Merge recurring_problems; combine occurrences and dates for the same pattern

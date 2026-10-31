@@ -163,6 +163,25 @@ def test_cmd_auto_exits_before_work_when_readiness_fails(monkeypatch):
     assert exc.value.code == 2
 
 
+@pytest.mark.parametrize("unloaded", [True, False])
+def test_auto_unload_uses_one_coordinator_operation(monkeypatch, capsys, unloaded):
+    import common.engine
+    import model_access.resources
+
+    monkeypatch.delenv("GADGET_KEEP_OLLAMA", raising=False)
+    monkeypatch.setattr(model_access.resources, "request_unload", lambda *a, **kw:
+                        pytest.fail("a second holder must not pre-lock the endpoint"))
+    monkeypatch.setattr(common.engine, "_free_ollama_vram",
+                        lambda: (unloaded, "active caller" if not unloaded else ""))
+
+    auto._unload_ollama()
+
+    output = capsys.readouterr().out
+    assert ("models unloaded" in output) is unloaded
+    if not unloaded:
+        assert "active caller" in output
+
+
 def test_cmd_auto_skip_check_passes_hugo_site_to_deploy_commands(monkeypatch, capsys):
     calls = []
     args = type("Args", (), {

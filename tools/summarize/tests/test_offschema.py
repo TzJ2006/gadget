@@ -64,15 +64,13 @@ def test_load_chunk_cache_rejects_poisoned_entry(tmp_path):
     assert load_chunk_cache(tmp_path, "h1", "g1", 2) is None
 
 
-def test_hierarchical_merge_drops_parse_failed_chunks():
+def test_hierarchical_merge_refuses_partial_report():
     good = {"summary": "fine"}
-    bad = {"parse_error": "x", "raw_response": "junk " * 10}
-    with patch("common.llm.call_llm", return_value={"summary": "merged"}) as mock_call:
-        result = hierarchical_merge("ollama", [good, bad, good],
-                                    "merge:", _make_config, timeout=60)
-    assert result == {"summary": "merged"}
-    prompt_sent = mock_call.call_args[0][1].prompt
-    assert "junk" not in prompt_sent
+    bad = {"parse_error": "x", "raw_response": "junk"}
+    with patch("common.llm.call_llm") as mock_call:
+        with pytest.raises(ValueError, match="incomplete report"):
+            hierarchical_merge("ollama", [good, bad, good], "merge:", _make_config, timeout=60)
+    mock_call.assert_not_called()
 
 
 def test_hierarchical_merge_all_failed_raises():

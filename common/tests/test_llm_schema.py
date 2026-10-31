@@ -7,6 +7,7 @@ therefore reuses the caller's Anthropic tool schema to constrain decoding.
 """
 
 import json
+from contextlib import nullcontext
 
 import common.llm as llm
 from common.llm import LLMCallConfig, call_ollama, call_openai
@@ -44,6 +45,8 @@ class _FakeClient:
 
 def _patch(monkeypatch, factory_name):
     fake = _FakeClient()
+    monkeypatch.setenv("OLLAMA_MODEL", "schema-test:7b")
+    monkeypatch.setattr(llm, "_admit_ollama_text", lambda model: (nullcontext(), RuntimeError))
     monkeypatch.setattr(llm, factory_name, lambda: fake)
     return fake
 
@@ -91,3 +94,14 @@ def test_promoting_required_does_not_mutate_the_callers_schema():
     tools = [{"input_schema": dict(SCHEMA)}]
     llm._schema_from_tools(tools)
     assert tools[0]["input_schema"]["required"] == ["summary"]
+
+
+def test_gemma_native_path_receives_the_same_schema(monkeypatch):
+    from common import ollama_chat
+    monkeypatch.setenv("OLLAMA_MODEL", "gemma4:26b")
+    monkeypatch.setattr(llm, "_admit_ollama_text", lambda model: (nullcontext(), RuntimeError))
+    seen = []
+    monkeypatch.setattr(ollama_chat, "complete", lambda *a, **kw:
+        seen.append(kw) or ollama_chat.LLMResult('{"summary":"s","tasks":[]}', 'id', 'gemma4:26b'))
+    assert call_ollama(LLMCallConfig(prompt="p", anthropic_tools=TOOLS))["summary"] == "s"
+    assert seen[0]["schema"] == CONSTRAINED

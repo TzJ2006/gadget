@@ -13,12 +13,39 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Callable, Optional
 
 from common.io import atomic_write
 from common.json_utils import parse_json_response, try_repair_result
+
+_deadline = ContextVar("llm_deadline", default=None)
+_request_model = ContextVar("llm_request_model", default=None)
+
+
+@contextmanager
+def total_budget(seconds, model=None):
+    if seconds <= 0:
+        raise TimeoutError("Model budget exhausted")
+    token = _deadline.set(time.monotonic() + seconds)
+    model_token = _request_model.set(model)
+    try:
+        yield
+    finally:
+        _deadline.reset(token)
+        _request_model.reset(model_token)
+
+
+def remaining_budget(seconds):
+    deadline = _deadline.get()
+    remaining = min(seconds, deadline - time.monotonic()) if deadline is not None else seconds
+    if remaining <= 0:
+        raise TimeoutError("Model budget exhausted")
+    return remaining
+
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +284,8 @@ def call_llm_raw(
 
     Raises ``RuntimeError`` on failure (missing SDK, bad API key, non-zero exit, etc.).
     """
+    timeout = remaining_budget(timeout)
+    model = _request_model.get() or model
     logger.debug("LLM raw call: backend=%s model=%s prompt_chars=%d", backend, model, len(prompt))
     _refuse_cloud_route(backend)
     if backend == "anthropic":
@@ -348,10 +377,17 @@ def _admit_ollama_text(model: str):
 
 def _raw_ollama(prompt: str, model: str, timeout: int, max_tokens: int) -> str:
     served = _ollama_model(model)
+    started = time.monotonic()
     lease, denied = _admit_ollama_text(served)
     try:
         with lease:
-            return _chat_raw(_ollama_client(), served, prompt, timeout, max_tokens)
+            budget = remaining_budget(timeout - (time.monotonic() - started))
+            if served == "gemma4:26b":
+                from common.ollama_chat import complete
+                from common.engine.ollama import ollama_native_host
+                return complete(ollama_native_host(), served,
+                                [{"role": "user", "content": prompt}], budget).text
+            return _chat_raw(_ollama_client(), served, prompt, budget, max_tokens)
     except denied as exc:
         raise RuntimeError(str(exc)) from exc
 
@@ -372,6 +408,8 @@ class LLMCallConfig:
     openai_model: str = "gpt-4o"
     claude_cli_model: str = "sonnet"
     thinking: Optional[dict] = None
+    # Local structured calls must not inherit the OpenAI-only default above.
+    ollama_model: str = ""
 
 
 def call_anthropic(config: LLMCallConfig) -> dict:
@@ -424,22 +462,22 @@ def call_openai(config: LLMCallConfig) -> dict:
 
 
 def call_ollama(config: LLMCallConfig) -> dict:
-    """Call a local Ollama server (OpenAI protocol) and return parsed JSON dict.
-
-    The route gate runs first so an ``api`` or subscription route cannot land here.
-
-    Ollama supports schema-constrained decoding, so the caller's tool schema is
-    enforced rather than suggested — see ``_chat_json``. Real OpenAI is left on
-    plain ``json_object``: its ``json_schema`` mode is strict-only and would
-    reject these schemas (no ``additionalProperties: false``, partial
-    ``required``), and the cloud models honor the prompt anyway.
-    """
+    """One shared, leased local call; Gemma uses bounded native thinking."""
     _refuse_cloud_route("ollama")
-    served = _ollama_model(config.openai_model)
+    served = _ollama_model(config.ollama_model)
+    started = time.monotonic()
     lease, denied = _admit_ollama_text(served)
     try:
         with lease:
-            return _chat_json(_ollama_client(), served, config,
+            budget = remaining_budget(config.timeout - (time.monotonic() - started))
+            if served == "gemma4:26b":
+                from common.ollama_chat import complete
+                from common.engine.ollama import ollama_native_host
+                result = complete(ollama_native_host(), served,
+                                  [{"role": "user", "content": config.prompt}], budget,
+                                  schema=_schema_from_tools(config.anthropic_tools) or "json")
+                return parse_json_response(result.text)
+            return _chat_json(_ollama_client(), served, replace(config, timeout=budget),
                               schema=_schema_from_tools(config.anthropic_tools))
     except denied as exc:
         raise RuntimeError(str(exc)) from exc
@@ -479,6 +517,10 @@ def call_claude_cli(config: LLMCallConfig) -> dict:
 
 def call_llm(api: str, config: LLMCallConfig) -> dict:
     """Dispatch to the appropriate backend."""
+    overrides = {}
+    if _request_model.get():
+        overrides = {name: _request_model.get() for name in ("ollama_model", "openai_model", "anthropic_model", "claude_cli_model")}
+    config = replace(config, timeout=remaining_budget(config.timeout), **overrides)
     logger.debug("LLM call: backend=%s model=%s", api, getattr(config, "model", "?"))
     _refuse_cloud_route(api)
     if api == "anthropic":
@@ -592,7 +634,7 @@ def cleanup_chunk_cache(cache_dir: Path) -> None:
 def hierarchical_merge(api: str, summaries: list[dict],
                        merge_prompt: str,
                        make_config: Callable[[str], LLMCallConfig],
-                       timeout: int = 600) -> dict:
+                       timeout: int = 600, *, max_chars: int = 150000, _depth: int = 0) -> dict:
     """Recursively merge chunk summaries until everything fits in one call.
 
     Args:
@@ -602,11 +644,12 @@ def hierarchical_merge(api: str, summaries: list[dict],
         make_config: Factory — given full prompt text, returns LLMCallConfig.
         timeout: Per-chunk base timeout (merge phase uses 3x).
     """
+    if _depth >= 16:
+        raise ValueError("Summary merge did not converge")
     valid = [s for s in summaries
              if not (isinstance(s, dict) and s.get("parse_error"))]
     if len(valid) < len(summaries):
-        logger.warning("Dropping %d/%d chunk summaries that failed JSON parsing "
-                       "from merge", len(summaries) - len(valid), len(summaries))
+        raise ValueError("A chunk failed parsing; refusing an incomplete report")
     if not valid:
         raise ValueError("All chunk summaries failed JSON parsing — nothing to merge")
     summaries = valid
@@ -621,7 +664,7 @@ def hierarchical_merge(api: str, summaries: list[dict],
     merge_overhead = len(merge_prompt) + 200
     merge_timeout = int(timeout * 3)
 
-    if len(combined) + merge_overhead <= 150000:
+    if len(combined) <= max_chars:
         logger.info("Merging %d summaries (%s chars, timeout=%ds)...",
                      len(summaries), f"{len(combined):,}", merge_timeout)
         full_prompt = merge_prompt + combined
@@ -638,7 +681,8 @@ def hierarchical_merge(api: str, summaries: list[dict],
         return try_repair_result(result, api, merge_timeout)
 
     # Still too large — split and recurse
-    text_chunks = chunk_text(summary_texts, max_chars=150000 - merge_overhead)
+    fragments = [text[i:i + max_chars] for text in summary_texts for i in range(0, len(text), max_chars)]
+    text_chunks = chunk_text(fragments, max_chars=max_chars)
     n = len(text_chunks)
     logger.info("Merge content too long (%s chars), splitting into %d groups...",
                 f"{len(combined):,}", n)
@@ -660,4 +704,5 @@ def hierarchical_merge(api: str, summaries: list[dict],
         result = try_repair_result(result, api, merge_timeout)
         merged_results.append(result)
 
-    return hierarchical_merge(api, merged_results, merge_prompt, make_config, timeout)
+    return hierarchical_merge(api, merged_results, merge_prompt, make_config, timeout,
+                              max_chars=max_chars, _depth=_depth + 1)

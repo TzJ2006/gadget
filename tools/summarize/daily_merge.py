@@ -254,9 +254,9 @@ def cmd_merge(args):
 
     for filepath in log_files:
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                log_data = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
+            from .records import load_export
+            log_data = load_export(filepath)
+        except (OSError, ValueError) as e:
             print(f"[warn] 读取 {filepath} 失败: {e}, 跳过")
             continue
 

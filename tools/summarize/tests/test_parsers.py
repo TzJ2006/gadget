@@ -202,8 +202,8 @@ def test_parse_cursor_skips_subagents(fake_home):
     assert result[0]["messages"][0]["content"] == "parent"
 
 
-def test_parse_cursor_mtime_fallback(fake_home):
-    """No <timestamp> tags → include conversation when file mtime matches target day."""
+def test_parse_cursor_undated_is_not_assigned_file_date(fake_home):
+    """File modification time is not a message date; exclude undated messages."""
     target = date(2026, 3, 15)
     path = _write_cursor_parent(
         fake_home,
@@ -223,9 +223,7 @@ def test_parse_cursor_mtime_fallback(fake_home):
     os.utime(path, (epoch, epoch))
 
     result = parse_cursor(target)
-    assert len(result) == 1
-    assert result[0]["source"] == "cursor"
-    assert result[0]["project"] == "mtime-proj"
+    assert result == []
     assert parse_cursor(date(2026, 3, 16)) == []
 
 

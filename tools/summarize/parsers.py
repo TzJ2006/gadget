@@ -26,134 +26,39 @@ _CURSOR_USER_QUERY_RE = re.compile(
     r"<user_query>\s*(.*?)\s*</user_query>", re.IGNORECASE | re.DOTALL)
 
 
-def _is_dir(p: Path) -> bool:
-    """is_dir() that treats unreadable paths as absent (locked /mnt/c sys accounts)."""
-    try:
-        return p.is_dir()
-    except OSError:
-        return False
+from .discovery import _is_dir
 
 
-def _home_dirs() -> list[Path]:
-    """要扫描的 home 目录集合。
-
-    始终包含真实 home；在 WSL 下，Claude/Codex 的数据写在 Windows 用户目录而非
-    Linux home，因此额外把 /mnt/c/Users/* 也加进来。
-    """
-    homes = [Path.home()]
-    # ponytail: 用内核字符串判断 WSL，既便宜又可靠（WSL1/2 都含 "microsoft"）。
-    if "microsoft" in platform.uname().release.lower():
-        win_users = Path("/mnt/c/Users")  # ponytail: 假设 C 盘挂在 /mnt/c（默认）
-        if _is_dir(win_users):
-            homes.extend(p for p in win_users.iterdir() if _is_dir(p))
-    return homes
+def _home_dirs():
+    from .discovery import home_dirs
+    return home_dirs()
 
 
-def _discover_claude_project_dirs() -> list[Path]:
-    """发现所有 ~/.claude*/projects/ 目录（支持 .claude、.claude-code 等变体）。"""
-    dirs = []
-    for home in _home_dirs():
-        for candidate in sorted(home.glob(".claude*")):
-            projects = candidate / "projects"
-            if _is_dir(projects):
-                dirs.append(projects)
-    return dirs
+def _discover_claude_project_dirs():
+    from .discovery import claude_project_dirs
+    return claude_project_dirs(_home_dirs())
 
 
-def _discover_codex_session_dirs() -> list[Path]:
-    """发现所有 ~/.codex/sessions/ 目录（WSL 下含 Windows 侧）。"""
-    return [d for home in _home_dirs()
-            if _is_dir(d := home / ".codex" / "sessions")]
+def _discover_codex_session_dirs():
+    from .discovery import codex_session_dirs
+    return codex_session_dirs(_home_dirs())
 
 
-def _discover_cursor_transcript_roots() -> list[Path]:
-    """发现所有 ~/.cursor/projects/*/agent-transcripts 目录（WSL 下含 Windows 侧）。"""
-    roots = []
-    for home in _home_dirs():
-        projects = home / ".cursor" / "projects"
-        if not _is_dir(projects):
-            continue
-        try:
-            for project_dir in projects.iterdir():
-                transcripts = project_dir / "agent-transcripts"
-                if _is_dir(transcripts):
-                    roots.append(transcripts)
-        except OSError:
-            continue
-    return roots
+def _discover_cursor_transcript_roots():
+    from .discovery import cursor_transcript_roots
+    return cursor_transcript_roots(_home_dirs())
 
 
-def _iter_cursor_parent_jsonl(transcript_root: Path):
-    """Yield (project_slug, jsonl_path) for parent agent transcripts only.
-
-    Layout: <root>/<uuid>/<uuid>.jsonl — skips subagents/ and stubs.
-    """
-    project_slug = transcript_root.parent.name
-    try:
-        entries = list(transcript_root.iterdir())
-    except OSError:
-        return
-    for conv_dir in entries:
-        if not _is_dir(conv_dir):
-            continue
-        jsonl = conv_dir / f"{conv_dir.name}.jsonl"
-        if jsonl.is_file():
-            yield project_slug, jsonl
+def _iter_cursor_parent_jsonl(root):
+    from .discovery import iter_cursor_parent_jsonl
+    for path in iter_cursor_parent_jsonl(root):
+        yield root.parent.name, path
 
 
-def _parse_cursor_timestamp(text: str) -> Optional[datetime]:
-    """Parse a Cursor <timestamp>...</timestamp> value to an aware datetime."""
-    if not text:
-        return None
-    m = _CURSOR_TS_TAG_RE.search(text)
-    body = (m.group(1) if m else text).strip()
-    if not body:
-        return None
-
-    offset = timezone.utc
-    body_m = _CURSOR_TS_BODY_RE.match(body)
-    if body_m:
-        body = body_m.group(1).strip()
-        hours = int(body_m.group(2))
-        minutes = int(body_m.group(3) or 0)
-        # Preserve sign: hours=-4, minutes=30 → -4:30
-        sign = 1 if hours >= 0 else -1
-        offset = timezone(timedelta(hours=hours, minutes=sign * minutes))
-
-    for fmt in (
-        "%A, %b %d, %Y, %I:%M %p",
-        "%A, %B %d, %Y, %I:%M %p",
-        "%a, %b %d, %Y, %I:%M %p",
-    ):
-        try:
-            return datetime.strptime(body, fmt).replace(tzinfo=offset)
-        except ValueError:
-            continue
-    return None
+from .records import _cursor_timestamp as _parse_cursor_timestamp
 
 
-def _cursor_message_text(content, *, strip_user_wrappers: bool = False) -> str:
-    """Extract plain text from Cursor message content blocks (skip tool_use)."""
-    parts = []
-    if isinstance(content, str):
-        parts.append(content)
-    elif isinstance(content, list):
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and block.get("type") == "text":
-                t = block.get("text")
-                if t:
-                    parts.append(t)
-    text = "\n".join(parts).strip()
-    if not text or not strip_user_wrappers:
-        return text
-
-    text = _CURSOR_TS_TAG_RE.sub("", text).strip()
-    qm = _CURSOR_USER_QUERY_RE.search(text)
-    if qm:
-        text = qm.group(1).strip()
-    return text.strip()
+from .records import _cursor_text as _cursor_message_text
 
 
 # ─── 统一对话格式 ───────────────────────────────────────────────
@@ -167,289 +72,30 @@ def _cursor_message_text(content, *, strip_user_wrappers: bool = False) -> str:
 # }
 
 
-def _extract_text_content(content) -> str:
-    """从 Claude Code 的 content 字段提取纯文本。"""
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict):
-                if block.get("type") == "text":
-                    parts.append(block.get("text", ""))
-                elif block.get("type") == "tool_use":
-                    # 简要记录工具调用
-                    name = block.get("name", "unknown")
-                    inp = block.get("input", {})
-                    # 截断过长的输入
-                    inp_str = json.dumps(inp, ensure_ascii=False)
-                    if len(inp_str) > 300:
-                        inp_str = inp_str[:300] + "..."
-                    parts.append(f"[Tool: {name}] {inp_str}")
-                elif block.get("type") == "tool_result":
-                    # 截断过长的工具结果
-                    result_content = block.get("content", "")
-                    result_str = _extract_text_content(result_content)
-                    if len(result_str) > 500:
-                        result_str = result_str[:500] + "..."
-                    parts.append(f"[ToolResult] {result_str}")
-        return "\n".join(parts).strip()
-    return ""
+from .records import _extract_blocks as _extract_text_content
 
 
-def discover_all_dates() -> set[date]:
-    """扫描 Claude / Codex / Cursor 对话日志，返回存在记录的所有日期集合。"""
+def discover_all_dates():
+    from .records import load_records, _local_day
     dates = set()
-
-    # Claude Code 对话（自动发现 ~/.claude*/projects/）
-    for claude_dir in _discover_claude_project_dirs():
-        for project_dir in claude_dir.iterdir():
-            if not project_dir.is_dir():
-                continue
-            if project_dir.name.endswith("-summarize"):
-                continue
-            for jsonl_file in project_dir.glob("*.jsonl"):
-                if jsonl_file.name.startswith("agent-"):
-                    continue
-                try:
-                    with open(jsonl_file, "r", encoding="utf-8") as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                obj = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            if obj.get("type") not in ("user", "assistant"):
-                                continue
-                            ts_str = obj.get("timestamp")
-                            if not ts_str:
-                                continue
-                            try:
-                                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                                # 时间戳是 UTC；转本地后取日期，与 target_date（本地）
-                                # 及 Codex 的本地目录日期保持同一日历口径。
-                                dates.add(ts.astimezone().date())
-                            except (ValueError, AttributeError):
-                                continue
-                except (OSError, UnicodeDecodeError):
-                    continue
-
-    # Codex 对话（按日期目录组织：~/.codex/sessions/YYYY/MM/DD/）
-    for codex_dir in _discover_codex_session_dirs():
-        for year_dir in codex_dir.iterdir():
-            if not year_dir.is_dir():
-                continue
-            for month_dir in year_dir.iterdir():
-                if not month_dir.is_dir():
-                    continue
-                for day_dir in month_dir.iterdir():
-                    if not day_dir.is_dir():
-                        continue
-                    # 目录名即日期组件
-                    try:
-                        d = date(int(year_dir.name), int(month_dir.name),
-                                 int(day_dir.name))
-                        # 确认目录下有 JSONL 文件
-                        if any(day_dir.glob("rollout-*.jsonl")):
-                            dates.add(d)
-                    except (ValueError, TypeError):
-                        continue
-
-    # Cursor Agent 对话（parent JSONL；日期来自 <timestamp>，否则 mtime）
-    for transcript_root in _discover_cursor_transcript_roots():
-        for _slug, jsonl_file in _iter_cursor_parent_jsonl(transcript_root):
-            file_dates = set()
+    for kind, roots in [("claude_code", _discover_claude_project_dirs()),
+                        ("codex", _discover_codex_session_dirs()),
+                        ("cursor", _discover_cursor_transcript_roots())]:
+        for root in roots:
             try:
-                with open(jsonl_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            obj = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if obj.get("role") not in ("user", "assistant"):
-                            continue
-                        msg = obj.get("message") or {}
-                        content = msg.get("content", "") if isinstance(msg, dict) else ""
-                        raw = _cursor_message_text(content)
-                        ts = _parse_cursor_timestamp(raw)
-                        if ts is not None:
-                            file_dates.add(ts.astimezone().date())
-            except (OSError, UnicodeDecodeError):
+                rows, _ = load_records(kind, root)
+            except ValueError:
                 continue
-            if file_dates:
-                dates.update(file_dates)
-            else:
-                try:
-                    dates.add(datetime.fromtimestamp(
-                        jsonl_file.stat().st_mtime).astimezone().date())
-                except OSError:
-                    continue
-
+            dates.update(day for row in rows if (day := _local_day(row["ts"])))
     return dates
 
 
-def parse_claude_code(target_date: date) -> list[dict]:
-    """扫描所有 ~/.claude*/projects/ 下的项目，按日期筛选 user/assistant 消息。"""
-    claude_dirs = _discover_claude_project_dirs()
-    if not claude_dirs:
-        print("[warn] 未找到任何 Claude Code 项目目录 (~/.claude*/projects/)")
-        return []
-
-    conversations = []
-
-    for claude_dir in claude_dirs:
-        for project_dir in claude_dir.iterdir():
-            if not project_dir.is_dir():
-                continue
-            project_name = project_dir.name
-
-            if project_name.endswith("-summarize"):
-                continue
-
-            for jsonl_file in project_dir.glob("*.jsonl"):
-                if jsonl_file.name.startswith("agent-"):
-                    continue
-
-                messages = []
-                session_timestamp = None
-                has_target_date = False
-
-                try:
-                    with open(jsonl_file, "r", encoding="utf-8") as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                obj = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-
-                            msg_type = obj.get("type")
-                            if msg_type not in ("user", "assistant"):
-                                continue
-
-                            timestamp_str = obj.get("timestamp")
-                            if not timestamp_str:
-                                continue
-
-                            try:
-                                ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-                            except (ValueError, AttributeError):
-                                continue
-
-                            # UTC → 本地日期，与 target_date / Codex 口径一致
-                            msg_date = ts.astimezone().date()
-                            if msg_date != target_date:
-                                continue
-
-                            has_target_date = True
-                            if session_timestamp is None:
-                                session_timestamp = timestamp_str
-
-                            message = obj.get("message", {})
-                            role = message.get("role", msg_type)
-                            content = message.get("content", "")
-
-                            text = _extract_text_content(content)
-                            if text:
-                                messages.append({"role": role, "content": text})
-                except (OSError, UnicodeDecodeError) as e:
-                    print(f"[warn] 读取 {jsonl_file} 失败: {e}")
-                    continue
-
-                if has_target_date and messages:
-                    conversations.append({
-                        "source": "claude_code",
-                        "project": project_name,
-                        "timestamp": session_timestamp or target_date.isoformat(),
-                        "messages": messages,
-                    })
-
-    return conversations
+def parse_claude_code(target_date):
+    return _from_paths("claude_code", _discover_claude_project_dirs(), target_date)
 
 
-def parse_chatgpt_export(filepath: str, target_date: date) -> list[dict]:
-    """解析 ChatGPT 导出的 conversations.json，按 create_time 筛选日期。"""
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"[error] 读取 ChatGPT 导出失败: {e}")
-        return []
-
-    conversations = []
-
-    for conv in data:
-        title = conv.get("title", "untitled")
-        create_time = conv.get("create_time")
-        mapping = conv.get("mapping", {})
-
-        if not mapping:
-            continue
-
-        # 从 mapping 中按顺序提取消息
-        messages = []
-
-        # 构建节点的 children 关系，找到根节点
-        nodes_by_id = {}
-        root_id = None
-        for node_id, node in mapping.items():
-            nodes_by_id[node_id] = node
-            if node.get("parent") is None:
-                root_id = node_id
-
-        # 沿 current_node 回溯得到当前激活分支（编辑/重新生成后正确的那条），
-        # 缺失时退回按最后一个 child（最新分支）前向遍历。原先取 children[0]
-        # 会走到被废弃的旧分支。
-        ordered_ids: list[str] = []
-        current_node = conv.get("current_node")
-        if current_node and current_node in nodes_by_id:
-            cid = current_node
-            while cid and cid in nodes_by_id:
-                ordered_ids.append(cid)
-                cid = nodes_by_id[cid].get("parent")
-            ordered_ids.reverse()
-        else:
-            cid = root_id
-            while cid and cid in nodes_by_id:
-                ordered_ids.append(cid)
-                children = nodes_by_id[cid].get("children", [])
-                cid = children[-1] if children else None
-
-        for current_id in ordered_ids:
-            msg = nodes_by_id[current_id].get("message")
-            if not msg:
-                continue
-            role = msg.get("author", {}).get("role", "")
-            if role not in ("user", "assistant"):
-                continue
-            # 仅保留 create_time 落在目标日期（本地）的消息，避免跨天对话把
-            # 其它日期的内容混进当天报告。与 Claude 解析口径一致。
-            ct = msg.get("create_time")
-            if not ct or datetime.fromtimestamp(ct).date() != target_date:
-                continue
-            parts = msg.get("content", {}).get("parts", [])
-            text = " ".join(str(p) for p in parts if isinstance(p, str))
-            if text.strip():
-                messages.append({"role": role, "content": text.strip()})
-
-        if messages:
-            conversations.append({
-                "source": "chatgpt",
-                "project": title,
-                "timestamp": datetime.fromtimestamp(create_time).isoformat() if create_time else target_date.isoformat(),
-                "messages": messages,
-            })
-
-    return conversations
+def parse_chatgpt_export(filepath, target_date):
+    return _from_paths("chatgpt", [Path(filepath)], target_date)
 
 
 def parse_generic(filepath: str, target_date: date) -> list[dict]:
@@ -482,294 +128,22 @@ def parse_generic(filepath: str, target_date: date) -> list[dict]:
     return []
 
 
-def _extract_codex_text(content) -> str:
-    """从 Codex 的 content 字段提取纯文本。"""
-    def _clean_text(text: str) -> str:
-        text = text.strip()
-        if not text:
-            return ""
-        skip_prefixes = (
-            "<user_instructions>",
-            "<environment_context>",
-            "<app-context>",
-            "<permissions instructions>",
-            "# AGENTS.md instructions",
-        )
-        if any(text.startswith(prefix) for prefix in skip_prefixes):
-            return ""
-        return text
-
-    if isinstance(content, str):
-        return _clean_text(content)
-    if isinstance(content, dict):
-        block_type = content.get("type", "")
-        if block_type in ("input_text", "output_text", "text"):
-            return _clean_text(content.get("text", ""))
-        nested = content.get("content")
-        if nested is not None:
-            return _extract_codex_text(nested)
-        return ""
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                text = _clean_text(block)
-                if text:
-                    parts.append(text)
-            elif isinstance(block, dict):
-                text = _extract_codex_text(block)
-                if text:
-                    parts.append(text)
-        return "\n".join(parts).strip()
-    return ""
+from .records import _extract_blocks as _extract_codex_text
 
 
-def _extract_codex_project(lines: list[dict]) -> str:
-    """从 Codex 会话中提取项目名（通过 environment_context 的 cwd）。"""
-    for entry in lines:
-        if entry.get("type") == "session_meta":
-            cwd = (entry.get("payload") or {}).get("cwd")
-            if cwd:
-                return Path(cwd).name or cwd
-
-    for entry in lines:
-        payload = entry.get("payload") or {}
-        if payload.get("type") == "message":
-            for block in payload.get("content", []):
-                if not isinstance(block, dict):
-                    continue
-                text = block.get("text", "")
-                if "<cwd>" in text:
-                    m = re.search(r"<cwd>(.*?)</cwd>", text)
-                    if m:
-                        return Path(m.group(1)).name
-
-        if entry.get("role") != "user" or entry.get("type") != "message":
-            continue
-        for block in entry.get("content", []):
-            text = block.get("text", "")
-            if "<cwd>" in text:
-                m = re.search(r"<cwd>(.*?)</cwd>", text)
-                if m:
-                    return Path(m.group(1)).name
-    return "unknown"
+from .records import _extract_codex_project
 
 
-def parse_codex(target_date: date) -> list[dict]:
-    """扫描 ~/.codex/sessions/ 下按日期目录组织的 Codex 会话。
-
-    Codex 会话存储在 ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl，
-    每个文件为一个独立会话。
-    """
-    # 定位目标日期的目录（WSL 下可能同时存在 Linux 与 Windows 侧）
-    rel = f"{target_date.year}/{target_date.month:02d}/{target_date.day:02d}"
-    day_dirs = [d / rel for d in _discover_codex_session_dirs()
-                if _is_dir(d / rel)]
-    if not day_dirs:
-        return []
-
-    conversations = []
-
-    def _truncate_tool_value(value, limit: int) -> str:
-        if isinstance(value, str):
-            text = value
-        else:
-            try:
-                text = json.dumps(value, ensure_ascii=False)
-            except TypeError:
-                text = str(value)
-        if len(text) > limit:
-            return text[:limit] + "..."
-        return text
-
-    for jsonl_file in sorted(f for d in day_dirs for f in d.glob("rollout-*.jsonl")):
-        try:
-            with open(jsonl_file, "r", encoding="utf-8") as f:
-                lines = [json.loads(line.strip()) for line in f if line.strip()]
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
-            print(f"[warn] 读取 Codex 会话 {jsonl_file.name} 失败: {e}")
-            continue
-
-        if not lines:
-            continue
-
-        session_id = jsonl_file.stem
-        session_ts = target_date.isoformat()
-        project_name = _extract_codex_project(lines)
-        event_messages: list[tuple[int, dict]] = []
-        fallback_messages: list[tuple[int, dict]] = []
-        tool_messages: list[tuple[int, dict]] = []
-
-        for idx, entry in enumerate(lines):
-            top_type = entry.get("type", entry.get("record_type", ""))
-            payload = entry.get("payload") or {}
-
-            if top_type == "session_meta":
-                session_id = payload.get("id", session_id)
-                session_ts = payload.get("timestamp") or entry.get("timestamp") or session_ts
-                continue
-
-            if top_type == "event_msg":
-                payload_type = payload.get("type", "")
-                if payload_type == "user_message":
-                    text = payload.get("message", "").strip()
-                    if text:
-                        event_messages.append((idx, {"role": "user", "content": text}))
-                elif payload_type == "agent_message":
-                    text = payload.get("message", "").strip()
-                    if text:
-                        event_messages.append((idx, {"role": "assistant", "content": text}))
-                continue
-
-            if top_type == "response_item":
-                payload_type = payload.get("type", "")
-                if payload_type == "message":
-                    role = payload.get("role", "")
-                    if role in ("user", "assistant"):
-                        text = _extract_codex_text(payload.get("content", []))
-                        if text:
-                            fallback_messages.append((idx, {"role": role, "content": text}))
-                elif payload_type in ("function_call", "custom_tool_call"):
-                    name = payload.get("name", "unknown")
-                    tool_input = payload.get("arguments")
-                    if tool_input is None:
-                        tool_input = payload.get("input", "")
-                    tool_messages.append((
-                        idx,
-                        {
-                            "role": "assistant",
-                            "content": f"[Tool: {name}] {_truncate_tool_value(tool_input, 300)}",
-                        },
-                    ))
-                elif payload_type in ("function_call_output", "custom_tool_call_output"):
-                    output = payload.get("output", "")
-                    tool_messages.append((
-                        idx,
-                        {
-                            "role": "assistant",
-                            "content": f"[ToolResult] {_truncate_tool_value(output, 500)}",
-                        },
-                    ))
-                continue
-
-            # 兼容更旧的平铺格式
-            if top_type == "message":
-                role = entry.get("role", "")
-                if role in ("user", "assistant"):
-                    text = _extract_codex_text(entry.get("content", []))
-                    if text:
-                        fallback_messages.append((idx, {"role": role, "content": text}))
-            elif top_type in ("function_call", "custom_tool_call"):
-                name = entry.get("name", "unknown")
-                tool_input = entry.get("arguments")
-                if tool_input is None:
-                    tool_input = entry.get("input", "")
-                tool_messages.append((
-                    idx,
-                    {
-                        "role": "assistant",
-                        "content": f"[Tool: {name}] {_truncate_tool_value(tool_input, 300)}",
-                    },
-                ))
-            elif top_type in ("function_call_output", "custom_tool_call_output"):
-                tool_messages.append((
-                    idx,
-                    {
-                        "role": "assistant",
-                        "content": f"[ToolResult] {_truncate_tool_value(entry.get('output', ''), 500)}",
-                    },
-                ))
-
-        plain_messages = event_messages if event_messages else fallback_messages
-        combined = [msg for _, msg in sorted(plain_messages + tool_messages, key=lambda item: item[0])]
-
-        if combined:
-            conversations.append({
-                "source": "codex",
-                "project": project_name,
-                "timestamp": session_ts,
-                "messages": combined,
-            })
-
-    return conversations
+def parse_codex(target_date):
+    return _from_paths("codex", _discover_codex_session_dirs(), target_date)
 
 
-def parse_cursor(target_date: date) -> list[dict]:
-    """扫描 ~/.cursor/projects/*/agent-transcripts/ 下 parent JSONL，按日期筛选。
-
-    日期优先取 user 文本内嵌 ``<timestamp>``（转本地日历日）；整份文件无标签时
-    回退文件 mtime。跳过 ``subagents/``。无可信 token 字段 — 只导出对话。
-    """
-    roots = _discover_cursor_transcript_roots()
-    if not roots:
-        return []
-
-    conversations = []
-    for transcript_root in roots:
-        for project_slug, jsonl_file in _iter_cursor_parent_jsonl(transcript_root):
-            messages = []
-            session_ts: Optional[datetime] = None
-            hit_dates: set[date] = set()
-
-            try:
-                with open(jsonl_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            obj = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-
-                        role = obj.get("role")
-                        if role not in ("user", "assistant"):
-                            continue
-
-                        msg = obj.get("message") or {}
-                        content = msg.get("content", "") if isinstance(msg, dict) else ""
-                        raw_text = _cursor_message_text(content)
-                        ts = _parse_cursor_timestamp(raw_text)
-                        if ts is not None:
-                            hit_dates.add(ts.astimezone().date())
-                            if session_ts is None:
-                                session_ts = ts
-
-                        text = _cursor_message_text(
-                            content, strip_user_wrappers=(role == "user"))
-                        if text:
-                            messages.append({"role": role, "content": text})
-            except (OSError, UnicodeDecodeError) as e:
-                print(f"[warn] 读取 {jsonl_file} 失败: {e}")
-                continue
-
-            if not messages:
-                continue
-
-            if hit_dates:
-                if target_date not in hit_dates:
-                    continue
-            else:
-                try:
-                    mtime_dt = datetime.fromtimestamp(
-                        jsonl_file.stat().st_mtime).astimezone()
-                except OSError:
-                    continue
-                if mtime_dt.date() != target_date:
-                    continue
-                session_ts = mtime_dt
-
-            conversations.append({
-                "source": "cursor",
-                "project": project_slug,
-                "timestamp": (
-                    session_ts.isoformat() if session_ts is not None
-                    else target_date.isoformat()
-                ),
-                "messages": messages,
-            })
-
-    return conversations
+def parse_cursor(target_date):
+    result = []
+    for root in _discover_cursor_transcript_roots():
+        for project, file in _iter_cursor_parent_jsonl(root):
+            result.extend(_from_paths("cursor", [file], target_date, project=project))
+    return result
 
 
 def collect_conversations(target_date: date, chatgpt: Optional[str] = None,
@@ -810,3 +184,22 @@ def collect_conversations(target_date: date, chatgpt: Optional[str] = None,
         all_conversations.extend(generic_convs)
 
     return all_conversations
+
+
+def _from_paths(kind, paths, target_date, project=None):
+    """Legacy CLI shape over the same record parser used by PersonalAgents."""
+    from .records import load_records
+    result = []
+    for path in paths:
+        try:
+            rows, _ = load_records(kind, path, on_date=target_date)
+        except ValueError:
+            continue
+        groups = {}
+        for row in rows:
+            key = row["conversation_id"]
+            group = groups.setdefault(key, {"source": kind, "project": project or row.get("project") or key,
+                "timestamp": row["ts"], "conversation_id": key, "messages": []})
+            group["messages"].append({"role": row["role"], "content": row["text"]})
+        result.extend(groups.values())
+    return result

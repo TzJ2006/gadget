@@ -13,7 +13,7 @@ requires-python = ">=3.10"
 # checkout on PYTHONPATH. model-access is not on PyPI. Install that local project
 # first, then this one, both without -e:
 #   python -m pip install D:/GitHub/personalAgent/shared
-#   python -m pip install D:/GitHub/gadget
+#   python -m pip install D:/GitHub/Apps/gadget
 # If model-access is absent, model load/unload fails instead of starting an unmanaged backend.
 # Heavy extras stay optional.
 dependencies = ["model-access>=0.1,<1"]
@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-summarize = ["anthropic>=0.18.0", "openai>=1.0.0"]
+summarize = ["httpx>=0.28", "anthropic>=0.18.0", "openai>=1.0.0"]
 research = ["arxiv>=2.0.0", "anthropic>=0.18.0", "openai>=1.0.0", "openreview-py", "pymupdf"]
 benchmark = ["torch>=2.0.0", "numpy>=1.24.0", "pandas>=2.0.0", "plotly>=5.18.0", "tqdm>=4.65.0", "threadpoolctl"]
 translation = ["torch>=2.0.0", "transformers>=4.40.0,<5.0.0"]

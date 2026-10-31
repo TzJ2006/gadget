@@ -81,10 +81,10 @@ def _parse_week(week_str: Optional[str]) -> tuple[int, int]:
 
 
 def _week_date_range(iso_year: int, iso_week: int) -> tuple[date, date]:
-    """返回 ISO 周的 (周一, 周日) 日期。"""
-    monday = date.fromisocalendar(iso_year, iso_week, 1)
-    sunday = date.fromisocalendar(iso_year, iso_week, 7)
-    return monday, sunday
+    from summarize.periods import period_days
+    days = period_days("week", f"{iso_year:04d}-W{iso_week:02d}")
+    return days[0], days[-1]
+
 
 
 def _week_str(iso_year: int, iso_week: int) -> str:
@@ -165,12 +165,13 @@ WEEKLY_SUMMARY_PROMPT = """You are a professional weekly report analyst. Below a
 for one week (JSON format). Please analyze this week's work progress and problem resolution, and generate a structured weekly report.
 
 Requirements:
+In EVERY field, including the opening summary, an action that did not happen is not automatically pending, outstanding, required, incomplete, or planned. Preserve its negative wording. Preserve explicit pending work and negative facts from conversation summaries. Do not mark a project completed while its reported work is pending. Do not invent actions or plans; use empty fields when evidence is absent.
 1. Aggregate progress from a weekly perspective; do not list day by day
 2. project_progress sorted by days_active descending, with status for each project
 3. key_tasks should only include important tasks with importance >= 6
 4. problems_resolved should pair problems with their solutions
 5. learnings should be deduplicated, merged, and grouped by category
-6. next_week_outlook should infer next week's priorities based on incomplete tasks and ongoing projects
+6. next_week_outlook should include only explicitly stated plans or pending work, without inventing priorities
 7. Use English
 
 Please return the following JSON structure:
@@ -229,6 +230,7 @@ WEEKLY_MERGE_PROMPT = """You are a professional weekly report analyst. Below are
 summaries for the same week (JSON format). Please merge them into one complete weekly report.
 
 Requirements:
+In EVERY field, including the opening summary, an action that did not happen is not automatically pending, outstanding, required, incomplete, or planned. Preserve its negative wording. Preserve explicit pending work and negative facts from conversation summaries. Do not mark a project completed while its reported work is pending. Do not invent actions or plans; use empty fields when evidence is absent.
 1. Merge all project_progress; combine days_active and accomplishments for the same project
 2. Merge key_tasks, deduplicate, keep only the most important ones
 3. Merge problems_resolved, deduplicate

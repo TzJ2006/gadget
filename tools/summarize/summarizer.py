@@ -37,6 +37,8 @@ SUMMARY_PROMPT = """You are a professional daily report analyst. Based on the fo
 
 The conversation logs come from AI interactions across the following projects (may include multiple sessions).
 
+In EVERY output field, distinguish observed facts from planned work. A statement that an action did not happen means only that it did not happen; never rephrase it as pending, required, incomplete, or planned work. Only explicitly pending work may be called pending. Include only explicitly stated work items or goals in tasks. A negative status or absence of an action is not a request, intention, or pending task to perform that action. Do not invent recommendations or future work to fill sections; use empty arrays when appropriate.
+
 Analyze the conversation content, extract the following information, and return it in JSON format:
 
 ```json
@@ -191,9 +193,6 @@ def _format_conversation(conv: dict) -> str:
     for msg in conv["messages"]:
         role_label = "👤 User" if msg["role"] == "user" else "🤖 Assistant"
         content = msg["content"]
-        # 截断单条过长的消息
-        if len(content) > 3000:
-            content = content[:3000] + "\n... [truncated]"
         parts.append(f"\n{role_label}:\n{content}\n")
     return "".join(parts)
 
@@ -211,16 +210,37 @@ def format_conversations(conversations: list[dict]) -> str:
     return "".join(_format_conversation(conv) for conv in conversations)
 
 
-def chunk_conversations(conversations: list[dict], max_chars: int = 150000) -> list[list[dict]]:
-    """按对话边界切分，使每个 chunk 格式化后 < max_chars。"""
-    chunks, current, size = [], [], 0
+def chunk_conversations(conversations: list[dict], max_chars: int = 150000,
+                        overlap: int = 0) -> list[list[dict]]:
+    """Lossless split, including a single message larger than the budget."""
+    from .chunks import split_text
+    if max_chars < 1 or not 0 <= overlap < max_chars:
+        raise ValueError("Invalid chunk budget")
+    fragments = []
     for conv in conversations:
-        conv_len = len(_format_conversation(conv))
-        if size + conv_len > max_chars and current:
+        current = {**conv, "messages": []}
+        for msg in conv["messages"]:
+            empty = {**conv, "messages": [{**msg, "content": ""}]}
+            room = max_chars - len(_format_conversation(empty))
+            if room <= 0:
+                raise ValueError("Chunk budget is smaller than conversation metadata")
+            for part in split_text(msg["content"], room, min(overlap, room - 1)):
+                item = {**msg, "content": part}
+                candidate = {**current, "messages": current["messages"] + [item]}
+                if current["messages"] and len(_format_conversation(candidate)) > max_chars:
+                    fragments.append(current)
+                    current = {**conv, "messages": []}
+                current["messages"].append(item)
+        if current["messages"]:
+            fragments.append(current)
+    chunks, current, size = [], [], 0
+    for conv in fragments:
+        length = len(_format_conversation(conv))
+        if current and size + length > max_chars:
             chunks.append(current)
             current, size = [], 0
         current.append(conv)
-        size += conv_len
+        size += length
     if current:
         chunks.append(current)
     return chunks
@@ -450,12 +470,15 @@ def _call_summarize(api: str, conversations: list[dict], target_date: date,
                     prompt_prefix: str = SUMMARY_PROMPT,
                     extra_context: str = "",
                     timeout: int = 600,
-                    chunk_cache_dir: Optional[Path] = None) -> dict:
+                    chunk_cache_dir: Optional[Path] = None, max_chars: int = 150000,
+                    overlap: int = 0, cache_context: str = "") -> dict:
     """层级递归总结：将对话分段独立总结，再逐层合并，避免截断丢失信息。"""
-    chunks = chunk_conversations(conversations)
+    chunks = chunk_conversations(conversations, max_chars, overlap)
     n = len(chunks)
 
-    if n == 1:
+    if n == 0:
+        raise ValueError("No messages to summarize")
+    if n == 1 and chunk_cache_dir is None:
         config = _build_daily_config(chunks[0], target_date, prompt_prefix, extra_context, timeout)
         return _finalize_report(
             lambda: timed_llm_call(api, config, chunk_idx=1, total=1))
@@ -464,7 +487,7 @@ def _call_summarize(api: str, conversations: list[dict], target_date: date,
     print(f"[info] 对话总量 {total_chars:,} 字符，分为 {n} 段进行层级总结 "
           f"(每段时限 {timeout}s，总时限 ~{timeout * n}s)...")
 
-    global_hash = (_conversations_hash(conversations, prompt_prefix + extra_context)
+    global_hash = (_conversations_hash(conversations, prompt_prefix + extra_context + api + cache_context)
                    if chunk_cache_dir else None)
 
     chunk_summaries = []
@@ -492,6 +515,9 @@ def _call_summarize(api: str, conversations: list[dict], target_date: date,
     if cache_hits:
         print(f"[info] chunk 缓存统计: {cache_hits}/{n} 命中, {n - cache_hits} 调用 API")
 
+    if n == 1:
+        return _normalize_report(chunk_summaries[0])
+
     def _daily_merge_config(prompt_text: str) -> LLMCallConfig:
         return LLMCallConfig(
             prompt=prompt_text,
@@ -502,4 +528,4 @@ def _call_summarize(api: str, conversations: list[dict], target_date: date,
 
     return _finalize_report(
         lambda: hierarchical_merge(api, chunk_summaries, CHUNK_MERGE_PROMPT,
-                                   _daily_merge_config, timeout))
+                                   _daily_merge_config, timeout, max_chars=max_chars))

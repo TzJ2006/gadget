@@ -35,17 +35,14 @@ def _unload_ollama() -> None:
     if os.environ.get("GADGET_KEEP_OLLAMA") == "1":
         print("[auto] GADGET_KEEP_OLLAMA=1, left Ollama loaded")
         return
-    try:
-        from model_access.resources import request_unload
-    except ImportError as exc:
-        raise RuntimeError("未安装 model_access，拒绝在没有统一租约的情况下卸载 Ollama") from exc
-    allowed, reason = request_unload("summarize-auto")
-    if not allowed:
-        print(f"[auto] {reason}")
-        return
     from common.engine import _free_ollama_vram
-    _free_ollama_vram()
-    print("[auto] Ollama models unloaded (set GADGET_KEEP_OLLAMA=1 to keep them warm)")
+    # The engine helper owns the entire exclusive switch and its cleanup.
+    # A separate holder here would block it and leave an abandoned switch.
+    unloaded, reason = _free_ollama_vram()
+    if unloaded:
+        print("[auto] Ollama models unloaded (set GADGET_KEEP_OLLAMA=1 to keep them warm)")
+    else:
+        print(f"[auto] Ollama models not unloaded: {reason}")
 
 
 def _run(cmd: list[str], *, defer_hugo_update: bool = False) -> bool:
@@ -61,8 +58,8 @@ def _run(cmd: list[str], *, defer_hugo_update: bool = False) -> bool:
         result = subprocess.run(cmd)
     elapsed = time.monotonic() - t0
     if result.returncode != 0:
-        print(f"[auto] exited {result.returncode} after {elapsed:.0f}s, continuing...")
-        return False
+        print(f"[auto] failed: exit {result.returncode} after {elapsed:.0f}s; pipeline stopped", file=sys.stderr)
+        raise SystemExit(result.returncode or 1)
     print(f"[auto] step finished in {elapsed:.0f}s")
     return True
 

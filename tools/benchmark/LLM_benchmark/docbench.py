@@ -1,6 +1,6 @@
 """Round 2: give every model the gadget README, ask for a summary + a usage tutorial.
 
-Same roster and plumbing as zhbench.py. Two things are different:
+Same roster (config.json) and plumbing as zhbench.py. Two things are different:
   * the prompt is ~21 KB, so CLI jobs get it on **stdin** -- Windows .cmd shims
     truncate argv at the first newline (learned the hard way in round 1).
   * stats are documentation stats, not prose stats: structure, README fact
@@ -15,12 +15,13 @@ import os
 import re
 import statistics
 import subprocess
-import sys
 import tempfile
 import threading
 import time
 import urllib.request
 from pathlib import Path
+
+import bench_config
 
 def _repo_root() -> Path:
     """Directory that contains both outputs/ and tools/, from this file upward."""
@@ -44,44 +45,8 @@ PROMPT = (
     "===== README.md =====\n" + README
 )
 
-OLLAMA_MODELS = ["gemma4:12b", "gemma4:26b", "qwen3.8-sum:latest", "qwen3.6-sum:latest"]
-
-# Full paths to the .cmd shims: CreateProcess does not do PATHEXT resolution for
-# extensionless npm shims the way the shell does.
-CURSOR = r"C:\Users\tongt\AppData\Local\cursor-agent\cursor-agent.cmd"
-NPM = r"C:\Users\tongt\AppData\Roaming\npm"
-
-CODEX = [NPM + r"\codex.cmd", "exec", "--json", "--sandbox", "read-only",
-         "--skip-git-repo-check", "-c", 'model_reasoning_effort="medium"']
-# No --bare: it drops the OAuth settings source and the run 401s.
-# "-" makes codex read the prompt from stdin.
-CLAUDE = ["claude", "-p", "--output-format", "json",
-          "--disallowed-tools", "Bash,Edit,Write,Read,Glob,Grep"]
-CUR = [CURSOR, "--print", "--output-format", "json", "--mode", "ask", "--trust"]
-
-CLI_JOBS = [
-    ("codex/gpt-6.1-sol", CODEX + ["-m", "gpt-6.1-sol", "-"]),
-    ("codex/gpt-6-astra", CODEX + ["-m", "gpt-6-astra", "-"]),
-    ("codex/gpt-6-sol", CODEX + ["-m", "gpt-6-sol", "-"]),
-    ("codex/gpt-6-luna", CODEX + ["-m", "gpt-6-luna", "-"]),
-    ("codex/gpt-5.6-sol", CODEX + ["-m", "gpt-5.6-sol", "-"]),
-    ("codex/gpt-5.6-terra", CODEX + ["-m", "gpt-5.6-terra", "-"]),
-    ("codex/gpt-5.6-luna", CODEX + ["-m", "gpt-5.6-luna", "-"]),
-    ("codex/gpt-5.5", CODEX + ["-m", "gpt-5.5", "-"]),
-    ("codex/gpt-5.4-mini", CODEX + ["-m", "gpt-5.4-mini", "-"]),
-    # The other claude jobs run at the CLI's default effort; this one is pinned.
-    ("claude/fable-high", CLAUDE + ["--model", "claude-fable-5-1", "--effort", "high"]),
-    ("claude/opus-5.5", CLAUDE + ["--model", "claude-opus-5-5"]),
-    ("claude/opus", CLAUDE + ["--model", "opus"]),
-    ("claude/sonnet", CLAUDE + ["--model", "sonnet"]),
-    ("claude/haiku", CLAUDE + ["--model", "haiku"]),
-    ("cursor/composer-2.5", CUR + ["--model", "composer-2.5"]),
-    ("cursor/grok-4.7-high", CUR + ["--model", "grok-4.7-high"]),
-    ("cursor/grok-4.6-high", CUR + ["--model", "cursor-grok-4.6-high"]),
-    ("cursor/gemini-3.7-flash", CUR + ["--model", "gemini-3.7-flash-high"]),
-]
-
-CLI_BIN = {"codex": NPM + r"\codex.cmd", "claude": "claude", "cursor": CURSOR}
+OLLAMA_MODELS = []
+CLI_BIN = bench_config.CLI_BIN
 
 
 # ---------- text / doc stats ----------
@@ -463,11 +428,16 @@ def save(results: list):
 
 
 def main():
-    only = None
-    if "--only" in sys.argv:
-        only = sys.argv[sys.argv.index("--only") + 1]
-    skip_cli = "--skip-cli" in sys.argv
-    skip_ollama = "--skip-ollama" in sys.argv
+    global OUT, OLLAMA_MODELS
+    run = bench_config.prepare_run("doc")
+    if not run["enabled"]:
+        print(f"suite doc is not in {run['source']}; results not written")
+        return
+    OUT = run["out_dir"] / "docbench.json"
+    OLLAMA_MODELS = run["ollama"]
+    jobs = bench_config.cli_jobs(run["config"], "stdin", PROMPT)
+    only, skip_cli, skip_ollama = run["only"], run["skip_cli"], run["skip_ollama"]
+    print(f"config: {run['source']}", flush=True)
 
     results = json.loads(OUT.read_text(encoding="utf-8")) if OUT.exists() else []
     done = {r["key"] for r in results
@@ -493,7 +463,7 @@ def main():
         print(f"cli versions: {CLI_VERSIONS}")
         workdir = tempfile.mkdtemp(prefix="docbench_")
         print(f"CLI sandbox cwd: {workdir}", flush=True)
-        for key, argv in CLI_JOBS:
+        for key, argv in jobs:
             if (only and only not in key) or key in done:
                 continue
             print(f"[cli] {key} ...", flush=True)
