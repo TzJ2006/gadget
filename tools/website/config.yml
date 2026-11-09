@@ -151,7 +151,7 @@ params:
   mathjax: true
   mainSections:
     - posts
-  defaultTheme: light
+  defaultTheme: auto
   disableThemeToggle: false
   displayFullLangName: true
   assets:
