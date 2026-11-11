@@ -29,41 +29,26 @@ languages:
         Content: "在这里记录编程、研究与学习途中的思考。写下做过的实验、遇到的问题，以及慢慢想清楚的事。"
     menu:
       main:
+        - identifier: projects
+          name: 研究与项目
+          url: /projects/
+          weight: 10
+        - identifier: posts
+          name: 文章
+          url: /posts/
+          weight: 20
+        - identifier: library
+          name: 资料归档
+          url: /library/
+          weight: 30
+        - identifier: about
+          name: 关于我
+          url: /resume/
+          weight: 40
         - identifier: search
           name: 搜索
           url: /search/
-          weight: 10
-        - identifier: bugJournal
-          name: 工作日志
-          url: /bugjournal/daily/
-          weight: 20
-        - identifier: bugJournal-daily
-          parent: bugJournal
-          name: 日报
-          url: /bugjournal/daily/
-          weight: 21
-        - identifier: bugJournal-weekly
-          parent: bugJournal
-          name: 周报
-          url: /bugjournal/weekly/
-          weight: 22
-        - identifier: bugJournal-monthly
-          parent: bugJournal
-          name: 月报
-          url: /bugjournal/monthly/
-          weight: 23
-        - identifier: leetcode
-          name: 算法笔记
-          url: /leetcode/
-          weight: 30
-        - identifier: posts
-          name: 博文
-          url: /posts/
-          weight: 5
-        - identifier: benchmark
-          name: 性能测试
-          url: /benchmark/
-          weight: 40
+          weight: 50
 
 markup:
   highlight:
@@ -82,61 +67,39 @@ markup:
             - - '\['
               - '\]'
           inline:
-            - - '$'
-              - '$'
             - - '\('
               - '\)'
 
-# MathJax only where needed: leetcode uses $...$ heavily; bugJournal
-# usage cards contain bare $cost amounts that would collide with $ delimiters.
+# Math is rendered at build time; use \(…\), \[...\] or $$...$$.
 cascade:
   - _target:
       path: /posts/**
     params:
       ShowToc: true
       ShowPostNavLinks: true
-  - _target:
-      path: /leetcode/**
-    params:
-      math: true
 
 menu:
   main:
+    - identifier: projects
+      name: Research
+      url: /projects/
+      weight: 10
+    - identifier: posts
+      name: Writing
+      url: /posts/
+      weight: 20
+    - identifier: library
+      name: Library
+      url: /library/
+      weight: 30
+    - identifier: about
+      name: About
+      url: /resume/
+      weight: 40
     - identifier: search
       name: Search
       url: /search/
-      weight: 10
-    - identifier: bugJournal
-      name: bugJournal
-      url: /bugjournal/daily/
-      weight: 20
-    - identifier: bugJournal-daily
-      parent: bugJournal
-      name: Daily
-      url: /bugjournal/daily/
-      weight: 21
-    - identifier: bugJournal-weekly
-      parent: bugJournal
-      name: Weekly
-      url: /bugjournal/weekly/
-      weight: 22
-    - identifier: bugJournal-monthly
-      parent: bugJournal
-      name: Monthly
-      url: /bugjournal/monthly/
-      weight: 23
-    - identifier: leetcode
-      name: leetcode
-      url: /leetcode/
-      weight: 30
-    - identifier: posts
-      name: Blog
-      url: /posts/
-      weight: 5
-    - identifier: benchmark
-      name: benchmark
-      url: /benchmark/
-      weight: 40
+      weight: 50
 
 params:
   label:

@@ -2,5 +2,5 @@
 title: "Search"
 layout: "search"
 summary: "Search results"
-placeholder: "Let me find it for you (*^-^*)"
+placeholder: "Search research, articles and notes"
 ---

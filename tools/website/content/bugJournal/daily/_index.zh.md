@@ -1,4 +1,4 @@
 ---
-title: "Daily Summaries"
-description: "逐天的AI对话总结与调试日志。"
+title: "工作日报"
+description: "每天的工作进展、遇到的问题与解决过程。"
 ---

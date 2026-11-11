@@ -7,9 +7,9 @@
 {{- if not .IsHome | and .Title }}
 <header class="page-header">
   {{- partial "breadcrumbs.html" . }}
-  <p class="blog-kicker">{{ site.Title }} / {{ if eq .Section "posts" }}{{ if eq .Language.Lang "zh" }}博文与笔记{{ else }}BLOG & NOTES{{ end }}{{ else }}{{ .Section | humanize | upper }}{{ end }}</p>
+  <p class="blog-kicker">{{ site.Title }} / {{ if eq .Section "posts" }}{{ if eq .Language.Lang "zh" }}博文与笔记{{ else }}BLOG & NOTES{{ end }}{{ else }}{{ if eq .Language.Lang "zh" }}{{ index (dict "leetcode" "算法笔记" "research" "研究资料" "bugJournal" "工作日志") .Section | default .Title }}{{ else }}{{ .Section | humanize }}{{ end }}{{ end }}</p>
   <h1>
-    {{ if eq .Section "posts" }}{{ if eq .Language.Lang "zh" }}实验、观察与思考。{{ else }}Experiments, observations & ideas.{{ end }}{{ else }}{{ .Title }}{{ end }}
+    {{ if eq .Section "posts" }}{{ if eq .Language.Lang "zh" }}文章与笔记{{ else }}Writing & notes{{ end }}{{ else }}{{ .Title }}{{ end }}
     {{- if and (or (eq .Kind `term`) (eq .Kind `section`)) (.Param "ShowRssButtonInSectionTermList") }}
     {{- with .OutputFormats.Get "rss" }}
     <a href="{{ .RelPermalink }}" title="RSS" aria-label="RSS">
@@ -24,7 +24,7 @@
     {{- end }}
   </h1>
   {{- if eq .Section "posts" }}
-  <p class="blog-intro">{{ if eq .Language.Lang "zh" }}关于模型、工具，以及我们如何与 AI 一起工作的博文与笔记。{{ else }}Notes from programming, research, and everyday learning.{{ end }}</p>
+  <p class="blog-intro">{{ if eq .Language.Lang "zh" }}记录模型实验、编程实践和研究过程中的思考。{{ else }}Notes from programming, research, and everyday learning.{{ end }}</p>
   {{- end }}
   {{- if .Description }}
   <div class="post-description">

@@ -1,4 +1,4 @@
 ---
-title: "Weekly Summaries"
-description: "每周汇总将每日总结整合为更高层次的视图。"
+title: "工作周报"
+description: "汇总一周的主要工作、实验进展和待办事项。"
 ---

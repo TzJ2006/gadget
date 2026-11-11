@@ -1,0 +1,7 @@
+{{ $zh := eq .Language.Lang "zh" }}
+<div class="research-media">
+{{ range slice (dict "slug" "collision-recovery" "zh" "碰撞后的恢复" "en" "Recovery after a collision") (dict "slug" "grasp-recovery" "zh" "抓取姿态错误后的恢复" "en" "Recovery from an incorrect grasp") }}
+<figure><video controls playsinline preload="none" poster="{{ printf "media/recoverbench/%s.webp" .slug | relURL }}" width="256" height="256" aria-label="{{ if $zh }}{{ .zh }}，RecoverBench 仿真回放{{ else }}{{ .en }}, RecoverBench simulation replay{{ end }}"><source src="{{ printf "media/recoverbench/%s.mp4" .slug | relURL }}" type="video/mp4">{{ if $zh }}浏览器不支持视频播放。{{ else }}Your browser does not support video playback.{{ end }}<a href="{{ printf "media/recoverbench/%s.mp4" .slug | relURL }}">{{ if $zh }}下载视频{{ else }}Download video{{ end }}</a></video><figcaption>{{ if $zh }}{{ .zh }}{{ else }}{{ .en }}{{ end }}</figcaption></figure>
+{{ end }}
+<p class="media-caption">{{ if $zh }}RecoverBench 项目演示：按保存的仿真状态重渲染的恢复轨迹。{{ else }}RecoverBench demonstrations, recovery trajectories re-rendered from recorded simulation states.{{ end }} <a href="https://huggingface.co/datasets/ErrorRecovery/ErrorRecoveryBenchmark">{{ if $zh }}数据与来源{{ else }}Dataset and source{{ end }} ↗</a></p>
+</div>

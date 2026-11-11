@@ -8,6 +8,10 @@ Hugo blog and the script that publishes it. Deep guide: [AGENTS.md](AGENTS.md).
 
 A human page has no `gadget_generated: true` marker. Generated pages carry that marker. The pipeline will not overwrite a human page.
 
+## Markdown and mathematics
+
+Use `\(x + y\)` for inline math and `\[...\]` or `$$...$$` for display math. Hugo renders formulas to native MathML at build time; no browser script is required. A single `$` remains ordinary text so dollar prices cannot consume surrounding Markdown. Keep a blank line between headings and tables or lists.
+
 ## Pipeline
 
 `update.sh` (macOS, Linux, Git Bash) and `update.ps1` (Windows) run compression, translation, preflight, the Hugo build, and the push.

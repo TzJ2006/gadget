@@ -42,7 +42,7 @@ if str(SITE_ROOT) not in sys.path:
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from common.translation import detect_language
+from common.translation import detect_language, wrong_language
 from generated_paths import GENERATED_CONTENT_DIRS, GENERATED_CONTENT_FILES
 
 STALE_LINK_PATTERN = re.compile(r"\.\./\.\./static")
@@ -267,8 +267,8 @@ def check_language(files: list[Path]) -> list[Issue]:
         if len(body.strip()) < MIN_BODY_LENGTH:
             continue
 
-        detected = detect_language(body)
-        if detected != expected:
+        if wrong_language(body, expected):
+            detected = "en" if expected == "zh" else "zh"
             issues.append(Issue(
                 "FIX", "language", str(path),
                 f"expected {expected} body but detected {detected}",

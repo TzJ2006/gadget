@@ -1,0 +1,2 @@
+{{- $opts := dict "output" "mathml" "displayMode" (eq .Type "block") "strict" "warn" -}}
+{{- if eq .Type "block" -}}<div class="math-block">{{ transform.ToMath .Inner $opts }}</div>{{- else -}}<span class="math-inline">{{ transform.ToMath .Inner $opts }}</span>{{- end -}}

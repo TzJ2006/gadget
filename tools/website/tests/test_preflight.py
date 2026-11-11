@@ -103,6 +103,16 @@ def test_check_bilingual_pairs_flags_swap_when_slot_language_mismatches(tmp_path
     assert issues[0].extra["existing_lang"] == "zh"
 
 
+def test_language_check_uses_prose_in_code_heavy_articles(tmp_path):
+    body = ZH_BODY + "\n```python3 \n" + "print('English example')\n" * 500 + "```\n"
+    en = write_md(tmp_path / "note.md", "Example", body)
+    zh = write_md(tmp_path / "note.zh.md", "中文算法笔记标题", body)
+    issues = pf.check_language([en, zh])
+    assert len(issues) == 1
+    assert issues[0].path == str(en)
+    assert "expected en body but detected zh" in issues[0].detail
+
+
 # ── CLI exit codes (engine never loaded) ───────────────────────────
 
 

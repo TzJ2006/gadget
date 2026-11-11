@@ -1,4 +1,4 @@
 ---
-title: "Monthly Summaries"
-description: "每月总结汇总了各周的主要工作、模式和经验。"
+title: "工作月报"
+description: "回顾每月的主要成果、持续问题和后续计划。"
 ---
