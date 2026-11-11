@@ -310,7 +310,9 @@ def call_period_summarize_chunked(
         return build_config(prompt_text)
 
     return hierarchical_merge(api, partial_summaries, merge_prompt,
-                              _merge_config, timeout)
+                              _merge_config, timeout,
+                              cache_dir=chunk_cache_dir / "merges" if chunk_cache_dir else None,
+                              cache_context=global_hash or "")
 
 
 # ─── Chart reshape ─────────────────────────────────────────────────────

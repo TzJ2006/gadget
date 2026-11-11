@@ -272,7 +272,11 @@ def parse_cli(key: str, stdout: str) -> tuple:
                     continue
     if d is None:
         return stdout, {}
-    return _longest_text(d), _dig(d, USAGE_KEYS)
+    # claude's final event carries the answer in "result"; the longest string can be a thinking signature.
+    events = d if isinstance(d, list) else [d]
+    final = next((e["result"] for e in reversed(events)
+                  if isinstance(e, dict) and e.get("type") == "result" and isinstance(e.get("result"), str) and e["result"]), "")
+    return final or _longest_text(d), _dig(d, USAGE_KEYS)
 
 
 def reported_model(stdout: str) -> str:

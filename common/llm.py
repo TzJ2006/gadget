@@ -6,6 +6,7 @@ Two tiers:
     with SDK-specific features (tool_use, response_format, etc.)
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -13,7 +14,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -475,7 +476,8 @@ def call_ollama(config: LLMCallConfig) -> dict:
                 from common.engine.ollama import ollama_native_host
                 result = complete(ollama_native_host(), served,
                                   [{"role": "user", "content": config.prompt}], budget,
-                                  schema=_schema_from_tools(config.anthropic_tools) or "json")
+                                  schema=_schema_from_tools(config.anthropic_tools) or "json",
+                                  max_tokens=config.max_tokens)
                 return parse_json_response(result.text)
             return _chat_json(_ollama_client(), served, replace(config, timeout=budget),
                               schema=_schema_from_tools(config.anthropic_tools))
@@ -634,7 +636,8 @@ def cleanup_chunk_cache(cache_dir: Path) -> None:
 def hierarchical_merge(api: str, summaries: list[dict],
                        merge_prompt: str,
                        make_config: Callable[[str], LLMCallConfig],
-                       timeout: int = 600, *, max_chars: int = 150000, _depth: int = 0) -> dict:
+                       timeout: int = 600, *, max_chars: int = 150000, _depth: int = 0,
+                       cache_dir: Optional[Path] = None, cache_context: str = "") -> dict:
     """Recursively merge chunk summaries until everything fits in one call.
 
     Args:
@@ -643,6 +646,8 @@ def hierarchical_merge(api: str, summaries: list[dict],
         merge_prompt: System/user prompt prefix for the merge phase.
         make_config: Factory — given full prompt text, returns LLMCallConfig.
         timeout: Per-chunk base timeout (merge phase uses 3x).
+        cache_dir: Optional intermediate results, reused after a timeout.
+        cache_context: Source/implementation identity supplied by the caller.
     """
     if _depth >= 16:
         raise ValueError("Summary merge did not converge")
@@ -657,7 +662,7 @@ def hierarchical_merge(api: str, summaries: list[dict],
     summary_texts = []
     for i, s in enumerate(summaries):
         text = f"\n--- 第 {i+1} 段总结 ---\n"
-        text += json.dumps(s, ensure_ascii=False, indent=2) + "\n"
+        text += json.dumps(s, ensure_ascii=False, separators=(",", ":")) + "\n"
         summary_texts.append(text)
 
     combined = "".join(summary_texts)
@@ -690,9 +695,36 @@ def hierarchical_merge(api: str, summaries: list[dict],
     merged_results = []
     for i, group in enumerate(text_chunks):
         logger.info("Recursive merge group %d/%d...", i + 1, n)
-        group_text = merge_prompt + "".join(group)
+        # Intermediate reports must fit together on the next level, otherwise
+        # single-report groups can keep expanding without reducing the count.
+        compact_instruction = (
+            "\nThis is an intermediate merge, not the final report. For this step ONLY, "
+            "replace the report template with short working notes: a summary string and "
+            "a facts array of concise strings. Preserve source names, dates, decisions, "
+            "outcomes and uncertainties. Deduplicate; do not invent details. "
+            f"Keep the whole JSON within {max(128, max_chars // 6)} characters.\n")
+        group_text = merge_prompt + compact_instruction + "".join(group)
         config = make_config(group_text)
         config.timeout = merge_timeout
+        config.max_tokens = min(config.max_tokens, max(256, max_chars // 12))
+        config.anthropic_tool_name = "submit_notes"
+        config.anthropic_tools = [{"name": "submit_notes", "description": "Compact intermediate facts",
+            "input_schema": {"type": "object", "properties": {
+                "summary": {"type": "string"},
+                "facts": {"type": "array", "items": {"type": "string"}}},
+                "required": ["summary", "facts"]}}]
+        cache_key = ""
+        if cache_dir is not None:
+            identity = {"api": api, "request_model": _request_model.get(),
+                        "config": {k: v for k, v in asdict(config).items() if k != "timeout"},
+                        "environment": {k: os.environ.get(k, "") for k in (
+                            "OLLAMA_MODEL", "OLLAMA_BASE_URL", "OPENAI_MODEL", "OPENAI_BASE_URL")}}
+            cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True,
+                                                  ensure_ascii=False).encode("utf-8")).hexdigest()
+            cached = load_chunk_cache(cache_dir, cache_key, cache_context, 1)
+            if cached is not None:
+                merged_results.append(cached)
+                continue
         t0 = time.monotonic()
         try:
             result = call_llm(api, config)
@@ -702,7 +734,12 @@ def hierarchical_merge(api: str, summaries: list[dict],
                 raise ChunkTimeoutError(-1, 0, merge_timeout) from e
             raise
         result = try_repair_result(result, api, merge_timeout)
+        if cache_dir is not None:
+            save_chunk_cache(cache_dir, cache_key, result, cache_context, 1)
         merged_results.append(result)
 
+    # Only intermediate groups are cached: report validation may request a
+    # fresh final answer without repeating all the completed lower levels.
     return hierarchical_merge(api, merged_results, merge_prompt, make_config, timeout,
-                              max_chars=max_chars, _depth=_depth + 1)
+                              max_chars=max_chars, _depth=_depth + 1,
+                              cache_dir=cache_dir, cache_context=cache_context)

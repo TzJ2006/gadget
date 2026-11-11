@@ -29,6 +29,22 @@ logger = logging.getLogger(__name__)
 _GARBAGE_RE = re.compile(r"^-{3,}(END|BEGIN|结束|开始)?-{0,3}$")
 
 
+def repair_markdown_boundaries(text: str) -> str:
+    """Separate headings from tables/lists glued on by a translator."""
+    # Fenced examples and inline code must remain byte-for-byte unchanged.
+    parts = re.split(r"(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`)", text)
+    for i in range(0, len(parts), 2):
+        # Some translations merge the table header and separator as well.
+        parts[i] = re.sub(r"(?m)^(#{1,6} [^\n|]+)(\|[^\n]*?)\|(?=[:-]{3,}\|)",
+                          r"\1\n\n\2|\n|", parts[i])
+        parts[i] = re.sub(
+            r"^(#{1,6} [^\n|]+?)(\|[^\n]+\|)\n(?=\|[ :|\-]+\|)",
+            r"\1\n\n\2\n", parts[i], flags=re.M,
+        )
+        parts[i] = re.sub(r"^(## 研究方向)-\s*", r"\1\n\n- ", parts[i], flags=re.M)
+    return "".join(parts)
+
+
 def clean_translated_document(text: str) -> str:
     """Strip wrapper text so the result starts with frontmatter.
 
@@ -42,13 +58,13 @@ def clean_translated_document(text: str) -> str:
 
     if result.startswith("---"):
         _validate_minimum_content(result)
-        return result
+        return repair_markdown_boundaries(result)
 
     idx = result.find("---")
     if idx >= 0:
         result = result[idx:]
         _validate_minimum_content(result)
-        return result
+        return repair_markdown_boundaries(result)
 
     raise ValueError("Translated output is missing frontmatter delimiters")
 

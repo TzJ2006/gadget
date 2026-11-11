@@ -68,11 +68,13 @@ def publish_site(cfg, argv=None) -> None:
     if not bench_config.publish_enabled(cfg, argv):
         print("publish off; skipping the live push", flush=True)
         return
+    root = Path(__file__).resolve().parents[3]  # ponytail: repo root, so run.py works from any cwd
+    sys.path.insert(0, str(root))
     from common.hugo import run_hugo_update
 
     print("== website publish ==", flush=True)
     try:
-        ok = run_hugo_update(Path("tools/website"))
+        ok = run_hugo_update(root / "tools/website")
     except subprocess.CalledProcessError as exc:
         raise SystemExit(exc.returncode) from exc
     if not ok:

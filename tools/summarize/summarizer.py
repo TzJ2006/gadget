@@ -528,4 +528,6 @@ def _call_summarize(api: str, conversations: list[dict], target_date: date,
 
     return _finalize_report(
         lambda: hierarchical_merge(api, chunk_summaries, CHUNK_MERGE_PROMPT,
-                                   _daily_merge_config, timeout, max_chars=max_chars))
+                                   _daily_merge_config, timeout, max_chars=max_chars,
+                                   cache_dir=chunk_cache_dir / "merges" if chunk_cache_dir else None,
+                                   cache_context=global_hash or ""))

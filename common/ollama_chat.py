@@ -24,8 +24,10 @@ class LLMResult:
     diagnostics: dict = field(default_factory=dict)
 
 
-def complete(endpoint, model, messages, timeout, *, schema=None):
+def complete(endpoint, model, messages, timeout, *, schema=None, max_tokens=None):
     import httpx
+    if max_tokens is not None and (type(max_tokens) is not int or max_tokens <= 0):
+        raise ValueError("max_tokens must be a positive integer")
     deadline = time.monotonic() + timeout
     try:
         resident = httpx.get(endpoint + "/api/ps", timeout=min(timeout, 10))
@@ -63,11 +65,14 @@ def complete(endpoint, model, messages, timeout, *, schema=None):
                            "尚未解决的部分，不要编造证明或答案，不再从头长篇推演。保留原人设、权限和输出格式。")
             current.insert(0, {'role': 'system', 'content': instruction})
         started = time.monotonic()
+        token_limit = 8192 if thinking else 4096
+        if max_tokens is not None:
+            token_limit = min(token_limit, max_tokens)
         try:
             response = httpx.post(endpoint + "/api/chat", json={
                 "model": model, "messages": current, "think": thinking, "stream": False,
                 **({"format": schema} if schema else {}),
-                "options": {"temperature": 1.0, "num_predict": 8192 if thinking else 4096},
+                "options": {"temperature": 1.0, "num_predict": token_limit},
             }, timeout=call_timeout)
         except httpx.TimeoutException as exc:
             attempts.append({'thinking': thinking, 'outcome': 'timeout',

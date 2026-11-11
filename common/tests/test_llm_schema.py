@@ -103,5 +103,6 @@ def test_gemma_native_path_receives_the_same_schema(monkeypatch):
     seen = []
     monkeypatch.setattr(ollama_chat, "complete", lambda *a, **kw:
         seen.append(kw) or ollama_chat.LLMResult('{"summary":"s","tasks":[]}', 'id', 'gemma4:26b'))
-    assert call_ollama(LLMCallConfig(prompt="p", anthropic_tools=TOOLS))["summary"] == "s"
+    assert call_ollama(LLMCallConfig(prompt="p", anthropic_tools=TOOLS, max_tokens=2048))["summary"] == "s"
     assert seen[0]["schema"] == CONSTRAINED
+    assert seen[0]["max_tokens"] == 2048
