@@ -219,3 +219,24 @@ def test_daily_tool_schema():
     assert "date" in required
     assert "summary" in required
     assert "tasks" in required
+
+
+def test_backfill_projects_restores_dropped_project():
+    from summarize.summarizer import backfill_projects
+    chunks = [
+        {"conversation_summaries": [{"project": "Gadget", "topic": "a", "summary": "x", "importance": 5}]},
+        {"conversation_summaries": [
+            {"project": "gadgets", "topic": "b", "summary": "y"},
+            {"project": "CalendarPro", "topic": "c", "summary": "z", "importance": 4,
+             "workstreams": [{"topic": "c1", "sessions": 2, "summary": "z1"}]},
+            {"project": "CalendarPro", "topic": "d", "summary": "w", "importance": 8},
+        ]},
+    ]
+    merged = {"summary": "s", "conversation_summaries": [{"project": "Gadget Summary Tool", "topic": "t"}]}
+    out = backfill_projects(merged, chunks)["conversation_summaries"]
+    assert [e["project"] for e in out] == ["Gadget Summary Tool", "CalendarPro"]  # gadget covered, Calendar re-added
+    cal = out[1]
+    assert cal["importance"] == 8 and cal["sessions"] == 3
+    assert [w["topic"] for w in cal["workstreams"]] == ["c1", "d"]
+    # parse_error reports are left alone
+    assert backfill_projects({"parse_error": True}, chunks) == {"parse_error": True}

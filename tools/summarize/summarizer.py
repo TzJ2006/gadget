@@ -87,13 +87,21 @@ Analyze the conversation content, extract the following information, and return 
     "conversation_summaries": [
         {
             "project": "Human-readable project name (e.g. CalendarPro, not path format)",
-            "source": "claude_code | codex | cursor | chatgpt | generic",
-            "timestamp": "Original timestamp of this session",
-            "topic": "Session topic title (60 characters or fewer)",
-            "summary": "2-4 sentence narrative: what was discussed, key decisions, final outcome",
+            "source": "claude_code | codex | cursor | gemini | antigravity | chatgpt | generic",
+            "topic": "Project headline for the day (60 characters or fewer)",
+            "summary": "One sentence covering all of this project's work today",
+            "sessions": 3,
             "outcome": "completed | partial | exploratory | abandoned",
             "level": "high | low",
-            "importance": 7
+            "importance": 7,
+            "workstreams": [
+                {
+                    "topic": "One distinct piece of work (60 characters or fewer)",
+                    "sessions": 2,
+                    "outcome": "completed | partial | exploratory | abandoned",
+                    "summary": "One sentence: what was done, key fix or decision, result"
+                }
+            ]
         }
     ]
 }
@@ -106,7 +114,7 @@ Requirements:
 4. Task status must accurately reflect actual completion state
 5. Return only JSON, do not add any other text
 6. Use English
-7. Generate one summary per independent session (conversation_summaries); use human-readable project names rather than path format; outcome should reflect actual completion state
+7. conversation_summaries has exactly one entry per project; use human-readable project names rather than path format, and treat case/plural/path variants (e.g. Gadget, gadget, Gadgets) as the same project. Inside each project, list every distinct piece of work as one workstream; sessions doing the same work share one workstream and its sessions count is how many sessions did it. Never drop a workstream. outcome should reflect actual completion state
 8. Assign level and importance to each entry:
    - level: "high" = strategic thinking, architectural decisions, new methodologies, important discoveries; "low" = implementation details, bug fixes, routine work, environment setup
    - importance: integer from 1-10, where 10 is most important. Criteria: impact on project progress, technical depth, whether it changes direction
@@ -168,7 +176,7 @@ Requirements:
 2. Merge all problems and solutions; consolidate similar problems into one entry
 3. Merge all human vs AI analyses; consolidate entries on the same topic
 4. Merge all AI limitations and learnings; consolidate similar content into one entry
-5. Merge all conversation summaries (conversation_summaries); combine multiple sessions from the same project into one summary, keep one entry per distinct project
+5. Merge conversation_summaries by project: keep exactly one entry per project and treat case/plural/path variants (e.g. Gadget, gadget, Gadgets) as the same project. Every project that appears in any segment MUST appear in the result. Inside a project, merge workstreams describing the same work into one (sum their sessions); keep every distinct workstream as its own item with a one-sentence summary. The project sessions is the sum of its workstreams
 6. Generate a one-sentence summary covering all segments' work
 7. Merge daily_overview from each segment: if segments use per-device grouped format (with global and devices), preserve the structure and merge content within the same device, with global covering the entire day; if in flat format ({what/how/impact}), synthesize a comprehensive three-sentence overview of the full day
 8. Return the same JSON structure as the individual segments
@@ -176,7 +184,7 @@ Requirements:
 10. Return only JSON, do not add any other text
 11. Preserve the level and importance fields for each entry; when deduplicating, keep the higher importance value
 12. ai_limitations and learnings use the {"content": "...", "level": "...", "importance": N} object format
-13. Focus on synthesizing and distilling, not copying entries verbatim
+13. Deduplicate repeated content, but do not compress distinct items away: losing a project or workstream is worse than a longer report
 
 """
 
@@ -313,9 +321,18 @@ def _daily_tool_schema() -> list[dict]:
                     "properties": {"project": {"type": "string"}, "source": {"type": "string"},
                                    "timestamp": {"type": "string"}, "topic": {"type": "string"},
                                    "summary": {"type": "string"},
+                                   "sessions": {"type": "integer", "minimum": 1},
                                    "outcome": {"type": "string", "enum": ["completed", "partial", "exploratory", "abandoned"]},
+                                   "workstreams": {"type": "array", "items": {
+                                       "type": "object",
+                                       "properties": {"topic": {"type": "string"},
+                                                      "sessions": {"type": "integer", "minimum": 1},
+                                                      "outcome": {"type": "string"},
+                                                      "summary": {"type": "string"}},
+                                       "required": ["topic", "summary"],
+                                   }},
                                    **_lp},
-                    "required": ["project", "topic", "summary", "level", "importance"],
+                    "required": ["project", "topic", "summary", "workstreams", "level", "importance"],
                 }},
             },
             "required": ["date", "summary", "tasks"],
@@ -324,6 +341,8 @@ def _daily_tool_schema() -> list[dict]:
 
 
 _LOW_THINKING = {"type": "enabled", "budget_tokens": 1024}
+# Per-project workstream reports outgrow the 8K default; local Gemma has 256K context.
+_REPORT_MAX_TOKENS = 24576
 
 
 def _build_daily_config(conversations: list[dict], target_date: date,
@@ -339,6 +358,7 @@ def _build_daily_config(conversations: list[dict], target_date: date,
         anthropic_tools=_daily_tool_schema(),
         anthropic_tool_name="submit_report",
         thinking=_LOW_THINKING,
+        max_tokens=_REPORT_MAX_TOKENS,
     )
 
 
@@ -524,10 +544,51 @@ def _call_summarize(api: str, conversations: list[dict], target_date: date,
             anthropic_tools=_daily_tool_schema(),
             anthropic_tool_name="submit_report",
             thinking=_LOW_THINKING,
+            max_tokens=_REPORT_MAX_TOKENS,
         )
 
-    return _finalize_report(
+    merged = _finalize_report(
         lambda: hierarchical_merge(api, chunk_summaries, CHUNK_MERGE_PROMPT,
                                    _daily_merge_config, timeout, max_chars=max_chars,
                                    cache_dir=chunk_cache_dir / "merges" if chunk_cache_dir else None,
                                    cache_context=global_hash or ""))
+    return backfill_projects(merged, chunk_summaries)
+
+
+def _project_key(name) -> str:
+    key = "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+    return key[:-1] if key.endswith("s") else key
+
+
+def backfill_projects(merged: dict, chunk_summaries: list[dict]) -> dict:
+    """Re-add any project the LLM merge dropped, built from the chunk entries.
+
+    # ponytail: substring match on normalized names ("gadget" covers
+    #           "Gadget Summary Tool"); a project whose name the merge rewrote
+    #           entirely gets re-added as a near-duplicate rather than lost.
+    """
+    if not isinstance(merged, dict) or merged.get("parse_error"):
+        return merged
+    entries = merged.setdefault("conversation_summaries", [])
+    have = {_project_key(e.get("project")) for e in entries if isinstance(e, dict)}
+    have.discard("")
+    missing: dict[str, list[dict]] = {}
+    for chunk in chunk_summaries:
+        for e in (chunk or {}).get("conversation_summaries") or []:
+            if not isinstance(e, dict):
+                continue
+            k = _project_key(e.get("project"))
+            if k and not any(k in h or h in k for h in have):
+                missing.setdefault(k, []).append(e)
+    for items in missing.values():
+        streams = []
+        for e in items:
+            streams += e.get("workstreams") or [{
+                "topic": e.get("topic", ""), "sessions": e.get("sessions") or 1,
+                "outcome": e.get("outcome", ""), "summary": e.get("summary", "")}]
+        top = max(items, key=lambda e: int(e.get("importance") or 0))
+        entries.append({**top,
+                        "sessions": sum(int(w.get("sessions") or 1) for w in streams),
+                        "workstreams": streams})
+        print(f"[warn] 合并丢失项目 {top.get('project')}，已从分段结果补回")
+    return merged

@@ -305,7 +305,7 @@ def compute_statistics(daily_reports: list[dict], year: int, month: int) -> dict
 
         # 对话数从 conversation_summaries 计
         convs = report.get("conversation_summaries", [])
-        total_conversations += len(convs)
+        total_conversations += sum(int(cs.get("sessions") or 1) for cs in convs)
 
         for cs in convs:
             proj = cs.get("project", "")

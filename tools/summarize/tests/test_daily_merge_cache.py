@@ -21,7 +21,7 @@ def _write_log(path):
         "_finalized": True,
         "conversations": [{
             "id": "c1",
-            "messages": [{"role": "user", "content": "hello"}],
+            "messages": [{"role": "user", "content": "please refactor the research module into a scout package, then add unit tests for the new layout"}],
         }],
     }, ensure_ascii=False), encoding="utf-8")
 

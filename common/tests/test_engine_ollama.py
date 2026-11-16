@@ -1,10 +1,21 @@
 """OllamaEngine + factory selection — no network, no model load."""
 
+import common.engine.ollama as ollama_mod
 import json
 
 import pytest
 
 import common.engine as engine
+from model_access.resources import probe_ollama as _REAL_PROBE
+
+
+@pytest.fixture(autouse=True)
+def _no_ollama_probe(monkeypatch):
+    """model_access probes /api/ps with a plain-URL urlopen the fakes below don't model."""
+    monkeypatch.setattr(
+        "model_access.resources.probe_ollama",
+        lambda *a, **k: {"state": "known", "models": [], "note": ""},
+    )
 
 
 class _FakeResp:
@@ -38,7 +49,6 @@ def test_generate_batch_builds_request_and_parses(monkeypatch):
         return _FakeResp({"response": "  译文  "})
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    monkeypatch.delenv("OLLAMA_TRANSLATION_NUM_CTX", raising=False)
     monkeypatch.delenv("OLLAMA_KEEP_ALIVE", raising=False)
     eng = engine.OllamaEngine("hf.co/tencent/Hy-MT2-1.8B-GGUF")
 
@@ -54,7 +64,7 @@ def test_generate_batch_builds_request_and_parses(monkeypatch):
     assert seen["body"]["options"]["num_predict"] == 256
     assert seen["body"]["options"]["temperature"] == engine.SAMPLING_DEFAULTS["temperature"]
     # co-residency default: small enough to live beside the 24GB chat model
-    assert seen["body"]["options"]["num_ctx"] == 8192
+    assert seen["body"]["options"]["num_ctx"] == ollama_mod.OLLAMA_NUM_CTX
     # request-level residency: don't idle-unload after Ollama's 5-minute default
     assert seen["body"]["keep_alive"] == "30m"
 
@@ -113,7 +123,7 @@ def test_oversized_prompt_bumps_num_ctx(monkeypatch):
         return _FakeResp({"response": "ok"})
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    monkeypatch.delenv("OLLAMA_TRANSLATION_NUM_CTX", raising=False)
+    monkeypatch.setattr(ollama_mod, "OLLAMA_NUM_CTX", 8192)
     eng = engine.OllamaEngine("hf.co/tencent/Hy-MT2-1.8B-GGUF")
 
     eng.generate_batch(["中" * 12000])  # ~8.5k tokens est + 4096 predict > 8192
@@ -204,6 +214,31 @@ def test_cache_keyed_by_backend(monkeypatch):
     engine._engine_cache.clear()
 
 
+def test_inprocess_model_switch_unloads_previous(monkeypatch):
+    """Switching in-process models keeps one resident; the Ollama engine stays cached."""
+    engine._engine_cache.clear()
+    _allow_resources(monkeypatch)
+    unloaded = []
+    monkeypatch.setattr(engine.OllamaEngine, "load", lambda self: None)
+    monkeypatch.setattr(engine.TransformersEngine, "load", lambda self: None)
+    monkeypatch.setattr(engine.TransformersEngine, "unload", lambda self: unloaded.append(self.model_id))
+    monkeypatch.setattr(engine, "free_ollama_vram", lambda: None)
+
+    monkeypatch.setenv("GADGET_TRANSLATION_BACKEND", "ollama")
+    o = engine.create_engine()._engine
+    monkeypatch.setenv("GADGET_TRANSLATION_BACKEND", "transformers")
+    a = engine.create_engine("org/model-a")._engine
+    assert engine.create_engine("org/model-a")._engine is a  # cache hit, no eviction
+    assert unloaded == []
+    engine.create_engine("org/model-b")
+
+    assert unloaded == ["org/model-a"]
+    assert sorted(engine._engine_cache) == [("ollama", engine.resolve_translation_model()),
+                                            ("transformers", "org/model-b")]
+    assert engine._engine_cache[("ollama", engine.resolve_translation_model())] is o
+    engine._engine_cache.clear()
+
+
 def test_keep_ollama_skips_eviction(monkeypatch):
     """GADGET_KEEP_OLLAMA short-circuits free_ollama_vram before any network probe."""
     def boom(*a, **k):
@@ -291,6 +326,7 @@ def test_free_ollama_vram_uses_native_host(monkeypatch):
         raise OSError("offline")
 
     monkeypatch.delenv("GADGET_KEEP_OLLAMA", raising=False)
+    monkeypatch.setattr("model_access.resources.probe_ollama", _REAL_PROBE)  # this test wants the real probe
     monkeypatch.setattr(ollama_mod, "ollama_native_host", lambda: "http://probe.test:9")
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     ollama_mod.free_ollama_vram()
@@ -301,3 +337,25 @@ def test_free_ollama_vram_uses_native_host(monkeypatch):
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_create_engine_ollama_books_exactly_one_lease(monkeypatch, tmp_path):
+    from model_access.resources import ResourceBoard
+
+    engine._engine_cache.clear()
+    monkeypatch.setenv("PERSONALAGENT_RESOURCE_DIR", str(tmp_path / "leases"))
+    monkeypatch.delenv("PERSONALAGENT_RESOURCE_URL", raising=False)
+    monkeypatch.setenv("GADGET_TRANSLATION_BACKEND", "ollama")
+    monkeypatch.setenv("OLLAMA_TRANSLATION_MODEL", "hf.co/tencent/Hy-MT2-1.8B-GGUF")
+    monkeypatch.setattr(
+        "common.engine.ollama._ollama_tags",
+        lambda host, timeout=3: ["hf.co/tencent/Hy-MT2-1.8B-GGUF:latest"],
+    )
+
+    def mine():
+        return [r for r in ResourceBoard().status().get("leases", []) if r.get("holder") == "gadget-engine"]
+
+    engine.create_engine()
+    assert len(mine()) == 1
+    engine.shutdown_engines()
+    assert mine() == []

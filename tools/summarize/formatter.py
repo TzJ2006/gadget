@@ -291,6 +291,19 @@ def generate_markdown(report: dict, target_date: date,
             for cs in items:
                 icon = outcome_icons.get(cs.get("outcome", ""), "•")
                 topic = cs.get("topic", "")
+                streams = cs.get("workstreams")
+                if isinstance(streams, list) and streams:
+                    n = cs.get("sessions")
+                    lines.append(f"**{icon} {topic}**" + (f" _({n} sessions)_" if n else ""))
+                    for w in streams:
+                        if not isinstance(w, dict):
+                            continue
+                        w_icon = outcome_icons.get(w.get("outcome", ""), "•")
+                        w_n = w.get("sessions")
+                        count = f" ({w_n} sessions)" if w_n and int(w_n) > 1 else ""
+                        lines.append(f"- {w_icon} **{w.get('topic', '')}**{count}: {w.get('summary', '')}")
+                    lines.append("")
+                    continue
                 lines.append(f"**{icon} {topic}**")
                 # 元信息行
                 meta_parts = []

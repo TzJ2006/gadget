@@ -12,7 +12,8 @@ with no timestamp clears it, so later answers are not kept on the previous day.
 Messages before any dated user turn, and answers after an undated user turn,
 have no assignable date unless they carry an explicit timestamp: they are
 included when no bound is set and excluded when a start or end date is set.
-The file modification time and the current clock are not used as dates.
+The file modification time and the current clock are not used as dates; with a start
+date, directory scans skip files last modified before that local day (append-only logs).
 """
 
 from __future__ import annotations
@@ -20,8 +21,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import unquote
 
 _CURSOR_TS_TAG_RE = re.compile(r"<timestamp>\s*(.*?)\s*</timestamp>", re.IGNORECASE | re.DOTALL)
 _CURSOR_TS_BODY_RE = re.compile(
@@ -30,12 +33,16 @@ _CURSOR_TS_BODY_RE = re.compile(
 )
 _CURSOR_USER_QUERY_RE = re.compile(r"<user_query>\s*(.*?)\s*</user_query>", re.IGNORECASE | re.DOTALL)
 
-KINDS = ("chatgpt", "claude_code", "codex", "cursor", "livecaption", "gadget_summary")
+_ANTIGRAVITY_REQUEST_RE = re.compile(r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", re.DOTALL)
+
+KINDS = ("chatgpt", "claude_code", "codex", "cursor", "gemini", "antigravity", "livecaption", "gadget_summary")
 KIND_LABELS = {
     "chatgpt": "ChatGPT 导出的聊天记录（conversations.json）",
     "claude_code": "Claude Code 聊天记录（不支持 Claude 应用导出）",
     "codex": "Codex 聊天记录",
     "cursor": "Cursor 聊天记录",
+    "gemini": "Gemini CLI 聊天记录",
+    "antigravity": "Antigravity 聊天记录",
     "livecaption": "以前的 LiveCaption 语音文字（txt）",
     "gadget_summary": "以前生成的 gadget 摘要（JSON）",
 }
@@ -109,7 +116,18 @@ def load_records(
         if not path.is_file():
             raise ValueError("ChatGPT import expects the conversations.json export file")
         return _rows_from_conversations("chatgpt", _parse_chatgpt(path, day)), []
-    files = _files_for(kind, path)
+    indexed = []
+    if kind == "antigravity" and path.is_dir():
+        # ~/.gemini/antigravity/brain/<conversation>/.system_generated/logs/
+        files = sorted(path.glob("*/.system_generated/logs/transcript_full.jsonl"))
+        indexed = _antigravity_index(path, {file.parents[2].name for file in files}, day)
+    else:
+        files = _files_for(kind, path)
+        if day[0] is not None and path.is_dir() and kind in ("claude_code", "codex"):
+            # ponytail: mtime = last append time of an append-only session log, so a file
+            # last written before local midnight of the start day holds no message on or after it.
+            start = datetime.combine(day[0], datetime.min.time()).astimezone().timestamp()
+            files = [file for file in files if _written_since(file, start)]
     conversations = []
     for file in files:
         previous = len(conversations)
@@ -119,17 +137,35 @@ def load_records(
             conversations.extend(_parse_codex_file(file, day))
         elif kind == "cursor":
             conversations.extend(_parse_cursor_file(file, day))
+        elif kind == "gemini":
+            conversations.extend(_parse_gemini_file(file, day))
+        elif kind == "antigravity":
+            conversations.extend(_parse_antigravity_file(file, day))
         elif kind == "livecaption":
             conversations.extend(_parse_livecaption(file))
+        if len(conversations) == previous:
+            continue
         project = file.parent.name
         if kind == "codex":
             project = _extract_codex_project(_jsonl(file))
         elif kind == "cursor" and len(file.parents) >= 3:
             project = file.parents[2].name if file.parent.parent.name == "agent-transcripts" else file.stem
+        elif kind == "gemini":
+            project = _gemini_project(file)
+        elif kind == "antigravity":
+            project = _antigravity_project(file)
         for conv in conversations[previous:]:
             conv["project"] = project
+    conversations.extend(indexed)
     source = "caption" if kind == "livecaption" else kind
     return _rows_from_conversations(source, conversations), []
+
+
+def _written_since(file: Path, start: float) -> bool:
+    try:
+        return file.stat().st_mtime >= start
+    except OSError:  # vanished or unreadable: let the parser raise ValueError as before
+        return True
 
 
 def _files_for(kind: str, path: Path) -> list[Path]:
@@ -145,6 +181,13 @@ def _files_for(kind: str, path: Path) -> list[Path]:
         found = list(path.rglob("rollout-*.jsonl")) or list(path.rglob("*.jsonl"))
     elif kind == "cursor":
         found = [item for item in path.rglob("*.jsonl") if "subagents" not in item.parts]
+    elif kind == "gemini":
+        # ~/.gemini/tmp/<project>/chats/session-*.json (older CLI) or .jsonl (newer)
+        found = [
+            item
+            for item in path.rglob("session-*.json*")
+            if item.parent.name == "chats" and item.suffix in (".json", ".jsonl")
+        ]
     elif kind == "livecaption":
         found = list(path.rglob("*.txt"))
     else:
@@ -412,6 +455,146 @@ def _parse_cursor_file(path: Path, day) -> list[dict]:
         return []
     # Leave conversation ts empty so an inferred answer does not inherit an ISO stamp.
     return [{"conversation_id": path.stem, "ts": "", "messages": messages}]
+
+
+def _parse_gemini_file(path: Path, day) -> list[dict]:
+    """Gemini CLI session: one JSON object with messages, or JSONL of message records."""
+    if path.suffix == ".jsonl":
+        records = _jsonl(path)
+    else:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"cannot read {path}: {exc}") from exc
+        records = [data] + list(data.get("messages") or []) if isinstance(data, dict) else []
+    session_id = next((str(r["sessionId"]) for r in records if isinstance(r, dict) and r.get("sessionId")), path.stem)
+    messages = {}
+    for index, obj in enumerate(records, start=1):
+        if not isinstance(obj, dict):
+            continue
+        role = {"user": "user", "gemini": "assistant"}.get(obj.get("type"))
+        content = obj.get("content")
+        if isinstance(content, list):  # parts: [{"text": ...}]
+            content = "\n".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+        text = content.strip() if isinstance(content, str) else ""
+        stamp = str(obj.get("timestamp") or "")
+        if role and text and _keeps(_local_day(stamp), day):
+            # JSONL sessions re-append a message when it is updated; the last copy wins.
+            message_id = str(obj.get("id") or f"line-{index}")
+            messages[message_id] = {"role": role, "text": text, "message_id": message_id, "ts": stamp, "seq": index}
+    if not messages:
+        return []
+    return [{"conversation_id": session_id, "ts": "", "messages": list(messages.values())}]
+
+
+def _gemini_project(file: Path) -> str:
+    """<project>/chats/session-*; <project>/.project_root holds the real path when present."""
+    project_dir = file.parent.parent
+    try:
+        root = (project_dir / ".project_root").read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        root = ""
+    return re.split(r"[\\/]", root.rstrip("\\/"))[-1] or project_dir.name
+
+
+def _parse_antigravity_file(path: Path, day) -> list[dict]:
+    """Antigravity step log. Keeps user requests and planner answers; drops tool/system steps."""
+    messages = []
+    has_user = False
+    for index, obj in enumerate(_jsonl(path), start=1):
+        kind = obj.get("type")
+        content = str(obj.get("content") or "")
+        if kind == "USER_INPUT":
+            has_user = True
+            role = "user"
+            match = _ANTIGRAVITY_REQUEST_RE.search(content)
+            text = match.group(1) if match else content.strip()
+        elif kind == "PLANNER_RESPONSE":
+            role = "assistant"
+            text = content.strip()
+        else:
+            continue
+        stamp = str(obj.get("created_at") or "")
+        if text and _keeps(_local_day(stamp), day):
+            step = obj.get("step_index", index)
+            messages.append({"role": role, "text": text, "message_id": f"step-{step}", "ts": stamp, "seq": index})
+    # ponytail: a log with no user turn is a subagent (browser etc.); skipped like Cursor/Claude subagents.
+    if not has_user or not messages:
+        return []
+    return [{"conversation_id": path.parents[2].name, "ts": "", "messages": messages}]
+
+
+def _antigravity_index(brain: Path, skip: set[str], day) -> list[dict]:
+    """Conversations without a plaintext step log, rebuilt from Antigravity's search index.
+
+    ponytail: the index stores one time per conversation (its last step), so every
+    message gets that stamp and a multi-day chat lands on its final day.
+    """
+    index = brain.parent / "conversation_summaries.db"
+    try:
+        db = sqlite3.connect(f"{index.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            rows = db.execute(
+                "select conversation_id, chunk_index, last_step_created_at, workspace,"
+                " user_step_byte_offsets, user_body, agent_step_byte_offsets, agent_body"
+                " from conversations_fts"
+            ).fetchall()
+        finally:
+            db.close()
+    except (sqlite3.Error, OSError, ValueError):  # no index, or built without FTS5
+        return []
+    found: dict[str, dict] = {}
+    for conversation_id, chunk, created_ns, workspace, user_offsets, user_body, agent_offsets, agent_body in rows:
+        if conversation_id in skip:
+            continue
+        conv = found.setdefault(conversation_id, {"ts": "", "project": "antigravity", "steps": {}})
+        if chunk == -1:  # header row: metadata only
+            if created_ns:
+                conv["ts"] = datetime.fromtimestamp(int(created_ns) / 1e9, timezone.utc).isoformat()
+            conv["project"] = workspace or conv["project"]
+            continue
+        for role, offsets, body in (("user", user_offsets, user_body), ("assistant", agent_offsets, agent_body)):
+            raw = (body or "").encode("utf-8")
+            try:
+                marks = json.loads(offsets or "[]")  # [[step_index, byte_offset], ...]
+            except (TypeError, ValueError):
+                continue
+            for pos, (step, start) in enumerate(marks):
+                end = marks[pos + 1][1] if pos + 1 < len(marks) else len(raw)
+                text = raw[start:end].decode("utf-8", "ignore").strip()
+                if text:
+                    conv["steps"][int(step)] = (role, text)
+    conversations = []
+    for conversation_id, conv in found.items():
+        steps = conv["steps"]
+        # No user turn means a subagent, same rule as the step-log parser.
+        if not any(role == "user" for role, _ in steps.values()) or not _keeps(_local_day(conv["ts"]), day):
+            continue
+        messages = [
+            {"role": role, "text": text, "message_id": f"step-{step}", "ts": conv["ts"], "seq": step + 1}
+            for step, (role, text) in sorted(steps.items())
+        ]
+        conversations.append(
+            {"conversation_id": conversation_id, "ts": conv["ts"], "project": conv["project"], "messages": messages}
+        )
+    return conversations
+
+
+def _antigravity_project(file: Path) -> str:
+    """Workspace folder name from Antigravity's own index; the step log carries no cwd."""
+    index = file.parents[4] / "conversation_summaries.db"
+    try:
+        db = sqlite3.connect(f"{index.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            row = db.execute(
+                "select workspace_uris from conversation_summaries where conversation_id = ?",
+                (file.parents[2].name,),
+            ).fetchone()
+        finally:
+            db.close()
+        return unquote(json.loads(row[0])[0]).rstrip("/").rsplit("/", 1)[-1] or "antigravity"
+    except Exception:  # index missing, locked, or schema changed: the name is cosmetic
+        return "antigravity"
 
 
 def _parse_livecaption(path: Path) -> list[dict]:

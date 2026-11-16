@@ -132,7 +132,7 @@ def compute_weekly_statistics(daily_reports: list[dict], iso_year: int,
             active_dates.add(report_date)
 
         convs = report.get("conversation_summaries", [])
-        total_conversations += len(convs)
+        total_conversations += sum(int(cs.get("sessions") or 1) for cs in convs)
 
         for cs in convs:
             proj = cs.get("project", "")

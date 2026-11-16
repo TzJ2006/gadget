@@ -181,3 +181,16 @@ def test_markdown_lists_all_sources():
     assert ">3M<" in md                 # combined total tokens stat
     assert "Claude Code $1" in md       # cost-split legend lists sources
     assert "Gemini $0" in md
+
+
+def test_generate_markdown_renders_workstreams():
+    from datetime import date
+    from summarize.formatter import generate_markdown
+    report = {"summary": "s", "conversation_summaries": [{
+        "project": "Gadget", "topic": "Pipeline fixes", "summary": "p", "sessions": 9, "outcome": "completed",
+        "workstreams": [{"topic": "Fix backend", "sessions": 7, "outcome": "completed", "summary": "fixed it"},
+                        {"topic": "Docs", "sessions": 1, "summary": "wrote docs"}]}]}
+    md = generate_markdown(report, date(2026, 10, 19))
+    assert "Pipeline fixes** _(9 sessions)_" in md
+    assert "- ✅ **Fix backend** (7 sessions): fixed it" in md
+    assert "- • **Docs**: wrote docs" in md

@@ -22,6 +22,7 @@ from .config import _resolve_output_dir, resolve_hugo_site
 from .daily_helpers import _parse_date, _DEFAULT_LOGS_DIR, _DEFAULT_REPORTS_DIR, _DEFAULT_CACHE_DIR
 from .formatter import generate_markdown, _sort_report_by_importance, save_report, generate_hugo_post
 from .remote import _rclone_download_logs, _rclone_download_reports, _rclone_upload
+from .parsers import drop_probes
 from .summarizer import (MERGE_PROMPT_PREFIX, MERGE_DEVICE_SUMMARY_PREFIX,
                          _call_summarize, _build_summary_prompt, _get_device_label)
 from .usage import load_ccusage_for_date, _merge_token_usages
@@ -38,7 +39,8 @@ def _merge_single_date(d: str, base_cmd: list[str], date_files: dict[str, list[P
     proc_timeout = chunk_timeout * (est_chunks + 1) + 60
 
     log_file = log_dir / f"merge_{d}.log"
-    cmd = base_cmd + ["--date", d]
+    # The parent already synced every log; pass the same "<date>_*.json" set the child's --sync would glob.
+    cmd = base_cmd + ["--date", d] + [str(p) for p in date_files.get(d, []) if p.name.startswith(f"{d}_")]
     try:
         with open(log_file, "w", encoding="utf-8") as flog:
             flog.write(f"[cmd] {' '.join(cmd)}\n")
@@ -106,7 +108,7 @@ def _cmd_merge_sync_all(args):
             try:
                 with open(report_json, "r", encoding="utf-8") as f:
                     existing = json.load(f)
-                if existing.get("_finalized", False):
+                if existing.get("_finalized", False) and not existing.get("parse_error"):
                     print(f"[info] 跳过 {d}（报告已 finalized）")
                     continue
                 else:
@@ -132,7 +134,7 @@ def _cmd_merge_sync_all(args):
 
     # 构建子进程参数
     base_cmd = [sys.executable, "-m", "summarize.cli",
-                "merge", "--sync", "--timeout", str(chunk_timeout)]
+                "merge", "--timeout", str(chunk_timeout)]
     if args.api:
         base_cmd += ["--api", args.api]
     if args.output:
@@ -273,7 +275,7 @@ def cmd_merge(args):
             inferred_date = log_date
 
         # 为每个 conversation 添加 device 来源信息
-        for conv in log_data.get("conversations", []):
+        for conv in drop_probes(log_data.get("conversations", [])):
             conv["device"] = device
             all_conversations.append(conv)
 
@@ -341,7 +343,7 @@ def cmd_merge(args):
             try:
                 with open(existing_report_path, "r", encoding="utf-8") as f:
                     existing_report = json.load(f)
-                if existing_report.get("_finalized", False):
+                if existing_report.get("_finalized", False) and not existing_report.get("parse_error"):
                     print(f"[info] {target_date} 报告已 finalized，跳过（使用 --force 强制重新生成）")
                     return
             except (OSError, json.JSONDecodeError):
@@ -441,7 +443,10 @@ def cmd_merge(args):
     # auto-finalize: 非今天的日期直接 finalize（过去的日期不会再有新对话）
     # 注：之前要求 all_sources_finalized，但源 log 的 finalized 状态取决于各设备
     # 是否重新 export，不应阻塞报告 finalization
-    if target_date < date.today():
+    if report.get("parse_error"):
+        report["_finalized"] = False  # 解析失败：下次运行重跑
+        print(f"[warn] {target_date} 报告解析失败，不标记 finalized")
+    elif target_date < date.today():
         report["_finalized"] = True
         if not all_sources_finalized:
             print(f"[info] 日期已过，报告标记为 finalized（部分源 log 未 finalized，不影响报告）")

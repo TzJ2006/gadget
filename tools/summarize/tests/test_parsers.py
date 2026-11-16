@@ -39,6 +39,7 @@ def _write_cursor_parent(fake_home: Path, project: str, lines: list[dict],
 def fake_home(tmp_path, monkeypatch):
     """Redirect Path.home() to a temporary directory."""
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr("summarize.parsers._DAY_INDEX_PATH", tmp_path / "day_index.json")
     return tmp_path
 
 
@@ -253,7 +254,7 @@ def test_collect_conversations_claude_and_cursor(fake_home):
     claude_msg = {
         "type": "user",
         "timestamp": "2026-04-20T12:00:00Z",
-        "message": {"role": "user", "content": "claude hello"},
+        "message": {"role": "user", "content": "claude hello, please refactor the research module into a package and add tests for it"},
     }
     proj = fake_home / ".claude" / "projects" / "test-proj"
     proj.mkdir(parents=True)
@@ -269,7 +270,7 @@ def test_collect_conversations_claude_and_cursor(fake_home):
             "message": {
                 "content": [{
                     "type": "text",
-                    "text": f"{ts_tag}<user_query>cursor hello</user_query>",
+                    "text": f"{ts_tag}<user_query>cursor hello, please refactor the research module into a package and add tests for it</user_query>",
                 }],
             },
         }],
@@ -308,3 +309,127 @@ def test_parse_cursor_timestamp_utc_offset():
     assert dt.year == 2026 and dt.month == 7 and dt.day == 14
     assert dt.hour == 17 and dt.minute == 16
     assert dt.utcoffset().total_seconds() == -4 * 3600
+
+
+# ── parse_gemini / parse_antigravity ───────────────────────────────────
+
+
+def test_parse_gemini_json_and_jsonl(fake_home):
+    """Old single-JSON sessions and newer JSONL sessions both parse; .project_root names the project."""
+    from summarize.parsers import parse_gemini
+
+    stamp = "2026-07-14T16:00:00Z"
+    target = datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().date()
+    proj = fake_home / ".gemini" / "tmp" / "abc123"
+    (proj / "chats").mkdir(parents=True)
+    (proj / ".project_root").write_text(r"c:\work\MyProj", encoding="utf-8")
+    (proj / "chats" / "session-old.json").write_text(json.dumps({
+        "sessionId": "s-old",
+        "messages": [
+            {"id": "1", "timestamp": stamp, "type": "user", "content": "hi gemini"},
+            {"id": "2", "timestamp": stamp, "type": "gemini", "content": [{"text": "hello"}]},
+            {"id": "3", "timestamp": stamp, "type": "info", "content": "ignored"},
+        ],
+    }), encoding="utf-8")
+    (proj / "chats" / "session-new.jsonl").write_text("".join(json.dumps(o) + "\n" for o in [
+        {"sessionId": "s-new", "startTime": stamp},
+        {"id": "1", "timestamp": stamp, "type": "user", "content": "q"},
+        {"id": "2", "timestamp": stamp, "type": "gemini", "content": "draft"},
+        {"id": "2", "timestamp": stamp, "type": "gemini", "content": "final"},
+    ]), encoding="utf-8")
+
+    result = {c["conversation_id"]: c for c in parse_gemini(target)}
+    assert set(result) == {"s-old", "s-new"}
+    assert result["s-old"]["source"] == "gemini"
+    assert result["s-old"]["project"] == "MyProj"
+    assert [m["content"] for m in result["s-old"]["messages"]] == ["hi gemini", "hello"]
+    assert [m["content"] for m in result["s-new"]["messages"]] == ["q", "final"]
+    assert parse_gemini(date(2020, 1, 1)) == []
+
+
+def test_parse_antigravity_keeps_dialogue_skips_subagents(fake_home):
+    """User requests are unwrapped, tool/system steps dropped, user-less (subagent) logs skipped."""
+    from summarize.parsers import parse_antigravity
+
+    stamp = "2026-07-14T16:00:00Z"
+    target = datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().date()
+    brain = fake_home / ".gemini" / "antigravity" / "brain"
+
+    def write(conv_id, steps):
+        logs = brain / conv_id / ".system_generated" / "logs"
+        logs.mkdir(parents=True)
+        (logs / "transcript_full.jsonl").write_text(
+            "".join(json.dumps({"step_index": i, "created_at": stamp, **s}) + "\n" for i, s in enumerate(steps)),
+            encoding="utf-8")
+
+    write("parent", [
+        {"type": "USER_INPUT", "content": "<USER_REQUEST>\nfix it\n</USER_REQUEST>\n<ADDITIONAL_METADATA>x</ADDITIONAL_METADATA>"},
+        {"type": "PLANNER_RESPONSE", "tool_calls": [{"name": "grep"}]},
+        {"type": "GENERIC", "content": "tool output"},
+        {"type": "SYSTEM_MESSAGE", "content": "system"},
+        {"type": "PLANNER_RESPONSE", "content": "done"},
+    ])
+    write("subagent", [{"type": "PLANNER_RESPONSE", "content": "reported to parent"}])
+
+    import sqlite3
+    db = sqlite3.connect(brain.parent / "conversation_summaries.db")
+    db.execute("create table conversation_summaries (conversation_id text, workspace_uris text)")
+    db.execute("insert into conversation_summaries values ('parent', ?)",
+               (json.dumps(["file:///c%3A/Users/me/My%20Proj"]),))
+    db.commit()
+    db.close()
+
+    result = parse_antigravity(target)
+    assert len(result) == 1
+    conv = result[0]
+    assert (conv["source"], conv["conversation_id"], conv["project"]) == ("antigravity", "parent", "My Proj")
+    assert conv["messages"] == [{"role": "user", "content": "fix it"}, {"role": "assistant", "content": "done"}]
+    assert target in discover_all_dates()
+
+
+def test_parse_antigravity_falls_back_to_search_index(fake_home):
+    """A conversation with no step log is rebuilt from the FTS index, split at byte offsets."""
+    import sqlite3
+    from summarize.parsers import parse_antigravity
+
+    root = fake_home / ".gemini" / "antigravity"
+    (root / "brain").mkdir(parents=True)
+    when = datetime(2026, 3, 29, 16, 0).astimezone()
+    user, agent = "你好\nsecond ask", "\nfirst answer\nsecond answer"
+    db = sqlite3.connect(root / "conversation_summaries.db")
+    try:
+        db.execute("create virtual table conversations_fts using fts5(conversation_id, chunk_index,"
+                   " last_step_created_at, workspace, user_step_byte_offsets, user_body,"
+                   " agent_step_byte_offsets, agent_body)")
+    except sqlite3.OperationalError:
+        pytest.skip("sqlite built without FTS5")
+    db.execute("insert into conversations_fts values ('old', -1, ?, 'Proj', '', '', '', '')",
+               (int(when.timestamp() * 1e9),))
+    db.execute("insert into conversations_fts values ('old', 0, 0, '', ?, ?, ?, ?)",
+               (json.dumps([[0, 0], [5, 7]]), user, json.dumps([[2, 0], [4, 1], [7, 14]]), agent))
+    db.execute("insert into conversations_fts values ('sub', 0, 0, '', '[]', '', '[[1,0]]', 'no user turn')")
+    db.commit()
+    db.close()
+
+    result = parse_antigravity(when.date())
+    assert len(result) == 1
+    assert (result[0]["conversation_id"], result[0]["project"]) == ("old", "Proj")
+    assert result[0]["messages"] == [
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": "first answer"},
+        {"role": "user", "content": "second ask"},
+        {"role": "assistant", "content": "second answer"},
+    ]
+    assert parse_antigravity(date(2020, 1, 1)) == []
+
+
+def test_drop_probes_removes_health_check_pings():
+    from summarize.parsers import drop_probes, is_probe
+    probe = {"messages": [{"role": "user", "content": "Respond with OK only."},
+                          {"role": "assistant", "content": "OK"}]}
+    real_short = {"messages": [{"role": "user", "content": "fix it"}, {"role": "assistant", "content": "done"},
+                               {"role": "user", "content": "thanks"}]}
+    real_long = {"messages": [{"role": "user", "content": "Refactor research_scout.py into a scout/ package " * 3}]}
+    assert is_probe(probe)
+    assert not is_probe(real_short) and not is_probe(real_long)
+    assert drop_probes([probe, real_short, real_long]) == [real_short, real_long]

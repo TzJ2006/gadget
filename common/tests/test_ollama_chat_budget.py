@@ -4,7 +4,7 @@ import pytest
 from common.ollama_chat import complete, LLMError
 
 
-@pytest.mark.parametrize("limit,expected", [(None, [8192, 4096]), (1000, [1000, 1000])])
+@pytest.mark.parametrize("limit,expected", [(None, [8192, 4096]), (1000, [1000, 1000]), (20000, [20000, 20000])])
 def test_token_limit_applies_to_thinking_and_same_model_recovery(monkeypatch, limit, expected):
     monkeypatch.setattr(httpx, "get", lambda *a, **kw: httpx.Response(200, json={"models": []}))
     calls = []

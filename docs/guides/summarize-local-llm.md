@@ -189,8 +189,12 @@ with `OLLAMA_TRANSLATION_MODEL` (ollama) or `GADGET_TRANSLATION_MODEL` (in-proce
   only lever is the SERVER's `OLLAMA_CONTEXT_LENGTH`. `serve_local_llm.sh` reads the
   loaded `context_length` back from `/api/ps` and **fails** below `MIN_CTX` (65536)
   rather than letting summarize silently truncate a ~52k-token chunk. The translation
-  path is different — it uses native `/api/chat`, where `OLLAMA_TRANSLATION_NUM_CTX`
-  (default 8192) does apply per request.
+  path and `common.ollama_chat` use native `/api/chat`, where `num_ctx` does apply per
+  request; both send `GADGET_OLLAMA_NUM_CTX` (default 98304, `common/engine/ollama.py`).
+  Keep the server's `OLLAMA_CONTEXT_LENGTH` equal to it — a mismatched `num_ctx`
+  forces a model reload on every summarize↔translate switch.
+  Measured 2026-11-16 on an RTX 5090: gemma4:26b at 98304 (`OLLAMA_NUM_PARALLEL=2`, q8 KV,
+  flash attention) is 100% GPU, ~22.6 GB, ~5 GB left of 32 GB.
   For reference, 65536 measured **17/32 GB, 100% GPU** on the previous `qwen3.8-sum`;
   not re-measured on gemma4.
 - **`OPENAI_REASONING_EFFORT=none`**: disables thinking — faster, but **measurably degrades

@@ -4,6 +4,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from common.engine.ollama import OLLAMA_NUM_CTX
+
 class LLMError(RuntimeError):
     pass
 
@@ -65,14 +67,14 @@ def complete(endpoint, model, messages, timeout, *, schema=None, max_tokens=None
                            "尚未解决的部分，不要编造证明或答案，不再从头长篇推演。保留原人设、权限和输出格式。")
             current.insert(0, {'role': 'system', 'content': instruction})
         started = time.monotonic()
-        token_limit = 8192 if thinking else 4096
-        if max_tokens is not None:
-            token_limit = min(token_limit, max_tokens)
+        # An explicit budget wins (long structured reports need more than 8K);
+        # without one, keep the conservative thinking/direct defaults.
+        token_limit = max_tokens if max_tokens is not None else (8192 if thinking else 4096)
         try:
             response = httpx.post(endpoint + "/api/chat", json={
                 "model": model, "messages": current, "think": thinking, "stream": False,
                 **({"format": schema} if schema else {}),
-                "options": {"temperature": 1.0, "num_predict": token_limit},
+                "options": {"temperature": 1.0, "num_predict": token_limit, "num_ctx": OLLAMA_NUM_CTX},
             }, timeout=call_timeout)
         except httpx.TimeoutException as exc:
             attempts.append({'thinking': thinking, 'outcome': 'timeout',

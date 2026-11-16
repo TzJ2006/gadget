@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+import threading
 import time
 from urllib.parse import urlparse
 
@@ -13,6 +14,11 @@ from common.engine.base import SAMPLING_DEFAULTS, TranslationEngine, build_chat_
 logger = logging.getLogger(__name__)
 
 _DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434/v1"
+# One context window for every gemma4 call (summarize, translation, website):
+# a request whose num_ctx differs from the loaded runner forces Ollama to reload
+# the model, so mixed workloads thrashed and stalled. Keep the Ollama server's
+# OLLAMA_CONTEXT_LENGTH equal to this so /v1 calls (which ignore num_ctx) match.
+OLLAMA_NUM_CTX = int(os.environ.get("GADGET_OLLAMA_NUM_CTX", "98304"))
 
 
 def llm_route() -> str:
@@ -178,7 +184,28 @@ class OllamaEngine(TranslationEngine):
         gate = require_local(
             self.model_id, holder="gadget-engine", backend="ollama", endpoint=self._host, purpose="text",
         )
-        self._lease_id = gate.lease_id
+        self._hold(gate.lease_id)
+
+    def _hold(self, lease_id: str) -> None:
+        """Keep one lease for the engine's life; renew it so a remote coordinator never expires it."""
+        self._lease_id = lease_id
+        if not lease_id:
+            return
+        from model_access.resources import LEASE_SECONDS, ResourceBoard
+
+        stop = threading.Event()
+        self._renew_stop = stop
+
+        def beat() -> None:
+            while not stop.wait(LEASE_SECONDS / 3):
+                try:
+                    ok, _reason = ResourceBoard().renew(lease_id)
+                except Exception:
+                    return
+                if not ok:
+                    return
+
+        threading.Thread(target=beat, daemon=True, name="gadget-engine-lease").start()
 
     def load(self) -> None:
         # Fail loud up front (server down / model not pulled) rather than erroring
@@ -214,16 +241,9 @@ class OllamaEngine(TranslationEngine):
             "repeat_penalty": SAMPLING_DEFAULTS["repetition_penalty"],
             "num_predict": max_new_tokens,
         }
-        # 8192 fits every chunk the pipeline sends (EN chunks capped at 7000 chars
-        # ≈ 1.8k tokens, zh chunks at 5000 chars ≈ 3.3k tokens — see
-        # common.translation.chunk_ceiling) plus the 4096 output budget. Raise via
-        # env if you feed oversized chunks from outside the pipeline's chunkers.
-        # ponytail: known ceiling — translation now shares the chat model, and a
-        # num_ctx that differs from the one the chat runner was loaded with makes
-        # Ollama reload the runner on each summarize↔translate switch (~10s). Set
-        # OLLAMA_TRANSLATION_NUM_CTX to the chat variant's num_ctx if that churn
-        # shows up; the cost is KV-cache VRAM on every translate call.
-        options["num_ctx"] = int(os.environ.get("OLLAMA_TRANSLATION_NUM_CTX", "8192"))
+        # Same window as every other gemma4 call, so summarize↔translate never
+        # reloads the runner (translation chunks need far less than this).
+        options["num_ctx"] = OLLAMA_NUM_CTX
 
         # Ollama decodes concurrent requests in one batched pass (n_seq ≥ 8
         # measured for HY-MT2), so 4 workers ≈ 2.2× wall-clock on real chunk sets
@@ -260,7 +280,7 @@ class OllamaEngine(TranslationEngine):
         # instead (may briefly evict co-resident models — rare by design).
         est_total = _estimate_tokens(prompt) + int(options.get("num_predict") or 0)
         if est_total > options.get("num_ctx", 0):
-            bumped = min(32768, 1 << (est_total - 1).bit_length())
+            bumped = 1 << (est_total - 1).bit_length()
             logger.warning(
                 "Prompt estimated at %d tokens exceeds num_ctx=%d — raising to %d "
                 "for this request", est_total, options.get("num_ctx", 0), bumped)
@@ -309,6 +329,9 @@ class OllamaEngine(TranslationEngine):
         # The server still owns the weights. Drop our use lease only.
         lease_id = getattr(self, "_lease_id", "")
         self._lease_id = ""
+        stop = getattr(self, "_renew_stop", None)
+        if stop is not None:
+            stop.set()
         if not lease_id:
             return
         try:

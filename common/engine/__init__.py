@@ -70,6 +70,8 @@ def create_engine(model: str | None = None) -> TranslationEngine:
     """Create or retrieve a cached translation engine for this platform.
 
     The engine is loaded once and reused across all callers in the same process.
+    Loading a new in-process engine unloads any other cached in-process engine
+    first; Ollama-backed engines stay cached.
     """
     model_id = resolve_translation_model(model)
     backend = os.environ.get("GADGET_TRANSLATION_BACKEND", "").strip().lower()
@@ -138,8 +140,20 @@ def create_engine(model: str | None = None) -> TranslationEngine:
     if not isinstance(eng, OllamaEngine):
         if not gate.allow_unload:
             raise RuntimeError(gate.reason or "已有模型租约，拒绝卸载并拒绝启动第二个推理后端")
+        # One in-process model resident at a time: a GUI model switch would otherwise
+        # stack every selected model's weights in VRAM. Ollama engines hold no weights.
+        for key in [k for k, e in _engine_cache.items() if not isinstance(e, OllamaEngine)]:
+            _engine_cache.pop(key).unload()
         free_ollama_vram()
-    eng.load()
+    else:
+        # The gate's lease IS the engine's lease; _admit must not book a second one.
+        eng._hold(getattr(gate, "lease_id", ""))
+    try:
+        eng.load()
+    except BaseException:
+        if isinstance(eng, OllamaEngine):
+            eng.unload()  # release the gate's lease; nothing was cached
+        raise
     _engine_cache[cache_key] = eng
     return _CachedEngineProxy(eng)
 

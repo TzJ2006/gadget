@@ -55,6 +55,20 @@ def codex_session_dirs(homes: list[Path], override: str = "") -> list[Path]:
     return _dedupe([home / ".codex" / "sessions" for home in homes if _is_dir(home / ".codex" / "sessions")])
 
 
+def gemini_chat_dirs(homes: list[Path]) -> list[Path]:
+    return _dedupe([home / ".gemini" / "tmp" for home in homes if _is_dir(home / ".gemini" / "tmp")])
+
+
+def antigravity_brain_dirs(homes: list[Path]) -> list[Path]:
+    return _dedupe(
+        [
+            home / ".gemini" / "antigravity" / "brain"
+            for home in homes
+            if _is_dir(home / ".gemini" / "antigravity" / "brain")
+        ]
+    )
+
+
 def cursor_transcript_roots(homes: list[Path], override: str = "") -> list[Path]:
     if override:
         return [Path(override)]
@@ -125,6 +139,10 @@ def discover_sources(
         rows.append(_missing("cursor", "Cursor agent transcripts", cursor_root))
     else:
         rows.append(_missing("cursor", "Cursor agent transcripts", ""))
+    rows.extend(_describe("gemini", "Gemini CLI sessions", gemini_chat_dirs(homes), "session-*.json*"))
+    rows.extend(
+        _describe("antigravity", "Antigravity transcripts", antigravity_brain_dirs(homes), "transcript_full.jsonl")
+    )
     export = (chatgpt_export or "").strip()
     if export:
         path = Path(export)
