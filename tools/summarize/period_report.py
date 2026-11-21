@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -39,10 +40,197 @@ from .config import _load_config, _resolve_output_dir, resolve_hugo_site
 CHUNK_CHARS = 150_000
 PROMPT_OVERHEAD = 200
 TIMEOUT_DAILY = 600
-TIMEOUT_WEEKLY = 900
-TIMEOUT_MONTHLY = 1800
+TIMEOUT_WEEKLY = 1800  # long workstream/thread reports
+TIMEOUT_MONTHLY = 3600
 
 _LOW_THINKING = {"type": "enabled", "budget_tokens": 1024}
+
+# Output budgets: daily 24K tokens; weekly may run ~5x a daily report, monthly ~4x
+# a weekly. ponytail: capped by the shared 96K Ollama context — a 150K-char input
+# chunk (~43K tokens) plus output must fit — so monthly stops at 48K output tokens,
+# not a literal 4x weekly. Raise both with GADGET_OLLAMA_NUM_CTX if VRAM allows.
+WEEKLY_MAX_TOKENS = 40960
+MONTHLY_MAX_TOKENS = 49152
+
+# ─── Shared report pieces (daily / weekly / monthly) ───────────────────
+
+_STR = {"type": "string"}
+_STRS = {"type": "array", "items": {"type": "string"}}
+
+OBSTACLES_SCHEMA = {"type": "array", "items": {
+    "type": "object",
+    "properties": {"obstacle": _STR, "resolution": _STR},
+    "required": ["obstacle"],
+}}
+
+WORKSTREAMS_SCHEMA = {"type": "array", "items": {
+    "type": "object",
+    "properties": {"topic": _STR, "dates": _STRS,
+                   "sessions": {"type": "integer", "minimum": 1},
+                   "outcome": _STR, "summary": _STR},
+    "required": ["topic", "summary"],
+}}
+
+THREAD_SCHEMA = {"type": "array", "items": {
+    "type": "object",
+    "properties": {"project": _STR, "problem": _STR, "context": _STR,
+                   "obstacles": OBSTACLES_SCHEMA, "solution": _STR, "key_insight": _STR,
+                   "dates": _STRS, "level": {"type": "string", "enum": ["high", "low"]},
+                   "importance": {"type": "integer", "minimum": 1, "maximum": 10}},
+    "required": ["project", "problem", "solution"],
+}}
+
+# Extra problem sections every report level carries (merged into each tool schema).
+PROBLEM_SECTION_SCHEMAS = {
+    "cross_project_problems": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"pattern": _STR, "projects": _STRS, "occurrences": {"type": "integer"},
+                       "dates": _STRS, "how_resolved": _STR, "lesson": _STR},
+        "required": ["pattern", "projects", "how_resolved"],
+    }},
+    "unresolved_problems": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"project": _STR, "problem": _STR, "progress": _STR,
+                       "why_stopped": _STR, "how_to_resume": _STR},
+        "required": ["project", "problem", "progress"],
+    }},
+}
+
+_PROBLEM_JSON = """    "THREAD_KEY": [
+        {
+            "project": "Related project",
+            "problem": "What problem was being solved (the goal or the failure)",
+            "context": "Starting conditions: environment, constraints, resources, what was already known or tried",
+            "obstacles": [
+                {"obstacle": "A difficulty hit along the way", "resolution": "How that difficulty was overcome"}
+            ],
+            "solution": "The final solution and its result",
+            "key_insight": "Key insight gained",
+            "dates": ["YYYY-MM-DD"],
+            "level": "high | low",
+            "importance": 7
+        }
+    ],
+    "cross_project_problems": [
+        {
+            "pattern": "A problem that kept coming back, across projects or repeatedly",
+            "projects": ["Project A", "Project B"],
+            "occurrences": 3,
+            "dates": ["YYYY-MM-DD"],
+            "how_resolved": "How it was ultimately resolved, generalized across the occurrences",
+            "lesson": "The reusable rule to apply next time"
+        }
+    ],
+    "unresolved_problems": [
+        {
+            "project": "Related project",
+            "problem": "What the problem is",
+            "progress": "How far it got: what was tried, what works, where it stands now",
+            "why_stopped": "Why work did not continue (blocked, deprioritized, out of time, ...)",
+            "how_to_resume": "Fastest way to pick it up again: files, commands, first next step"
+        }
+    ],"""
+
+_PROBLEM_RULES = (
+    "THREAD_KEY is the most important section. Write one thread per problem actually worked on, with its "
+    "project: what problem was solved, the starting conditions (environment, constraints, resources, what was "
+    "already known or tried), every obstacle hit along the way and how each was overcome (in the order they "
+    "occurred), then the final solution and result. Merge entries about the same problem into one thread; never "
+    "drop a problem; include only obstacles that actually occurred. Put only resolved problems here.\n"
+    "cross_project_problems: problems that recurred or went back and forth, especially ones that showed up in "
+    "more than one project. For each, list the projects, how often it occurred, how it was ultimately resolved "
+    "(generalized across the occurrences), and the reusable lesson. Use an empty array if nothing recurred.\n"
+    "unresolved_problems: every problem worked on but not solved. For each: what it is, how far it got, why work "
+    "did not continue, and how to pick it up quickly (files, commands, first next step). Only state reasons and "
+    "next steps the logs support; use an empty array if everything was resolved."
+)
+
+
+def problem_json(thread_key: str) -> str:
+    """JSON example for the three problem sections, spliced into each prompt."""
+    return _PROBLEM_JSON.replace("THREAD_KEY", thread_key)
+
+
+def problem_rules(thread_key: str) -> str:
+    """Prompt rules for the three problem sections (shared by all report levels)."""
+    return _PROBLEM_RULES.replace("THREAD_KEY", thread_key)
+
+
+def _by_project(items: list) -> dict:
+    groups: dict = {}
+    for it in items or []:
+        if isinstance(it, dict):
+            groups.setdefault(it.get("project") or "Other", []).append(it)
+    for g in groups.values():
+        g.sort(key=lambda x: -int(x.get("importance") or 0))
+    return groups
+
+
+def render_problem_sections(lines: list[str], threads: list, cross: list,
+                            unresolved: list) -> None:
+    """Problem-solving threads by project, recurring problems, unresolved problems."""
+    groups = _by_project(threads)
+    if groups:
+        lines.append("## Problem-Solving Threads\n")
+        i = 1
+        for project, items in groups.items():
+            lines.append(f"### {project}\n")
+            for t in items:
+                when = ", ".join(t.get("dates") or []) or t.get("date") or ""
+                lines.append(f"#### {i}. {t.get('problem', 'N/A')}" + (f" ({when})" if when else "") + "\n")
+                if t.get("context"):
+                    lines.append(f"**Conditions:** {t['context']}\n")
+                obstacles = [o for o in (t.get("obstacles") or []) if isinstance(o, dict)]
+                if obstacles:
+                    lines.append("**Obstacles:**")
+                    for o in obstacles:
+                        res = f" → {o['resolution']}" if o.get("resolution") else ""
+                        lines.append(f"- {o.get('obstacle', '')}{res}")
+                    lines.append("")
+                lines.append(f"**Solution:** {t.get('solution', 'N/A')}\n")
+                if t.get("key_insight"):
+                    lines.append(f"**Key Insight:** {t['key_insight']}\n")
+                i += 1
+    cross = [c for c in (cross or []) if isinstance(c, dict)]
+    if cross:
+        lines.append("## Recurring Problems Across Projects\n")
+        for i, c in enumerate(cross, 1):
+            n = f", {c['occurrences']}×" if c.get("occurrences") else ""
+            lines.append(f"### {i}. {c.get('pattern', 'N/A')} ({', '.join(c.get('projects') or [])}{n})\n")
+            lines.append(f"**How it was resolved:** {c.get('how_resolved', '—')}\n")
+            if c.get("lesson"):
+                lines.append(f"**Lesson:** {c['lesson']}\n")
+    groups = _by_project(unresolved)
+    if groups:
+        lines.append("## Unresolved Problems\n")
+        i = 1
+        for project, items in groups.items():
+            lines.append(f"### {project}\n")
+            for u in items:
+                lines.append(f"#### {i}. {u.get('problem', 'N/A')}\n")
+                lines.append(f"**Progress:** {u.get('progress', '—')}\n")
+                if u.get("why_stopped"):
+                    lines.append(f"**Why it stopped:** {u['why_stopped']}\n")
+                if u.get("how_to_resume"):
+                    lines.append(f"**How to resume:** {u['how_to_resume']}\n")
+                i += 1
+
+
+def render_workstreams(lines: list[str], workstreams: list) -> None:
+    """One line per workstream: topic, when, how many sessions, what happened."""
+    for w in workstreams or []:
+        if not isinstance(w, dict):
+            lines.append(f"- {w}")
+            continue
+        meta = []
+        if w.get("dates"):
+            meta.append(", ".join(w["dates"]))
+        if int(w.get("sessions") or 1) > 1:
+            meta.append(f"{w['sessions']} sessions")
+        meta_str = f" ({'; '.join(meta)})" if meta else ""
+        lines.append(f"- **{w.get('topic', '')}**{meta_str}: {w.get('summary', '')}")
+    lines.append("")
+
 
 DEFAULT_REPORTS_DIR = REPORTS_DIR / "summarize"
 
@@ -160,12 +348,95 @@ draft: false
     en_path, zh_path = write_bilingual(
         hugo_site, rel, frontmatter + markdown_body,
         engine=engine, pbar=pbar, force=force,
-        overwrite_human=overwrite_human)
+        overwrite_human=overwrite_human, report=True)
 
     print(f"[ok] Hugo post generated: {en_path}")
     if zh_path:
+        zh_text = zh_path.read_text(encoding="utf-8")
+        localized = localize_report_labels_zh(zh_text, en=markdown_body)
+        if localized != zh_text:
+            _atomic_write(zh_path, localized)
         print(f"[ok] Hugo post (translated): {zh_path}")
     return en_path
+
+
+# ─── zh label localization ─────────────────────────────────────────────
+# The translation prompt keeps English headings as-is (right for blog titles,
+# wrong for the fixed labels our renderers emit), so the zh post gets its
+# report labels swapped deterministically after translation.
+# ponytail: exact-label table; add a row when a renderer grows a new label.
+
+_ZH_LABELS = {
+    "Weekly Overview": "本周概览", "Monthly Overview": "本月概览", "Daily Overview": "今日概览",
+    "Project Progress": "项目进展", "Problem-Solving Threads": "解决问题的脉络",
+    "Recurring Problems Across Projects": "跨项目反复出现的问题",
+    "Recurring Problems": "反复出现的问题", "Unresolved Problems": "未解决的问题",
+    "Problems & Solutions": "问题与解决", "Key Tasks": "关键任务", "Tasks": "任务",
+    "Key Achievements": "关键成果", "Learnings": "收获", "Monthly Learnings Digest": "本月收获精选",
+    "AI Usage Notes": "AI 使用心得", "Human vs AI Approaches": "人与 AI 的思路差异",
+    "Human-AI Collaboration Trends": "人机协作趋势", "AI Limitations": "AI 的局限",
+    "Next Week Outlook": "下周展望", "Token Usage Statistics": "Token 用量统计",
+    "Token Usage": "Token 用量", "Conversation Summaries": "会话摘要",
+    "Critical Issues": "关键问题", "General Issues": "一般问题",
+    "Strategic Level": "战略层面", "Implementation Level": "实现层面",
+    "Architecture & Strategy": "架构与策略", "Implementation & Fixes": "实现与修复",
+    "Architecture (architecture)": "架构", "Debugging (debugging)": "调试",
+    "Tools (tools)": "工具", "Domain Knowledge (domain)": "领域知识",
+}
+_ZH_BOLD = {
+    "Conditions": "条件", "Obstacles": "遇到的难题", "Solution": "解决方案",
+    "Key Insight": "关键收获", "How it was resolved": "最终如何解决", "Lesson": "经验",
+    "Progress": "进展", "Why it stopped": "为什么没有继续", "How to resume": "如何快速上手",
+    "Accomplishments": "成果", "Blockers": "阻塞", "Key Milestones": "关键里程碑",
+    "Effective Patterns": "有效做法", "Limitations": "局限", "Dates": "日期",
+    "Root Cause": "根因", "Status": "状态", "Peak Day": "峰值日", "Daily Average": "日均",
+}
+_ZH_INLINE = [
+    (re.compile(r"\((\d+|\?) days active\)"), r"（活跃 \1 天）"),
+    (re.compile(r"\b(\d+) sessions\b"), r"\1 个会话"),
+    (re.compile(r"🔄 active\b"), "🔄 进行中"), (re.compile(r"✅ completed\b"), "✅ 已完成"),
+    (re.compile(r"⏸️ paused\b"), "⏸️ 暂停"),
+]
+_ZH_HEADING_RE = re.compile(r"^(#{2,4} )(.+?)[ \t]*$", re.M)
+_ZH_BOLD_RE = re.compile(r"\*\*(" + "|".join(map(re.escape, _ZH_BOLD)) + r"):\*\*")
+
+
+_LINE_HEADING_RE = re.compile(r"^(#{2,4} )(.*?)[ \t]*$", re.M)
+_LINE_BOLD_RE = re.compile(r"^\*\*([^*\n]{1,30}?)[:：]\*\*", re.M)
+
+
+def _align(zh: str, en: str, pattern: re.Pattern, fix) -> str:
+    """Rewrite the i-th zh match from the i-th en match when both sides have the
+    same number of matches (the model keeps structure; it only varies wording)."""
+    en_m, zh_m = list(pattern.finditer(en)), list(pattern.finditer(zh))
+    if len(en_m) != len(zh_m):
+        return zh
+    out, last = [], 0
+    for e, z in zip(en_m, zh_m):
+        rep = fix(e, z)
+        if rep is not None:
+            out.append(zh[last:z.start()] + rep)
+            last = z.end()
+    return "".join(out) + zh[last:]
+
+
+def localize_report_labels_zh(text: str, en: str | None = None) -> str:
+    """Swap the renderers' fixed labels for fixed Chinese in a zh report body.
+
+    With *en* (the source), labels are pinned by position, so the model's own
+    wording (e.g. 问题解决线程) is replaced too; English leftovers are mapped either way.
+    """
+    if en:
+        text = _align(text, en, _LINE_HEADING_RE, lambda e, z: (
+            z.group(1) + _ZH_LABELS[e.group(2)] if e.group(2) in _ZH_LABELS else None))
+        text = _align(text, en, _LINE_BOLD_RE, lambda e, z: (
+            f"**{_ZH_BOLD[e.group(1)]}：**" if e.group(1) in _ZH_BOLD else None))
+    text = _ZH_HEADING_RE.sub(
+        lambda m: m.group(1) + _ZH_LABELS.get(m.group(2), m.group(2)), text)
+    text = _ZH_BOLD_RE.sub(lambda m: f"**{_ZH_BOLD[m.group(1)]}：**", text)
+    for pat, rep in _ZH_INLINE:
+        text = pat.sub(rep, text)
+    return text
 
 
 # ─── Cache ─────────────────────────────────────────────────────────────

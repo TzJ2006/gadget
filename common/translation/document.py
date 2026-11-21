@@ -113,6 +113,14 @@ def validate_translated_output(
     return cleaned
 
 
+def _keep_chunk_edges(chunk: str, result: str) -> str:
+    """Put back the chunk's surrounding whitespace the model strips; without it
+    the joined chunks glue a heading onto the next paragraph."""
+    lead = chunk[:len(chunk) - len(chunk.lstrip())]
+    trail = chunk[len(chunk.rstrip()):]
+    return lead + result.strip() + trail
+
+
 def translate_body(
     body: str,
     target_lang: str,
@@ -120,6 +128,7 @@ def translate_body(
     pbar: Any | None = None,
     target_chars: int | None = None,
     context_chars: int = 0,
+    report: bool = False,
 ) -> str:
     """Translate body text using collect-then-batch pipeline.
 
@@ -143,7 +152,8 @@ def translate_body(
     # head-cap the doc as background — ponytail: summary/sliding-window if quality needs it
     background = protected_body[:context_chars] if context_chars and len(non_empty) > 1 else None
     prompts = [
-        build_translation_prompt(chunk, target_lang, markdown=True, background_text=background)
+        build_translation_prompt(chunk, target_lang, markdown=True, background_text=background,
+                                 report=report)
         for _, chunk in non_empty
     ]
     logger.info("Translating %d chunks as batch%s", len(prompts), " (with context)" if background else "")
@@ -154,8 +164,8 @@ def translate_body(
     )
 
     translated_chunks = list(chunks)
-    for (i, _), result in zip(non_empty, results, strict=True):
-        translated_chunks[i] = result
+    for (i, chunk), result in zip(non_empty, results, strict=True):
+        translated_chunks[i] = _keep_chunk_edges(chunk, result)
         if pbar:
             pbar.update(1)
 
@@ -276,8 +286,8 @@ def translate_documents_batch(
 
         # Reassemble body
         translated_chunks = list(plan["chunks"])
-        for (chunk_idx, _), prompt_idx in zip(plan["non_empty"], plan["body_prompt_indices"]):
-            translated_chunks[chunk_idx] = all_results[prompt_idx]
+        for (chunk_idx, chunk), prompt_idx in zip(plan["non_empty"], plan["body_prompt_indices"]):
+            translated_chunks[chunk_idx] = _keep_chunk_edges(chunk, all_results[prompt_idx])
 
         translated_body = "".join(translated_chunks)
         translated_body = restore_fragments(translated_body, plan["protected_map"])
@@ -297,6 +307,7 @@ def translate_markdown_document(
     engine: TranslationEngine | None = None,
     model: str | None = None,
     pbar: Any | None = None,
+    report: bool = False,
 ) -> str:
     """Translate a full Hugo markdown document using local inference.
 
@@ -309,7 +320,7 @@ def translate_markdown_document(
     def _do_translate(eng: TranslationEngine) -> str:
         frontmatter, body = split_frontmatter(content)
         translated_fm = translate_frontmatter(frontmatter, target_lang, eng)
-        translated_body = translate_body(body, target_lang, eng, pbar=pbar)
+        translated_body = translate_body(body, target_lang, eng, pbar=pbar, report=report)
         result = _reattach_body(frontmatter, translated_fm, translated_body)
         return validate_translated_output(result, content, target_lang)
 

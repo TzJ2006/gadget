@@ -60,6 +60,8 @@ def dispatch(payload: dict) -> dict:
         end = date.fromisoformat(payload["until_date"]) if payload.get("until_date") else None
         texts, summaries = load_records(payload["kind"], Path(payload["path"]), on_date=start, until_date=end)
         return {"texts": texts, "summaries": summaries}
+    if op == "stage":
+        return stage_report(payload)
     if payload.get("save_dir"):
         return save_report(payload)
     timeout = float(payload.get("timeout", 600))
@@ -119,12 +121,91 @@ def save_report(payload):
     return result
 
 
+def stage_report(payload):
+    """Write one saved report into the Hugo site as a bilingual post. The caller runs the site's publish script.
+
+    Explicit request only. The report itself is not regenerated; translation runs on the local model.
+    """
+    import calendar
+    from .config import resolve_hugo_site
+    kind, label = payload["kind"], payload["label"]
+    source = Path(payload["save_dir"]) / report_name(kind, label)
+    report = json.loads(source.read_text(encoding="utf-8"))
+    site = resolve_hugo_site(None)
+    # The CLI saves a richer Markdown (usage card) next to the JSON; use it unless the JSON was regenerated since.
+    saved = source.with_suffix(".md")
+    body = saved.read_text(encoding="utf-8") if saved.is_file() and saved.stat().st_mtime >= source.stat().st_mtime else None
+    if body is None:
+        attach_usage(report, kind, label)
+    if kind == "day":
+        from .formatter import generate_hugo_post, generate_markdown
+        day = date.fromisoformat(label)
+        post = generate_hugo_post(body or generate_markdown(report, day), day, site, force=True)
+    elif kind == "week":
+        from .weekly_summary import generate_weekly_hugo_post, generate_weekly_markdown
+        year, week = int(label[:4]), int(label[-2:])
+        post = generate_weekly_hugo_post(body or generate_weekly_markdown(report, year, week), year, week, site, force=True)
+    elif kind == "month":
+        from .monthly_summary import generate_monthly_hugo_post, generate_monthly_markdown
+        year, month = int(label[:4]), int(label[5:])
+        post = generate_monthly_hugo_post(body or generate_monthly_markdown(report, year, month), year, month, site, force=True)
+    else:
+        from .monthly_summary import generate_monthly_markdown
+        from .period_report import generate_period_hugo_post
+        year = int(label)
+        report.setdefault("statistics", {}).setdefault("total_days", 366 if calendar.isleap(year) else 365)
+        # ponytail: the yearly page is the monthly layout with its headings renamed; give it its own renderer if the layouts diverge.
+        body = (generate_monthly_markdown(report, year, 12)
+                .replace(f"# Monthly Summary — {label}-12", f"# Yearly Summary — {label}")
+                .replace("## Monthly Overview", "## Yearly Overview")
+                .replace(f"AI Usage · {label}-12", f"AI Usage · {label}"))
+        post = generate_period_hugo_post(
+            body, site, title=f"Yearly Summary {label}", post_date=date(year, 12, 31), hour=23, minute=59,
+            keywords=["Bug Journal", "Yearly Summary"], fallback_summary=f"{label} Yearly AI conversation summary",
+            content_parts=("bugJournal", "yearly"), filename=f"{label}-yearly.md", force=True)
+    return {"staged": str(post)}
+
+
+def attach_usage(report, kind, label, logs_dir=None, refresh=True):
+    """Add the ccusage token usage the CLI pipeline attaches, so staged posts keep their usage card."""
+    if report.get("token_usage_by_source") or report.get("token_usage_by_source_summary"):
+        return
+    from .config import _resolve_output_dir
+    from .periods import period_days
+    from .usage import _merge_token_usages, _refresh_usage_snapshots, load_ccusage_for_date
+    from common.paths import LOGS_DIR
+    logs_dir = logs_dir or _resolve_output_dir(None, "SUMMARIZE_LOGS_DIR", "logs_dir", LOGS_DIR / "summarize")
+    if refresh:
+        # Local snapshot only; other devices' snapshots arrive through the usual sync.
+        _refresh_usage_snapshots(logs_dir, upload=False)
+    days = []
+    for day in period_days(kind, label):
+        grouped = {}
+        for usage in load_ccusage_for_date(logs_dir, day):
+            grouped.setdefault(usage.get("_source", "unknown"), []).append(usage)
+        days.append({"date": day.isoformat(),
+                     "token_usage_by_source": {s: _merge_token_usages(u) for s, u in grouped.items()}})
+    if kind == "day":
+        if days[0]["token_usage_by_source"]:
+            report["token_usage_by_source"] = days[0]["token_usage_by_source"]
+        return
+    from .monthly_summary import combine_usage_summaries
+    from .period_report import collect_usage_by_source
+    by_source = collect_usage_by_source(days)
+    report.update(token_usage_by_source_summary=by_source,
+                  token_usage_summary=by_source.get("claude_code", {}),
+                  codex_token_usage_summary=by_source.get("codex", {}),
+                  combined_token_usage_summary=combine_usage_summaries(*by_source.values()))
+
+
 def summarize_period(api: str, kind: str, label: str, daily_reports: list) -> dict:
     if kind == "week":
         from summarize.weekly_summary import _call_weekly_summarize_chunked
 
         return require_report(_call_weekly_summarize_chunked(api, daily_reports, label, chunk_cache_dir=None))
-    if kind == "month":
+    # ponytail: a year runs the monthly algorithm over that year's daily reports (7-day chunks, about 52 model
+    # calls for a full year); summarize the 12 monthly reports instead if that gets too slow.
+    if kind in ("month", "year"):
         from summarize.monthly_summary import _call_monthly_summarize_chunked
 
         return require_report(_call_monthly_summarize_chunked(api, daily_reports, label, chunk_cache_dir=None))

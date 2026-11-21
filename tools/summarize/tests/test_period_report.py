@@ -35,8 +35,8 @@ from summarize.weekly_summary import (
 def test_named_constants():
     assert CHUNK_CHARS == 150_000
     assert TIMEOUT_DAILY == 600
-    assert TIMEOUT_WEEKLY == 900
-    assert TIMEOUT_MONTHLY == 1800
+    assert TIMEOUT_WEEKLY == 1800
+    assert TIMEOUT_MONTHLY == 3600
 
 
 def test_chunk_chars_config_fallback(monkeypatch):
@@ -174,3 +174,39 @@ def test_reshape_usage_for_chart():
 def test_chunked_wrappers_still_callable():
     assert callable(_call_weekly_summarize_chunked)
     assert callable(_call_monthly_summarize_chunked)
+
+
+def test_problem_sections_group_by_project_and_render_cross_and_unresolved():
+    from summarize.period_report import render_problem_sections
+    lines = []
+    render_problem_sections(
+        lines,
+        [{"project": "B", "problem": "p2", "solution": "s2", "importance": 3},
+         {"project": "A", "problem": "p1", "context": "c", "solution": "s1",
+          "obstacles": [{"obstacle": "o", "resolution": "r"}]}],
+        [{"pattern": "lease stalls", "projects": ["A", "B"], "how_resolved": "h"}],
+        [{"project": "A", "problem": "u", "progress": "g", "why_stopped": "w", "how_to_resume": "run x"}],
+    )
+    md = "\n".join(lines)
+    assert md.index("### B") < md.index("### A")  # grouped, first-seen order
+    assert "**Conditions:** c" in md and "- o → r" in md
+    assert "## Recurring Problems Across Projects" in md and "(A, B)" in md
+    assert "## Unresolved Problems" in md and "**How to resume:** run x" in md
+
+
+def test_localize_report_labels_zh():
+    from summarize.period_report import localize_report_labels_zh
+    src = ("## Problem-Solving Threads\n\n### Gadget (5 days active) — 🔄 active\n\n"
+           "**Conditions:** 条件\n\n## 某个已翻译标题\n- **x** (3 sessions): y\n")
+    out = localize_report_labels_zh(src)
+    assert "## 解决问题的脉络" in out and "**条件：** 条件" in out
+    assert "（活跃 5 天）" in out and "🔄 进行中" in out and "3 个会话" in out
+    assert "## 某个已翻译标题" in out
+
+
+def test_localize_pins_model_worded_labels_by_position():
+    from summarize.period_report import localize_report_labels_zh
+    en = "## Problem-Solving Threads\n\n#### 1. Bug\n**Why it stopped:** x\n"
+    zh = "## 问题解决线程\n\n#### 1. 缺陷\n**停止原因：** x\n"
+    out = localize_report_labels_zh(zh, en=en)
+    assert out == "## 解决问题的脉络\n\n#### 1. 缺陷\n**为什么没有继续：** x\n"

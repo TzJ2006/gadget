@@ -80,8 +80,9 @@ def get_engine(model: str | None = None) -> TranslationEngine:
     """Return a warm engine for *model* (default model when None).
 
     ``create_engine`` caches one engine per model id and loads it before
-    returning, so switching models in the GUI loads each lazily and keeps every
-    loaded model warm for reuse.
+    returning, so switching models in the GUI loads each lazily. Only one
+    in-process model stays resident: switching to another in-process model
+    unloads the previous one (switching back reloads it).
     """
     return create_engine(model)
 

@@ -1,5 +1,7 @@
 """Unit tests for ccusage 20.x per-source usage tracking."""
 import json
+from datetime import datetime
+from pathlib import Path
 from unittest import mock
 
 from summarize import usage
@@ -235,10 +237,12 @@ def test_refresh_snapshots_per_source(tmp_path, monkeypatch):
                             CLAUDE_RAW if s == "claude" else CODEX_RAW, s))
     monkeypatch.setattr(usage, "_get_device_name", lambda: "devX")
     monkeypatch.setattr(usage, "_rclone_upload", lambda *a, **k: None)
+    monkeypatch.setattr(usage, "antigravity_usage", lambda: {
+        "daily": [{"date": "2026-04-01", "totalTokens": 5}], "totals": {"totalTokens": 5}})
 
     usage._refresh_usage_snapshots(tmp_path)
     names = sorted(p.name for p in tmp_path.glob("usage_*.json"))
-    assert names == ["usage_claude_code_devX.json", "usage_codex_devX.json"]
+    assert names == ["usage_antigravity_devX.json", "usage_claude_code_devX.json", "usage_codex_devX.json"]
 
 
 def test_chart_multi_source_smoke(tmp_path):
@@ -254,3 +258,45 @@ def test_chart_multi_source_smoke(tmp_path):
                                       output_dir=tmp_path)
     # matplotlib may be absent -> None acceptable; if present, a file exists
     assert out is None or out.exists()
+
+
+def test_antigravity_usage_sums_step_tokens_per_day(tmp_path, monkeypatch):
+    """Token counts come from the step logs, grouped by local day and selected model."""
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    assert usage.antigravity_usage() is None
+    logs = tmp_path / ".gemini" / "antigravity" / "brain" / "c1" / ".system_generated" / "logs"
+    logs.mkdir(parents=True)
+    stamp = "2026-07-14T16:00:00Z"
+    day = datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().date().isoformat()
+    steps = [
+        {"type": "USER_INPUT", "created_at": stamp,
+         "content": "hi <USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from None to"
+                    " Gemini X (Medium). No need to comment.</USER_SETTINGS_CHANGE>"},
+        {"type": "PLANNER_RESPONSE", "created_at": stamp,
+         "input_tokens": 100, "cache_read_tokens": 1000, "output_tokens": 10},
+        {"type": "GENERIC", "created_at": stamp, "content": "tool"},
+        {"type": "PLANNER_RESPONSE", "created_at": stamp,
+         "input_tokens": 5, "cache_read_tokens": 0, "output_tokens": 1},
+    ]
+    (logs / "transcript_full.jsonl").write_text(
+        "".join(json.dumps(s) + "\n" for s in steps), encoding="utf-8")
+
+    out = usage.antigravity_usage()
+    entry = out["daily"][0]
+    assert (entry["date"], entry["inputTokens"], entry["outputTokens"], entry["cacheReadTokens"],
+            entry["totalTokens"]) == (day, 105, 11, 1000, 1116)
+    assert entry["modelBreakdowns"][0]["modelName"] == "Gemini X (Medium)"
+    assert out["totals"]["totalTokens"] == 1116
+
+
+def test_attach_usage_fills_staged_reports(tmp_path):
+    from summarize.public_api import attach_usage
+    day = {"date": "2026-11-15", "totalTokens": 10, "totalCost": 1.0, "inputTokens": 4, "outputTokens": 6}
+    envelope = {"device_name": "pc", "source": "claude_code", "usage": {"daily": [day], "totals": day}}
+    (tmp_path / "usage_claude_code_pc.json").write_text(json.dumps(envelope), encoding="utf-8")
+    daily = {"summary": "x"}
+    attach_usage(daily, "day", "2026-11-15", logs_dir=tmp_path, refresh=False)
+    assert daily["token_usage_by_source"]["claude_code"]["totals"]["totalTokens"] == 10
+    month = {"summary": "x"}
+    attach_usage(month, "month", "2026-11", logs_dir=tmp_path, refresh=False)
+    assert month["combined_token_usage_summary"]["totals"]["totalTokens"] == 10

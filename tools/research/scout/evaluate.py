@@ -9,7 +9,7 @@ import logging
 from common.io import atomic_write
 from common.json_utils import (
     parse_json_response as _parse_json_response,
-    try_repair_result as _try_repair_result,
+    try_repair_result as _common_try_repair_result,
 )
 from research.llm import call_llm
 
@@ -59,12 +59,23 @@ def call_scout_llm(api: str, prompt: str, timeout: int = 600) -> dict:
         raw = call_llm(prompt, backend=api, model="sonnet", timeout=timeout)
     except Exception as e:
         logger.error("LLM call failed: %s", e)
-        return {"parse_error": True, "raw_response": str(e)}
+        # llm_error: raw_response is an exception message, not model output.
+        return {"parse_error": True, "llm_error": True, "raw_response": str(e)}
     parsed = _parse_json_response(raw)
     if not isinstance(parsed, dict):
         # Top-level arrays / scalars would crash downstream .get() calls.
         return {"parse_error": True, "raw_response": repr(parsed)}
     return parsed
+
+
+def _try_repair_result(result: dict, api: str, timeout: int) -> dict:
+    """LLM JSON repair, skipped when the LLM call itself failed (nothing to repair).
+
+    The internal llm_error marker is popped so returned/persisted dicts keep their shape.
+    """
+    if result.pop("llm_error", False):
+        return result
+    return _common_try_repair_result(result, api, timeout)
 
 
 # ─── Eval cache ─────────────────────────────────────────────────────

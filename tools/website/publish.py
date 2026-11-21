@@ -50,6 +50,7 @@ GENERATED_CONTENT_DIRS = (
     "bugJournal/daily",
     "bugJournal/weekly",
     "bugJournal/monthly",
+    "bugJournal/yearly",
     "research",
 )
 GENERATED_CONTENT_FILES = ("benchmark.md", "benchmark.zh.md")
@@ -302,6 +303,11 @@ def run_hugo() -> None:
         sys.exit(1)
 
 
+def protect_reports() -> int:
+    import protect
+    return protect.protect(PUBLIC_DIR, protect.configured_password())
+
+
 def commit_and_push() -> None:
     print("\n─────────────────────────────────────────────────", flush=True)
     print("> Step 7/8：提交并推送远端仓库：", flush=True)
@@ -364,6 +370,13 @@ def main() -> int:
 
     clean_public()
     run_hugo()
+    # Reports are private: encrypt them before anything is committed. No password, no publish.
+    try:
+        encrypted = protect_reports()
+    except RuntimeError as error:
+        print(f"ERROR: {error}", file=sys.stderr, flush=True)
+        return 1
+    print(f" -- 已加密 {encrypted} 个报告页面（需要密码才能看）", flush=True)
     timer.step("Step 6 Hugo 构建")
 
     commit_and_push()

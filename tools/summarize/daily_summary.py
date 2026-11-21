@@ -59,6 +59,8 @@ from summarize.parsers import (  # noqa: F401
     parse_generic,
     parse_codex,
     parse_cursor,
+    parse_gemini,
+    parse_antigravity,
     collect_conversations,
     _extract_text_content,
 )

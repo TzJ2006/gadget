@@ -36,6 +36,14 @@ from .period_report import (
     DEFAULT_REPORTS_DIR as _DEFAULT_REPORTS_DIR,
     TIMEOUT_WEEKLY,
     _LOW_THINKING,
+    PROBLEM_SECTION_SCHEMAS,
+    THREAD_SCHEMA,
+    WEEKLY_MAX_TOKENS,
+    WORKSTREAMS_SCHEMA,
+    problem_json,
+    problem_rules,
+    render_problem_sections,
+    render_workstreams,
     add_deploy_arguments,
     add_generate_arguments,
     call_period_summarize_chunked,
@@ -161,18 +169,26 @@ def compute_weekly_statistics(daily_reports: list[dict], iso_year: int,
 
 # ─── 2. LLM 调用 ────────────────────────────────────────────────────
 
+_NEGATIVE_FACTS_RULE = (
+    "In EVERY field, including the opening summary, an action that did not happen is not automatically pending, "
+    "outstanding, required, incomplete, or planned. Preserve its negative wording. Preserve explicit pending work "
+    "and negative facts from conversation summaries. Do not mark a project completed while its reported work is "
+    "pending. Do not invent actions or plans; use empty fields when evidence is absent."
+)
+
 WEEKLY_SUMMARY_PROMPT = """You are a professional weekly report analyst. Below are the daily AI conversation reports \
 for one week (JSON format). Please analyze this week's work progress and problem resolution, and generate a structured weekly report.
 
 Requirements:
-In EVERY field, including the opening summary, an action that did not happen is not automatically pending, outstanding, required, incomplete, or planned. Preserve its negative wording. Preserve explicit pending work and negative facts from conversation summaries. Do not mark a project completed while its reported work is pending. Do not invent actions or plans; use empty fields when evidence is absent.
+__NEGATIVE__
 1. Aggregate progress from a weekly perspective; do not list day by day
-2. project_progress sorted by days_active descending, with status for each project
-3. key_tasks should only include important tasks with importance >= 6
-4. problems_resolved should pair problems with their solutions
+2. project_progress: exactly one entry per project (treat case/plural/path variants as the same project), sorted by days_active descending. Inside each project, merge the daily conversation_summaries workstreams that describe the same work across days into one workstream (list its dates, sum its sessions) and keep every distinct workstream with a 1-2 sentence summary. Never drop a project or a workstream
+3. __PROBLEM_RULES__
+4. key_tasks: include every task with importance >= 5; do not cap the number of items
 5. learnings should be deduplicated, merged, and grouped by category
 6. next_week_outlook should include only explicitly stated plans or pending work, without inventing priorities
-7. Use English
+7. Completeness beats brevity: the weekly report may be up to about five times as long as a daily report. Deduplicate, but never compress distinct items away
+8. Use English
 
 Please return the following JSON structure:
 
@@ -184,26 +200,28 @@ Please return the following JSON structure:
         {
             "project": "Project name",
             "days_active": 5,
-            "accomplishments": ["Accomplishment 1"],
-            "blockers": ["Blocker 1"],
-            "status": "active | completed | paused"
+            "status": "active | completed | paused",
+            "summary": "One or two sentences on this project's week",
+            "workstreams": [
+                {
+                    "topic": "One distinct piece of work",
+                    "dates": ["YYYY-MM-DD"],
+                    "sessions": 4,
+                    "outcome": "completed | partial | exploratory | abandoned",
+                    "summary": "1-2 sentences: what was done, key fix or decision, result"
+                }
+            ]
         }
     ],
+__PROBLEMS__
     "key_tasks": [
         {
             "title": "Task title",
+            "project": "Related project",
             "date": "YYYY-MM-DD",
             "status": "completed | in_progress | blocked",
             "description": "Description",
             "importance": 8
-        }
-    ],
-    "problems_resolved": [
-        {
-            "problem": "Problem description",
-            "solution": "Solution",
-            "date": "YYYY-MM-DD",
-            "project": "Related project"
         }
     ],
     "learnings": [
@@ -224,25 +242,28 @@ Please return the following JSON structure:
 Return JSON only, no additional text.
 
 Daily report data:
-"""
+""".replace("__NEGATIVE__", _NEGATIVE_FACTS_RULE).replace(
+    "__PROBLEMS__", problem_json("problems_resolved")).replace(
+    "__PROBLEM_RULES__", problem_rules("problems_resolved"))
 
 WEEKLY_MERGE_PROMPT = """You are a professional weekly report analyst. Below are multiple independent weekly report \
 summaries for the same week (JSON format). Please merge them into one complete weekly report.
 
 Requirements:
-In EVERY field, including the opening summary, an action that did not happen is not automatically pending, outstanding, required, incomplete, or planned. Preserve its negative wording. Preserve explicit pending work and negative facts from conversation summaries. Do not mark a project completed while its reported work is pending. Do not invent actions or plans; use empty fields when evidence is absent.
-1. Merge all project_progress; combine days_active and accomplishments for the same project
-2. Merge key_tasks, deduplicate, keep only the most important ones
-3. Merge problems_resolved, deduplicate
+__NEGATIVE__
+1. Merge project_progress: one entry per project; combine days_active; merge workstreams describing the same work (union dates, sum sessions) and keep every distinct workstream. Every project from any segment MUST appear
+2. Merge problems_resolved by problem: combine context and keep every obstacle with its resolution in order. Merge cross_project_problems by pattern (union projects, sum occurrences). Merge unresolved_problems by problem keeping the latest progress; a problem solved in any segment belongs only in problems_resolved
+3. Merge key_tasks and deduplicate; keep every task with importance >= 5
 4. Merge learnings, deduplicate and group by category
 5. Merge all fields of ai_usage_notes
 6. Generate a one-paragraph summary for the entire week
 7. Generate next_week_outlook based on the merged information
-8. Return the same JSON structure as each segment
-9. Use English
-10. Return JSON only, no additional text
+8. Deduplicate, but never compress distinct items away: losing a project, workstream, or problem is worse than a longer report
+9. Return the same JSON structure as each segment
+10. Use English
+11. Return JSON only, no additional text
 
-"""
+""".replace("__NEGATIVE__", _NEGATIVE_FACTS_RULE)
 
 
 def _weekly_tool_schema() -> list[dict]:
@@ -260,19 +281,20 @@ def _weekly_tool_schema() -> list[dict]:
                     "properties": {
                         "project": {"type": "string"},
                         "days_active": {"type": "integer"},
-                        "accomplishments": {"type": "array",
-                                            "items": {"type": "string"}},
-                        "blockers": {"type": "array",
-                                     "items": {"type": "string"}},
                         "status": {"type": "string",
                                    "enum": ["active", "completed", "paused"]},
+                        "summary": {"type": "string"},
+                        "workstreams": WORKSTREAMS_SCHEMA,
                     },
-                    "required": ["project", "days_active", "status"],
+                    "required": ["project", "days_active", "status", "workstreams"],
                 }},
+                "problems_resolved": THREAD_SCHEMA,
+                **PROBLEM_SECTION_SCHEMAS,
                 "key_tasks": {"type": "array", "items": {
                     "type": "object",
                     "properties": {
                         "title": {"type": "string"},
+                        "project": {"type": "string"},
                         "date": {"type": "string"},
                         "status": {"type": "string",
                                    "enum": ["completed", "in_progress",
@@ -282,16 +304,6 @@ def _weekly_tool_schema() -> list[dict]:
                                        "minimum": 1, "maximum": 10},
                     },
                     "required": ["title", "status", "importance"],
-                }},
-                "problems_resolved": {"type": "array", "items": {
-                    "type": "object",
-                    "properties": {
-                        "problem": {"type": "string"},
-                        "solution": {"type": "string"},
-                        "date": {"type": "string"},
-                        "project": {"type": "string"},
-                    },
-                    "required": ["problem", "solution"],
                 }},
                 "learnings": {"type": "array", "items": {
                     "type": "object",
@@ -313,7 +325,7 @@ def _weekly_tool_schema() -> list[dict]:
                 }},
                 "next_week_outlook": {"type": "string"},
             },
-            "required": ["week", "summary", "project_progress", "key_tasks"],
+            "required": ["week", "summary", "project_progress", "problems_resolved", "key_tasks"],
         },
     }]
 
@@ -326,6 +338,7 @@ def _build_weekly_config(prompt_text: str, timeout: int = TIMEOUT_WEEKLY) -> LLM
         anthropic_tools=_weekly_tool_schema(),
         anthropic_tool_name="submit_weekly_report",
         thinking=_LOW_THINKING,
+        max_tokens=WEEKLY_MAX_TOKENS,
     )
 
 
@@ -430,7 +443,11 @@ def generate_weekly_markdown(report: dict, iso_year: int, iso_week: int,
             lines.append(f"### {p.get('project', '(unknown)')} "
                          f"({p.get('days_active', '?')} days active) "
                          f"— {status_label}\n")
-            accomplishments = p.get("accomplishments", [])
+            if p.get("summary"):
+                lines.append(f"{p['summary']}\n")
+            if p.get("workstreams"):
+                render_workstreams(lines, p["workstreams"])
+            accomplishments = p.get("accomplishments", [])  # legacy reports
             if accomplishments:
                 lines.append("**Accomplishments:**")
                 for a in accomplishments:
@@ -443,6 +460,11 @@ def generate_weekly_markdown(report: dict, iso_year: int, iso_week: int,
                     lines.append(f"- ⚠️ {b}")
                 lines.append("")
 
+    # ── 解决问题的脉络 / 跨项目反复出现的问题 / 未解决的问题 ──
+    render_problem_sections(lines, report.get("problems_resolved", []),
+                            report.get("cross_project_problems", []),
+                            report.get("unresolved_problems", []))
+
     # ── 关键任务 ──
     tasks = report.get("key_tasks", [])
     if tasks:
@@ -451,20 +473,11 @@ def generate_weekly_markdown(report: dict, iso_year: int, iso_week: int,
                         "blocked": "🚫"}
         for t in tasks:
             icon = status_icons.get(t.get("status", ""), "•")
-            date_str = f" ({t['date']})" if t.get("date") else ""
-            lines.append(f"- {icon} **{t.get('title', '(untitled)')}**{date_str} — "
+            meta = ", ".join(x for x in (t.get("project"), t.get("date")) if x)
+            meta_str = f" ({meta})" if meta else ""
+            lines.append(f"- {icon} **{t.get('title', '(untitled)')}**{meta_str} — "
                          f"{t.get('description', '')}")
         lines.append("")
-
-    # ── 问题与解决方案 ──
-    problems = report.get("problems_resolved", [])
-    if problems:
-        lines.append("## Problems & Solutions\n")
-        for i, p in enumerate(problems, 1):
-            proj_str = f" [{p['project']}]" if p.get("project") else ""
-            date_str = f" ({p['date']})" if p.get("date") else ""
-            lines.append(f"### {i}. {p.get('problem', '(unknown)')}{proj_str}{date_str}\n")
-            lines.append(f"**Solution:** {p.get('solution', '—')}\n")
 
     # ── 学习收获 ──
     learnings = report.get("learnings", [])

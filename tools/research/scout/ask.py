@@ -6,14 +6,12 @@ import re
 import logging
 from datetime import date
 
-from common.json_utils import try_repair_result as _try_repair_result
-
 from research.scout.config import (
     DEFAULT_LOOKBACK_DAYS,
     MAX_PAPERS_PER_PROJECT,
     get_logger,
 )
-from research.scout.evaluate import call_scout_llm
+from research.scout.evaluate import _try_repair_result, call_scout_llm
 from research.scout.prompts import ASK_INTENT_PROMPT
 from research.scout.search import (
     paper_id as _paper_id,

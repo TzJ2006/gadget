@@ -1236,6 +1236,8 @@ python -m summarize daily deploy --force
 | Claude Code | Reads `.jsonl` files under `~/.claude/projects/` | Yes |
 | Codex | Reads session directories under `~/.codex/sessions/` | Yes |
 | Cursor Agent | Reads `~/.cursor/projects/*/agent-transcripts/<uuid>/<uuid>.jsonl` (parent only; no token usage) | Yes |
+| Gemini CLI | Reads `~/.gemini/tmp/<project>/chats/session-*.json(l)` (no token usage) | Yes |
+| Antigravity | Reads `~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript_full.jsonl` (subagents skipped; no token usage) | Yes |
 | ChatGPT | The `conversations.json` exported from ChatGPT | No, requires `--chatgpt` to specify |
 | Generic format | A JSON array of `[{"role": "user", "content": "..."}]` | No, requires `--generic` to specify |
 

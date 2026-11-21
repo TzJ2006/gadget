@@ -797,6 +797,8 @@ python -m summarize daily deploy --hugo-site /path/to/site --reports-dir /path/t
 | Claude Code | 读取 `~/.claude/projects/` 下的 `.jsonl` 文件 | 是 |
 | Codex | 读取 `~/.codex/sessions/` 下的会话目录 | 是 |
 | Cursor Agent | 读取 `~/.cursor/projects/*/agent-transcripts/<uuid>/<uuid>.jsonl`（仅 parent；无 token usage） | 是 |
+| Gemini CLI | 读取 `~/.gemini/tmp/<project>/chats/session-*.json(l)`（无 token usage） | 是 |
+| Antigravity | 读取 `~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript_full.jsonl`（跳过 subagent；无 token usage） | 是 |
 | ChatGPT | ChatGPT 导出的 `conversations.json` | 否，需 `--chatgpt` 指定 |
 | 通用格式 | `[{"role": "user", "content": "..."}]` 的 JSON 数组 | 否，需 `--generic` 指定 |
 

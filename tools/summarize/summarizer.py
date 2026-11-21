@@ -29,6 +29,8 @@ from common.json_utils import (
 )
 from common.paths import CACHE_DIR
 
+from .period_report import PROBLEM_SECTION_SCHEMAS, THREAD_SCHEMA, problem_json, problem_rules
+
 _DEFAULT_CACHE_DIR = CACHE_DIR / "summarize"
 
 # ─── Prompt templates ─────────────────────────────────────────────
@@ -59,15 +61,7 @@ Analyze the conversation content, extract the following information, and return 
             "importance": 8
         }
     ],
-    "problems_and_solutions": [
-        {
-            "problem": "Problem encountered",
-            "solution": "Solution applied",
-            "key_insight": "Key insight gained",
-            "level": "high | low",
-            "importance": 7
-        }
-    ],
+__PROBLEMS__
     "human_vs_ai": [
         {
             "topic": "Topic",
@@ -120,9 +114,10 @@ Requirements:
    - importance: integer from 1-10, where 10 is most important. Criteria: impact on project progress, technical depth, whether it changes direction
    - ai_limitations and learnings use the {"content": "...", "level": "...", "importance": N} object format
 9. daily_overview should be distilled from the entire day's work; the three fields cover "what was done", "how it was done", and "what it achieves" respectively, one sentence each, without repetition
+10. __PROBLEM_RULES__
 
 Conversation logs:
-"""
+""".replace("__PROBLEMS__", problem_json("problems_and_solutions")).replace("__PROBLEM_RULES__", problem_rules("problems_and_solutions"))
 
 _OVERVIEW_FLAT_BLOCK = '''"daily_overview": {
         "what": "What was done (one sentence summarizing the core work of the day)",
@@ -173,7 +168,7 @@ CHUNK_MERGE_PROMPT = """You are a professional daily report analyst. Below are i
 
 Requirements:
 1. Merge all tasks; consolidate similar or identical tasks into one entry and keep the latest status
-2. Merge all problems and solutions; consolidate similar problems into one entry
+2. Merge problems_and_solutions: consolidate entries about the same problem into one thread, combining their context and keeping every obstacle with its resolution in the order they occurred; keep every distinct problem. Merge cross_project_problems by pattern (union the projects, sum occurrences) and unresolved_problems by problem, keeping the latest progress; a problem unresolved in one segment but solved in another belongs only in problems_and_solutions
 3. Merge all human vs AI analyses; consolidate entries on the same topic
 4. Merge all AI limitations and learnings; consolidate similar content into one entry
 5. Merge conversation_summaries by project: keep exactly one entry per project and treat case/plural/path variants (e.g. Gadget, gadget, Gadgets) as the same project. Every project that appears in any segment MUST appear in the result. Inside a project, merge workstreams describing the same work into one (sum their sessions); keep every distinct workstream as its own item with a one-sentence summary. The project sessions is the sum of its workstreams
@@ -294,12 +289,8 @@ def _daily_tool_schema() -> list[dict]:
                                    "description": {"type": "string"}, **_lp},
                     "required": ["name", "status", "description", "level", "importance"],
                 }},
-                "problems_and_solutions": {"type": "array", "items": {
-                    "type": "object",
-                    "properties": {"problem": {"type": "string"}, "solution": {"type": "string"},
-                                   "key_insight": {"type": "string"}, **_lp},
-                    "required": ["problem", "solution", "level", "importance"],
-                }},
+                "problems_and_solutions": THREAD_SCHEMA,
+                **PROBLEM_SECTION_SCHEMAS,
                 "human_vs_ai": {"type": "array", "items": {
                     "type": "object",
                     "properties": {"topic": {"type": "string"}, "human_approach": {"type": "string"},

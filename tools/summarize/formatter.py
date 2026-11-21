@@ -9,7 +9,7 @@ from common.io import atomic_write as _atomic_write
 from common.llm import DEFAULT_BACKEND
 from common.paths import REPORTS_DIR
 
-from .period_report import generate_period_hugo_post
+from .period_report import generate_period_hugo_post, render_problem_sections
 
 _DEFAULT_REPORTS_DIR = REPORTS_DIR / "summarize"
 
@@ -40,6 +40,8 @@ _LIST_FIELD_KEY = {
     "ai_limitations": "content",
     "learnings": "content",
     "conversation_summaries": "summary",
+    "cross_project_problems": "pattern",
+    "unresolved_problems": "problem",
 }
 
 
@@ -202,33 +204,10 @@ def generate_markdown(report: dict, target_date: date,
                 _render_task(t)
             lines.append("")
 
-    # 问题与解决方案
-    ps = report.get("problems_and_solutions", [])
-    if ps:
-        lines.append("## Problems & Solutions\n")
-
-        has_levels = _has_level_metadata(ps)
-        h_prefix = "####" if has_levels else "###"
-
-        def _render_ps(items, start_idx=1):
-            for i, item in enumerate(items, start_idx):
-                lines.append(f"{h_prefix} {i}. {item.get('problem', 'N/A')}\n")
-                lines.append(f"**Solution:** {item.get('solution', 'N/A')}\n")
-                if item.get("key_insight"):
-                    lines.append(f"**Key Insight:** {item['key_insight']}\n")
-
-        if has_levels:
-            high, low = _split_by_level(ps)
-            idx = 1
-            if high:
-                lines.append("### Critical Issues\n")
-                _render_ps(high, idx)
-                idx += len(high)
-            if low:
-                lines.append("### General Issues\n")
-                _render_ps(low, idx)
-        else:
-            _render_ps(ps)
+    # 解决问题的脉络（按项目）、跨项目反复出现的问题、未解决的问题
+    render_problem_sections(lines, report.get("problems_and_solutions", []),
+                            report.get("cross_project_problems", []),
+                            report.get("unresolved_problems", []))
 
     # 人类 vs AI
     hva = report.get("human_vs_ai", [])

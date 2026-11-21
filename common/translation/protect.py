@@ -254,6 +254,7 @@ def build_translation_prompt(
     *,
     markdown: bool = True,
     background_text: str | None = None,
+    report: bool = False,
 ) -> str:
     task = "Markdown文本" if markdown else "文本"
     target_name = "中文" if target_lang == "zh" else "English"
@@ -262,7 +263,16 @@ def build_translation_prompt(
         "不要翻译专有名词、项目名称、工具名称、模型名称和缩写词，保留原文"
         "（例如 LeRobot, NeurIPS, MIHD, RecoverBench, BlackHole, STAIG, Hugo, Claude 等）。"
     )
-    if target_lang == "zh":
+    if target_lang == "zh" and report:
+        # Generated work reports: readers want Chinese prose, not code-mixed text.
+        proper_nouns = (
+            "所有标题和正文都必须翻译成中文。只有项目名、工具/库/框架名、模型名、命令、"
+            "文件名、函数/API 名和缩写词保留英文原文（例如 Gadget, TokenMonitor, Hugo, "
+            "Ollama, scGPT, git restore）。普通技术术语和描述性词语要译成中文（例如 "
+            "context compaction → 上下文压缩，race condition → 竞态条件，"
+            "state persistence → 状态持久化），不要在中文句子里夹带英文短语。"
+        )
+    elif target_lang == "zh":
         proper_nouns += (
             "若标题或专业名词原本就是英文，在中文中保留英文，不要强行意译。"
         )

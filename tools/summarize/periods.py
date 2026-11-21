@@ -17,6 +17,10 @@ def report_name(kind, label):
         if datetime.strptime(label, "%Y-%m").strftime("%Y-%m") != label:
             raise ValueError("Expected YYYY-MM")
         return label + "-monthly.json"
+    if kind == "year":
+        if datetime.strptime(label, "%Y").strftime("%Y") != label:
+            raise ValueError("Expected YYYY")
+        return label + "-yearly.json"
     raise ValueError("Unknown report kind")
 
 def period_days(kind: str, value: str, *, strict: bool = False) -> list[date]:
@@ -35,4 +39,7 @@ def period_days(kind: str, value: str, *, strict: bool = False) -> list[date]:
             raise ValueError(f"月份不可用: {value}")
         last = calendar.monthrange(year, month)[1]
         return [date(year, month, day) for day in range(1, last + 1)]
+    if kind == "year":
+        first = date(int(value), 1, 1)
+        return [first + timedelta(days=offset) for offset in range(366 if calendar.isleap(first.year) else 365)]
     raise ValueError(f"未知范围: {kind}")

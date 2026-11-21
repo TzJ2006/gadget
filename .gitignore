@@ -73,6 +73,9 @@ tools/website/content/bugJournal/weekly/*
 tools/website/content/bugJournal/monthly/*
 !tools/website/content/bugJournal/monthly/_index.md
 !tools/website/content/bugJournal/monthly/_index.zh.md
+tools/website/content/bugJournal/yearly/*
+!tools/website/content/bugJournal/yearly/_index.md
+!tools/website/content/bugJournal/yearly/_index.zh.md
 tools/website/content/leetcode/
 tools/website/content/research/*
 !tools/website/content/research/_index.md

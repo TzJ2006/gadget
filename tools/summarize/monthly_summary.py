@@ -32,6 +32,14 @@ from .period_report import (
     DEFAULT_REPORTS_DIR as _DEFAULT_REPORTS_DIR,
     TIMEOUT_MONTHLY,
     _LOW_THINKING,
+    MONTHLY_MAX_TOKENS,
+    PROBLEM_SECTION_SCHEMAS,
+    THREAD_SCHEMA,
+    WORKSTREAMS_SCHEMA,
+    problem_json,
+    problem_rules,
+    render_problem_sections,
+    render_workstreams,
     add_deploy_arguments,
     add_generate_arguments,
     call_period_summarize_chunked,
@@ -337,13 +345,14 @@ MONTHLY_SUMMARY_PROMPT = """You are a professional monthly summary analyst. Belo
 
 Requirements:
 In EVERY field, including the opening summary, an action that did not happen is not automatically pending, outstanding, required, incomplete, or planned. Preserve its negative wording. Preserve explicit pending work and negative facts from conversation summaries. Do not mark a project completed while its reported work is pending. Do not invent actions or plans; use empty fields when evidence is absent.
-1. Distill trends and patterns from a whole-month perspective; do not simply list each day's content
-2. project_overview sorted by days_active descending; identify key milestones
-3. key_achievements: keep only the 5-10 most important items for the month (importance >= 7)
-4. recurring_problems: identify problem patterns that recur across multiple days; analyze root causes
+1. Write from a whole-month perspective; do not simply list each day's content
+2. project_overview: exactly one entry per project (treat case/plural/path variants as the same project), sorted by days_active descending. Inside each project, merge the workstreams that describe the same work across days and weeks into one workstream (list its dates, sum its sessions) and keep every distinct workstream with a 2-3 sentence summary. Never drop a project or a workstream
+3. __PROBLEM_RULES__
+4. key_achievements: include every achievement with importance >= 6; do not cap the number of items
 5. ai_collaboration_trends: distill trends from human_vs_ai and ai_limitations
-6. learnings_digest: deduplicate and merge, group by category, keep only the most valuable learnings
-7. Use English
+6. learnings_digest: deduplicate and merge, group by category
+7. Completeness beats brevity: the monthly report may be up to about four times as long as a weekly report. Deduplicate, but never compress distinct items away
+8. Use English
 
 Return the following JSON structure:
 
@@ -355,11 +364,20 @@ Return the following JSON structure:
         {
             "project": "Project Name",
             "days_active": 15,
-            "key_milestones": ["Milestone 1", "Milestone 2"],
             "status": "active | completed | paused",
-            "description": "Overview of the project's progress this month"
+            "description": "Overview of the project's progress this month",
+            "workstreams": [
+                {
+                    "topic": "One distinct piece of work",
+                    "dates": ["YYYY-MM-DD"],
+                    "sessions": 9,
+                    "outcome": "completed | partial | exploratory | abandoned",
+                    "summary": "2-3 sentences: what was done, key fixes or decisions, result"
+                }
+            ]
         }
     ],
+__PROBLEMS__
     "key_achievements": [
         {
             "title": "Achievement title",
@@ -367,15 +385,6 @@ Return the following JSON structure:
             "description": "Detailed description",
             "project": "Related project",
             "importance": 10
-        }
-    ],
-    "recurring_problems": [
-        {
-            "pattern": "Description of the problem pattern",
-            "occurrences": 5,
-            "dates": ["YYYY-MM-DD"],
-            "root_cause": "Root cause analysis",
-            "resolution_status": "resolved | ongoing | workaround"
         }
     ],
     "ai_collaboration_trends": {
@@ -397,22 +406,24 @@ Return the following JSON structure:
 Return JSON only, no additional text.
 
 Daily report data:
-"""
+""".replace("__PROBLEMS__", problem_json("problems_resolved")).replace(
+    "__PROBLEM_RULES__", problem_rules("problems_resolved"))
 
 MONTHLY_MERGE_PROMPT = """You are a professional monthly summary analyst. Below are independent monthly summaries \
 (JSON format) from multiple segments of the same month. Merge them into a single complete monthly summary.
 
 Requirements:
 In EVERY field, including the opening summary, an action that did not happen is not automatically pending, outstanding, required, incomplete, or planned. Preserve its negative wording. Preserve explicit pending work and negative facts from conversation summaries. Do not mark a project completed while its reported work is pending. Do not invent actions or plans; use empty fields when evidence is absent.
-1. Merge all project_overview entries; combine days_active and key_milestones for the same project
-2. Merge key_achievements; deduplicate, keep only the 5-10 most important items
-3. Merge recurring_problems; combine occurrences and dates for the same pattern
+1. Merge project_overview: one entry per project; combine days_active; merge workstreams describing the same work (union dates, sum sessions) and keep every distinct workstream. Every project from any segment MUST appear
+2. Merge problems_resolved by problem: combine context and keep every obstacle with its resolution in order. Merge cross_project_problems by pattern (union projects and dates, sum occurrences). Merge unresolved_problems by problem keeping the latest progress; a problem solved in any segment belongs only in problems_resolved
+3. Merge key_achievements and deduplicate; keep every achievement with importance >= 6
 4. Merge all fields of ai_collaboration_trends
 5. Merge learnings_digest; deduplicate and merge, group by category
 6. Generate a one-paragraph summary for the entire month
-7. Return the same JSON structure as each segment
-8. Use English
-9. Return JSON only, no additional text
+7. Deduplicate, but never compress distinct items away: losing a project, workstream, or problem is worse than a longer report
+8. Return the same JSON structure as each segment
+9. Use English
+10. Return JSON only, no additional text
 
 """
 
@@ -432,12 +443,14 @@ def _monthly_tool_schema() -> list[dict]:
                     "properties": {
                         "project": {"type": "string"},
                         "days_active": {"type": "integer"},
-                        "key_milestones": {"type": "array", "items": {"type": "string"}},
                         "status": {"type": "string", "enum": ["active", "completed", "paused"]},
                         "description": {"type": "string"},
+                        "workstreams": WORKSTREAMS_SCHEMA,
                     },
-                    "required": ["project", "days_active", "status", "description"],
+                    "required": ["project", "days_active", "status", "workstreams"],
                 }},
+                "problems_resolved": THREAD_SCHEMA,
+                **PROBLEM_SECTION_SCHEMAS,
                 "key_achievements": {"type": "array", "items": {
                     "type": "object",
                     "properties": {
@@ -448,18 +461,6 @@ def _monthly_tool_schema() -> list[dict]:
                         "importance": {"type": "integer", "minimum": 1, "maximum": 10},
                     },
                     "required": ["title", "description", "importance"],
-                }},
-                "recurring_problems": {"type": "array", "items": {
-                    "type": "object",
-                    "properties": {
-                        "pattern": {"type": "string"},
-                        "occurrences": {"type": "integer"},
-                        "dates": {"type": "array", "items": {"type": "string"}},
-                        "root_cause": {"type": "string"},
-                        "resolution_status": {"type": "string",
-                                              "enum": ["resolved", "ongoing", "workaround"]},
-                    },
-                    "required": ["pattern", "occurrences", "root_cause", "resolution_status"],
                 }},
                 "ai_collaboration_trends": {"type": "object", "properties": {
                     "human_initiated_insights": {"type": "integer"},
@@ -478,7 +479,7 @@ def _monthly_tool_schema() -> list[dict]:
                     "required": ["category", "content", "importance"],
                 }},
             },
-            "required": ["month", "summary", "project_overview", "key_achievements"],
+            "required": ["month", "summary", "project_overview", "problems_resolved", "key_achievements"],
         },
     }]
 
@@ -491,6 +492,7 @@ def _build_monthly_config(prompt_text: str, timeout: int = TIMEOUT_MONTHLY) -> L
         anthropic_tools=_monthly_tool_schema(),
         anthropic_tool_name="submit_monthly_report",
         thinking=_LOW_THINKING,
+        max_tokens=MONTHLY_MAX_TOKENS,
     )
 
 
@@ -582,12 +584,19 @@ def generate_monthly_markdown(report: dict, year: int, month: int,
             lines.append(f"### {p.get('project', '(unknown)')} ({p.get('days_active', '?')} days active) — {status_label}\n")
             if p.get("description"):
                 lines.append(f"{p['description']}\n")
-            milestones = p.get("key_milestones", [])
+            if p.get("workstreams"):
+                render_workstreams(lines, p["workstreams"])
+            milestones = p.get("key_milestones", [])  # legacy reports
             if milestones:
                 lines.append(f"**Key Milestones:**")
                 for m in milestones:
                     lines.append(f"- {m}")
                 lines.append("")
+
+    # ── 解决问题的脉络 / 跨项目反复出现的问题 / 未解决的问题 ──
+    render_problem_sections(lines, report.get("problems_resolved", []),
+                            report.get("cross_project_problems", []),
+                            report.get("unresolved_problems", []))
 
     # ── 本月关键成就 ──
     achievements = report.get("key_achievements", [])
@@ -600,7 +609,7 @@ def generate_monthly_markdown(report: dict, year: int, month: int,
             lines.append(f"{i}. **{a.get('title', '(untitled)')}**{meta} — {a.get('description', '')}")
         lines.append("")
 
-    # ── 反复出现的问题 ──
+    # ── 反复出现的问题（旧版报告） ──
     problems = report.get("recurring_problems", [])
     if problems:
         lines.append("## Recurring Problems\n")

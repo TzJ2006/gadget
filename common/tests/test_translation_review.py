@@ -18,6 +18,7 @@ from common.translation import (
 from common.translation.frontmatter import (
     _build_review_prompt,
     _match_review_tag,
+    _review_tags,
 )
 # Bound at import so the autouse _forbid_llm patch below can't shadow it.
 from common.translation.frontmatter import _call_review_llm as _real_call_review_llm
@@ -57,8 +58,10 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "common.translation.frontmatter._call_review_llm", _forbid_llm,
     )
+    _review_tags.cache_clear()
     clear_cache()
     yield
+    _review_tags.cache_clear()
     clear_cache()
 
 
@@ -120,6 +123,23 @@ def test_review_skipped_when_model_not_pulled(monkeypatch, caplog):
     with caplog.at_level("WARNING"):
         assert resolve_review_tag() is None
     assert "not pulled" in caplog.text
+
+
+def test_review_tags_probed_once_per_host(monkeypatch):
+    calls = []
+
+    def fake_tags(host):
+        calls.append(host)
+        return [DEFAULT_REVIEW_MODEL]
+
+    monkeypatch.setattr("common.translation.frontmatter._ollama_tags", fake_tags)
+    monkeypatch.setattr(
+        "common.translation.frontmatter._ollama_native_host",
+        lambda: "http://127.0.0.1:11434",
+    )
+    assert resolve_review_tag() == DEFAULT_REVIEW_MODEL
+    assert resolve_review_tag() == DEFAULT_REVIEW_MODEL
+    assert calls == ["http://127.0.0.1:11434"]
 
 
 def test_match_review_tag_accepts_bare_qwen38():
@@ -227,3 +247,23 @@ def test_double_quoted_escapes_round_trip_as_valid_yaml(monkeypatch):
     fm = '---\nsummary: "the $\\\\pi$0.5 \\"W4A4\\" model"\n---\n'
     out = translate_frontmatter(fm, "zh", EchoEng())
     assert yaml.safe_load(out.strip("-\n"))["summary"] == 'the $\\pi$0.5 "W4A4" model'
+
+
+def test_translate_body_keeps_chunk_separators():
+    from common.translation import translate_body
+
+    class Eng:
+        def generate_batch(self, prompts, max_new_tokens=0):
+            return ["译文" for _ in prompts]  # model output with no surrounding newlines
+
+    out = translate_body("# A\n\npara one\n\n# B\n\npara two\n", "zh", Eng(), target_chars=5)
+    assert "\n\n" in out and "译文译文" not in out
+
+
+def test_report_prompt_translates_headings_and_terms():
+    from common.translation import build_translation_prompt
+    normal = build_translation_prompt("## Heading", "zh")
+    report = build_translation_prompt("## Heading", "zh", report=True)
+    assert "保留英文，不要强行意译" in normal and "保留英文，不要强行意译" not in report
+    assert "所有标题和正文都必须翻译成中文" in report
+    assert build_translation_prompt("x", "en", report=True) == build_translation_prompt("x", "en")

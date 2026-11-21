@@ -224,6 +224,8 @@ python -m summarize daily merge --sync --date 2026-02-13 --deploy
 | Claude Code | `~/.claude/projects/` 下的 `.jsonl` | 是 |
 | Codex | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | 是 |
 | Cursor Agent | `~/.cursor/projects/*/agent-transcripts/<uuid>/<uuid>.jsonl`（parent only；无 token usage） | 是 |
+| Gemini CLI | `~/.gemini/tmp/<project>/chats/session-*.json(l)`（无 token usage） | 是 |
+| Antigravity | `~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript_full.jsonl`（跳过 subagent；无 token usage） | 是 |
 | ChatGPT | 导出的 `conversations.json` | 否，需 `--chatgpt` |
 | 通用格式 | `[{"role": "...", "content": "..."}]` | 否，需 `--generic` |
 

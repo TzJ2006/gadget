@@ -69,6 +69,7 @@ def _translate_with_retries(
     tgt: str,
     engine: TranslationEngine,
     pbar: Any | None,
+    report: bool = False,
 ) -> str:
     """Call ``translate_markdown_document``, retrying up to TRANSLATION_RETRIES."""
     attempts = max(1, TRANSLATION_RETRIES)
@@ -76,7 +77,7 @@ def _translate_with_retries(
     for attempt in range(1, attempts + 1):
         try:
             return translate_markdown_document(
-                content, src, tgt, engine=engine, pbar=pbar,
+                content, src, tgt, engine=engine, pbar=pbar, report=report,
             )
         except Exception as e:
             last = e
@@ -98,6 +99,7 @@ def write_bilingual(
     pbar: Any | None = None,
     force: bool = False,
     overwrite_human: bool = False,
+    report: bool = False,
 ) -> tuple[Optional[Path], Optional[Path]]:
     """Write a Hugo content file in both languages.
 
@@ -158,7 +160,7 @@ def write_bilingual(
 
             try:
                 en_content = _translate_with_retries(
-                    fixed_content, "zh", "en", eng, pbar,
+                    fixed_content, "zh", "en", eng, pbar, report,
                 )
             except Exception as e:
                 _record_translation_failure(relative_path, "zh", "en", e)
@@ -174,7 +176,7 @@ def write_bilingual(
 
             try:
                 zh_content = _translate_with_retries(
-                    fixed_content, "en", "zh", eng, pbar,
+                    fixed_content, "en", "zh", eng, pbar, report,
                 )
             except Exception as e:
                 _record_translation_failure(relative_path, "en", "zh", e)

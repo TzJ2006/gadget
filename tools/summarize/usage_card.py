@@ -8,7 +8,8 @@ Claude #d0724a, Codex #4a8db8, active #5a8878.
 from __future__ import annotations
 
 _SOURCE_DISPLAY = {"claude_code": "Claude Code", "codex": "Codex",
-                   "gemini": "Gemini", "copilot": "GitHub Copilot"}
+                   "gemini": "Gemini", "antigravity": "Antigravity",
+                   "copilot": "GitHub Copilot"}
 
 # claude_code / codex map to the two named tokens; extra sources cycle these.
 _SOURCE_COLORS = {"claude_code": "var(--usage-cost-main)",

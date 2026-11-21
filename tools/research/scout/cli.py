@@ -9,7 +9,6 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from common.json_utils import try_repair_result as _try_repair_result
 from common.hugo import run_hugo_update
 from common.site_staging import resolve_site_content_dir
 
@@ -51,6 +50,7 @@ from research.scout.search import (
     load_known_paper_ids,
 )
 from research.scout.evaluate import (
+    _try_repair_result,
     call_scout_llm,
     evaluate_papers_for_project,
     suggest_directions,

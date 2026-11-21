@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -312,6 +313,25 @@ def _match_review_tag(requested: str, tags: list[str]) -> str | None:
     return matches[0]
 
 
+_REVIEW_TAGS: dict[str, tuple[float, list[str] | None]] = {}
+
+
+def _review_tags(host: str) -> list[str] | None:
+    """``/api/tags`` probed once per host per process — every translated document
+    resolves the review tag, and an unreachable server costs ~2s per probe.
+    A failed probe is only remembered for 60s so a long-lived GUI notices Ollama
+    coming up. Tests that patch ``_ollama_tags`` call ``_review_tags.cache_clear()``."""
+    hit = _REVIEW_TAGS.get(host)
+    if hit and (hit[1] is not None or time.monotonic() - hit[0] < 60):
+        return hit[1]
+    tags = _ollama_tags(host)
+    _REVIEW_TAGS[host] = (time.monotonic(), tags)
+    return tags
+
+
+_review_tags.cache_clear = _REVIEW_TAGS.clear  # type: ignore[attr-defined]
+
+
 def resolve_review_tag() -> str | None:
     """Pulled Ollama tag for frontmatter review, or None to skip.
 
@@ -322,7 +342,7 @@ def resolve_review_tag() -> str | None:
         logger.info("Frontmatter review skipped: disabled by config/env")
         return None
     requested = resolve_review_model()
-    tags = _ollama_tags(_ollama_native_host())
+    tags = _review_tags(_ollama_native_host())
     if tags is None:
         logger.warning(
             "Frontmatter review skipped: Ollama not reachable (wanted %s)",

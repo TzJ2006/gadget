@@ -75,7 +75,7 @@ def _normalize_usage(raw: dict, source: str) -> dict:
     }
 
 
-def _refresh_usage_snapshots(logs_dir: Path) -> None:
+def _refresh_usage_snapshots(logs_dir: Path, upload: bool = True) -> None:
     """Discover sources with data, fetch each namespaced, save one file per source."""
     sources = discover_sources()
     print(f"[info] 发现 token 用量来源: {', '.join(sources) if sources else '(无)'}")
@@ -86,7 +86,60 @@ def _refresh_usage_snapshots(logs_dir: Path) -> None:
         label = _source_label(source)
         path = save_usage_file(data, label, logs_dir)
         print(f"[ok] usage 快照已更新: {path}")
-        _rclone_upload(path, subdirectory="logs")
+        if upload:
+            _rclone_upload(path, subdirectory="logs")
+    data = antigravity_usage()
+    if data:
+        path = save_usage_file(data, "antigravity", logs_dir)
+        print(f"[ok] usage 快照已更新: {path}")
+        if upload:
+            _rclone_upload(path, subdirectory="logs")
+
+
+_ANTIGRAVITY_MODEL_RE = re.compile(r"`Model Selection` from .*? to (.+?)\. No need")
+
+
+def antigravity_usage() -> Optional[dict]:
+    """ccusage has no Antigravity namespace; sum the step logs' own token counts per local day.
+
+    ponytail: cost stays 0 (the logs carry no price) and conversations that only
+    exist in the search index have no token counts at all.
+    """
+    from .discovery import antigravity_brain_dirs, home_dirs
+    from .records import _jsonl, _local_day
+
+    fields = (("inputTokens", "input_tokens"), ("outputTokens", "output_tokens"),
+              ("cacheReadTokens", "cache_read_tokens"))
+    days: dict = {}
+    for brain in antigravity_brain_dirs(home_dirs()):
+        # Subagent logs are included here: their tokens were spent too.
+        for file in brain.glob("*/.system_generated/logs/transcript_full.jsonl"):
+            try:
+                steps = _jsonl(file)
+            except ValueError:
+                continue
+            model = "antigravity"  # until the log names the selected model
+            for obj in steps:
+                if obj.get("type") == "USER_INPUT":
+                    found = _ANTIGRAVITY_MODEL_RE.search(str(obj.get("content") or ""))
+                    model = found.group(1) if found else model
+                day = _local_day(str(obj.get("created_at") or ""))
+                if day is None or "input_tokens" not in obj:
+                    continue
+                agg = days.setdefault(day.isoformat(), {}).setdefault(
+                    model, {"modelName": model, "cacheCreationTokens": 0, "cost": 0})
+                for key, raw in fields:
+                    agg[key] = agg.get(key, 0) + int(obj.get(raw) or 0)
+    if not days:
+        return None
+    daily = []
+    for day in sorted(days):
+        models = list(days[day].values())
+        entry = {key: sum(m.get(key, 0) for m in models) for key, _ in fields}
+        entry.update(cacheCreationTokens=0, totalCost=0, date=day, modelBreakdowns=models,
+                     totalTokens=sum(entry.values()))
+        daily.append(entry)
+    return _merge_usage_history({}, {"daily": daily, "_source": "antigravity"})
 
 
 # Module flag: prefer `npx --yes ccusage@latest` when no usable >=20 global exists.

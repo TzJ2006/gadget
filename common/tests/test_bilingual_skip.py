@@ -42,7 +42,7 @@ def _isolate_failure_log(tmp_path, monkeypatch):
 
 
 def _fake_translate(calls, result="---\ntitle: t\n---\n\n翻译正文。\n"):
-    def fake(content, src, tgt, engine=None, pbar=None):
+    def fake(content, src, tgt, engine=None, pbar=None, **_):
         calls.append((src, tgt))
         return result
     return fake
@@ -54,7 +54,7 @@ def _fail_until(calls, succeed_after, result="---\ntitle: t\n---\n\n翻译正文
     *succeed_after* is inclusive of that call index (1-based). Pass a number
     larger than any expected call count to fail forever.
     """
-    def fake(content, src, tgt, engine=None, pbar=None):
+    def fake(content, src, tgt, engine=None, pbar=None, **_):
         calls.append((src, tgt))
         if len(calls) < succeed_after:
             raise ValueError("garbage output")
@@ -119,7 +119,7 @@ def test_content_flipflop_around_failure_never_serves_stale_original(tmp_path, m
     calls: list = []
     n = bilingual.TRANSLATION_RETRIES
 
-    def translate(content, src, tgt, engine=None, pbar=None):
+    def translate(content, src, tgt, engine=None, pbar=None, **_):
         calls.append(1)
         # call 1: A ok; calls 2..1+n: B fails all retries; call 2+n: A again
         if 1 < len(calls) <= 1 + n:

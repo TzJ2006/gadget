@@ -15,6 +15,15 @@ from common import translation
 from translator import core
 
 
+@pytest.fixture(autouse=True)
+def _no_ollama_probe(monkeypatch):
+    """model_access probes /api/ps with a plain-URL urlopen the fakes below don't model."""
+    monkeypatch.setattr(
+        "model_access.resources.probe_ollama",
+        lambda *a, **k: {"state": "known", "models": [], "note": ""},
+    )
+
+
 class FakeEngine:
     """Stand-in TranslationEngine; records calls, never loads a model."""
 

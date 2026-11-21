@@ -78,6 +78,9 @@ class OpenReviewClient:
 
         self._client = None
         self._cache = cache
+        # In-run memo of venue submission lists (incl. empty/failed fetches),
+        # so one client fetches each venue once instead of once per paper.
+        self._venue_memo: dict[str, list[dict[str, Any]]] = {}
         self._init_client()
 
     def _init_client(self) -> None:
@@ -170,6 +173,16 @@ class OpenReviewClient:
         self, venue_id: str, cache_key: str
     ) -> list[dict[str, Any]]:
         """Get all submissions for a venue, with caching."""
+        if venue_id in self._venue_memo:
+            return self._venue_memo[venue_id]
+        submissions = self._fetch_venue_submissions(venue_id, cache_key)
+        self._venue_memo[venue_id] = submissions
+        return submissions
+
+    def _fetch_venue_submissions(
+        self, venue_id: str, cache_key: str
+    ) -> list[dict[str, Any]]:
+        """Fetch a venue's submissions from the disk cache or the API."""
         # Check cache (7-day TTL)
         if self._cache:
             cached = self._cache.get("api/openreview", cache_key, ttl_seconds=7 * 86400)
@@ -221,7 +234,13 @@ class OpenReviewClient:
 
         for sub in submissions:
             candidate = _normalize_title(sub.get("title", ""))
-            ratio = difflib.SequenceMatcher(None, normalized_query, candidate).ratio()
+            matcher = difflib.SequenceMatcher(None, normalized_query, candidate)
+            # ratio() <= quick_ratio() <= real_quick_ratio(): skip candidates
+            # that can neither beat the current best nor reach the 0.85 bar.
+            lim = max(best_ratio, 0.85)
+            if matcher.real_quick_ratio() < lim or matcher.quick_ratio() < lim:
+                continue
+            ratio = matcher.ratio()
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_match = sub

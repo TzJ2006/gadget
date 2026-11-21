@@ -32,6 +32,7 @@ def _stub_steps(monkeypatch, preflight_rc: int) -> list[str]:
     monkeypatch.setattr(pub, "run_preflight", lambda: preflight_rc)
     monkeypatch.setattr(pub, "clean_public", lambda: called.append("clean"))
     monkeypatch.setattr(pub, "run_hugo", lambda: called.append("hugo"))
+    monkeypatch.setattr(pub, "protect_reports", lambda: called.append("protect") or 0)
     monkeypatch.setattr(pub, "commit_and_push", lambda: called.append("push"))
     monkeypatch.setattr(pub, "TIMESTAMP_FILE", Stamp())
     return called
@@ -58,5 +59,16 @@ def test_main_continues_on_preflight_exit_2(monkeypatch):
     called = _stub_steps(monkeypatch, preflight_rc=2)
     assert pub.main() == 0
     assert called == [
-        "translate", "rewrite", "img", "vid", "clean", "hugo", "push", "stamp",
+        "translate", "rewrite", "img", "vid", "clean", "hugo", "protect", "push", "stamp",
     ]
+
+
+def test_main_does_not_push_when_reports_cannot_be_protected(monkeypatch):
+    called = _stub_steps(monkeypatch, preflight_rc=0)
+
+    def refuse():
+        raise RuntimeError("no password")
+
+    monkeypatch.setattr(pub, "protect_reports", refuse)
+    assert pub.main() == 1
+    assert "push" not in called

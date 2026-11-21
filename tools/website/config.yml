@@ -107,6 +107,7 @@ params:
   ShowCodeCopyButtons: true
   ShowBreadCrumbs: true
   ShowReadingTime: true
+  ShowPostNavLinks: true  # prev/next within the page's own section (layouts/_partials/post_nav_links.html)
   ShowBusuanzi: true
   # Per-page/section via cascade or front matter `math: true` (see cascade above).
   # Keep false site-wide so bugJournal `$1.23` cost strings are not treated as math.

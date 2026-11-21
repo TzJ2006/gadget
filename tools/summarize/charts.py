@@ -83,7 +83,8 @@ _PALETTES = [
 ]
 
 _SOURCE_DISPLAY = {"claude_code": "Claude Code", "codex": "Codex",
-                   "gemini": "Gemini", "copilot": "GitHub Copilot"}
+                   "gemini": "Gemini", "antigravity": "Antigravity",
+                   "copilot": "GitHub Copilot"}
 
 _TYPE_COLORS = {
     "Input": "#6366f1", "Output": "#06b6d4", "Cache Creation": "#8b5cf6",

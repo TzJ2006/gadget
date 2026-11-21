@@ -11,7 +11,6 @@ from datetime import date
 from pathlib import Path
 
 from common.io import atomic_write
-from common.json_utils import try_repair_result as _try_repair_result
 
 from research.scout.config import PROJECTS_DIR, get_logger
 
@@ -168,7 +167,7 @@ def create_project_from_overview(project_id: str, overview_path: str,
                                  timeout: int = 600) -> Path:
     """Create project from existing overview.md (LLM extracts title/keywords/questions)."""
     # Lazy import to avoid circular dependency
-    from research.scout.evaluate import call_scout_llm
+    from research.scout.evaluate import _try_repair_result, call_scout_llm
     from research.scout.prompts import OVERVIEW_EXTRACT_PROMPT
 
     overview_file = Path(overview_path)

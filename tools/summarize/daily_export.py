@@ -3,6 +3,7 @@
 import getpass
 import json
 import platform
+import re
 import sys
 from datetime import date
 
@@ -163,6 +164,18 @@ def cmd_export(args):
     return True
 
 
+_FINALIZED_TAIL_RE = re.compile(rb'"_finalized":\s*(true|false)\s*}\s*$')
+
+
+def _tail_finalized(log_file):
+    """Read the trailing _finalized flag cmd_export writes last; None when the tail is inconclusive."""
+    with open(log_file, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - 200))
+        match = _FINALIZED_TAIL_RE.search(f.read())
+    return None if match is None else match.group(1) == b"true"
+
+
 def cmd_export_past(args):
     """导出所有过去未导出的日期的对话 log。"""
     device_name = _get_device_name()
@@ -186,6 +199,10 @@ def cmd_export_past(args):
         try:
             d = date.fromisoformat(date_part)
             try:
+                finalized = _tail_finalized(log_file)
+                if finalized is not None:
+                    exported_dates[d] = finalized
+                    continue
                 with open(log_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 exported_dates[d] = data.get("_finalized", False)

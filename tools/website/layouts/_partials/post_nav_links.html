@@ -1,0 +1,21 @@
+{{- /* Prev/next within the page's own section (posts, bugJournal/daily, ...), not just mainSections. Top-level pages get none. */ -}}
+{{- if .Section }}
+{{- $older := .PrevInSection }}
+{{- $newer := .NextInSection }}
+{{- if or $older $newer }}
+<nav class="paginav">
+  {{- with $newer }}
+  <a class="prev" href="{{ .Permalink }}">
+    <span class="title">« {{ i18n "prev_page" }}</span>
+    <span>{{ .Title }}</span>
+  </a>
+  {{- end }}
+  {{- with $older }}
+  <a class="next" href="{{ .Permalink }}">
+    <span class="title">{{ i18n "next_page" }} »</span>
+    <span>{{ .Title }}</span>
+  </a>
+  {{- end }}
+</nav>
+{{- end }}
+{{- end }}

@@ -1,6 +1,6 @@
 # tools/summarize — AI Conversation Reports
 
-Generates daily/weekly/monthly summaries of AI conversation logs (Claude Code / Codex / Cursor Agent / ChatGPT / generic JSON) via LLM, with token-usage stats from ccusage. Two-phase daily pipeline (per-device `export` → aggregate `merge`), weekly/monthly aggregation, and one-click `auto` orchestration (`auto.py` drives the subcommands via subprocess). Unified CLI is `python -m summarize`; legacy `daily_summary.py` / `weekly_summary.py` / `monthly_summary.py` entry points still work as re-export shims.
+Generates daily/weekly/monthly summaries of AI conversation logs (Claude Code / Codex / Cursor Agent / Gemini CLI / Antigravity / ChatGPT / generic JSON) via LLM, with token-usage stats from ccusage. Two-phase daily pipeline (per-device `export` → aggregate `merge`), weekly/monthly aggregation, and one-click `auto` orchestration (`auto.py` drives the subcommands via subprocess). Unified CLI is `python -m summarize`; legacy `daily_summary.py` / `weekly_summary.py` / `monthly_summary.py` entry points still work as re-export shims.
 
 ## Commands
 

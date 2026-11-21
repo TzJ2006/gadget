@@ -1,0 +1,77 @@
+"""Scan shortcuts must not change results: mtime pruning, day index, tail flag, merge args."""
+
+import json
+import os
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from unittest import mock
+
+from summarize import records
+from summarize.daily_export import _tail_finalized
+from summarize.daily_merge import _merge_single_date
+from summarize.parsers import discover_all_dates
+
+
+def _claude_file(path: Path, stamp: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = {"type": "user", "timestamp": stamp, "uuid": path.stem,
+            "message": {"role": "user", "content": "hi"}}
+    path.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    return path
+
+
+def test_load_records_skips_files_last_written_before_start_day(tmp_path):
+    day = date(2026, 3, 10)
+    stamp = datetime(2026, 3, 10, 12).astimezone().isoformat()
+    old = _claude_file(tmp_path / "p" / "old.jsonl", stamp)
+    _claude_file(tmp_path / "p" / "new.jsonl", stamp)
+    before = datetime(2026, 3, 9, 23).timestamp()
+    os.utime(old, (before, before))
+    rows, _ = records.load_records("claude_code", tmp_path, on_date=day)
+    assert {r["conversation_id"] for r in rows} == {"new"}
+    rows, _ = records.load_records("claude_code", old, on_date=day)  # explicit file is never pruned
+    assert {r["conversation_id"] for r in rows} == {"old"}
+
+
+def test_codex_project_only_read_for_matching_files(tmp_path):
+    entry = {"type": "event_msg", "timestamp": datetime(2026, 3, 10, 12).astimezone().isoformat(),
+             "payload": {"type": "user_message", "message": "hi"}}
+    (tmp_path / "rollout-a.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
+    with mock.patch.object(records, "_extract_codex_project", return_value="proj") as extract:
+        rows, _ = records.load_records("codex", tmp_path, on_date=date(2026, 3, 11))
+    assert rows == [] and extract.call_count == 0
+
+
+def test_discover_all_dates_reuses_day_index_until_file_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr("summarize.parsers._DAY_INDEX_PATH", tmp_path / "day_index.json")
+    stamp = datetime(2026, 3, 10, 12).astimezone().isoformat()
+    log = _claude_file(tmp_path / ".claude" / "projects" / "p" / "s.jsonl", stamp)
+    assert discover_all_dates() == {date(2026, 3, 10)}
+    with mock.patch.object(records, "load_records", side_effect=AssertionError("reparsed")):
+        assert discover_all_dates() == {date(2026, 3, 10)}
+    later = datetime(2026, 3, 12, 12).astimezone().isoformat()
+    _claude_file(log, later)
+    os.utime(log, ns=(log.stat().st_mtime_ns + 10**9,) * 2)
+    assert discover_all_dates() == {date(2026, 3, 12)}
+
+
+def test_tail_finalized_reads_trailing_flag(tmp_path):
+    path = tmp_path / "log.json"
+    for data, expected in [({"a": 1, "_finalized": True}, True),
+                           ({"a": 1, "_finalized": False}, False),
+                           ({"a": 1}, None),
+                           ({"a": {"_finalized": True}}, None)]:
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        assert _tail_finalized(path) is expected
+
+
+def test_merge_single_date_passes_synced_files_instead_of_resyncing(tmp_path):
+    files = [tmp_path / "2026-03-10_a.json", tmp_path / "2026-03-10.json", tmp_path / "2026-03-10_b.json"]
+    for p in files:
+        p.write_text("{}", encoding="utf-8")
+    with mock.patch("summarize.daily_merge.subprocess.run",
+                    return_value=mock.Mock(returncode=0)) as run:
+        _merge_single_date("2026-03-10", ["py", "merge"], {"2026-03-10": files}, 10, tmp_path)
+    assert run.call_args.args[0] == ["py", "merge", "--date", "2026-03-10",
+                                     str(files[0]), str(files[2])]
