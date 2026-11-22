@@ -210,3 +210,11 @@ def test_localize_pins_model_worded_labels_by_position():
     zh = "## 问题解决线程\n\n#### 1. 缺陷\n**停止原因：** x\n"
     out = localize_report_labels_zh(zh, en=en)
     assert out == "## 解决问题的脉络\n\n#### 1. 缺陷\n**为什么没有继续：** x\n"
+
+
+def test_by_project_merges_separator_variants_and_none():
+    from summarize.period_report import _by_project
+    groups = _by_project([{"project": "Error-Recovery Benchmark"}, {"project": "error recovery benchmark"},
+                          {"project": "(none)"}, {"project": ""}, {"project": "MIHD"}])
+    assert list(groups) == ["Error-Recovery Benchmark", "Other", "MIHD"]
+    assert len(groups["Error-Recovery Benchmark"]) == 2 and len(groups["Other"]) == 2

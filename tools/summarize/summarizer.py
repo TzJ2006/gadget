@@ -80,7 +80,7 @@ __PROBLEMS__
     ],
     "conversation_summaries": [
         {
-            "project": "Human-readable project name (e.g. CalendarPro, not path format)",
+            "project": "Exactly the Project label from the session header (e.g. CEI-robot-arms)",
             "source": "claude_code | codex | cursor | gemini | antigravity | chatgpt | generic",
             "topic": "Project headline for the day (60 characters or fewer)",
             "summary": "One sentence covering all of this project's work today",
@@ -108,7 +108,7 @@ Requirements:
 4. Task status must accurately reflect actual completion state
 5. Return only JSON, do not add any other text
 6. Use English
-7. conversation_summaries has exactly one entry per project; use human-readable project names rather than path format, and treat case/plural/path variants (e.g. Gadget, gadget, Gadgets) as the same project. Inside each project, list every distinct piece of work as one workstream; sessions doing the same work share one workstream and its sessions count is how many sessions did it. Never drop a workstream. outcome should reflect actual completion state
+7. conversation_summaries has exactly one entry per project. The project name is the Project label in the session header, copied verbatim, in every section (conversation_summaries, problem threads, cross-project and unresolved problems): never rename, translate, prettify, or split it into sub-projects. Only when the label is (none) pick a short name from the content, reusing an existing label when it is the same work. Inside each project, list every distinct piece of work as one workstream; sessions doing the same work share one workstream and its sessions count is how many sessions did it. Never drop a workstream. outcome should reflect actual completion state
 8. Assign level and importance to each entry:
    - level: "high" = strategic thinking, architectural decisions, new methodologies, important discoveries; "low" = implementation details, bug fixes, routine work, environment setup
    - importance: integer from 1-10, where 10 is most important. Criteria: impact on project progress, technical depth, whether it changes direction
@@ -184,6 +184,33 @@ Requirements:
 """
 
 
+# Folders after which the project folder starts. The raw project is the cwd with
+# "/" -> "-" (Claude Code) or a bare folder name (Codex), so dashes inside names
+# survive and the label is "everything after the last anchor".
+# ponytail: anchor list + subfolder suffixes; add a row when a new layout shows up.
+_ANCHOR_RE = re.compile(
+    r"(?:^|-)(?:(?:Users|home|HOME)-[^-]+|GitHub|Github|github|Documents|Desktop|Downloads|"
+    r"algorithms|Apps|Temp|AppData-Local|zt81|tangzijia|gbli2xy-1)(?=-|$)")
+_SUBDIR_RE = re.compile(r"-(?:src-tauri|target-release|target|website|research|skills|docs|scripts)$")
+_NO_PROJECT_RE = re.compile(r"^-*$|^ssh-[0-9a-f-]{36}$|scratch|empty-window|^[A-Za-z]--?Windows")
+
+
+def project_label(raw) -> str:
+    """Stable project name from a session's raw project path.
+
+    The model used to invent a "human-readable" name per chunk, so one project
+    split into several (RobotArms / CEI Robot Arms / CEI Robot Arms (Pointing)).
+    """
+    raw = str(raw or "")
+    if _NO_PROJECT_RE.search(raw):
+        return "(none)"
+    ends = [m.end() for m in _ANCHOR_RE.finditer(raw)]
+    name = raw[ends[-1]:].lstrip("-") if ends else raw.lstrip("-")
+    while (stripped := _SUBDIR_RE.sub("", name)) != name:
+        name = stripped
+    return name if len(name) > 1 and not any(ch in name for ch in ":\\") else "(none)"
+
+
 def _format_conversation(conv: dict) -> str:
     """将单个对话格式化为文本。"""
     device_info = ""
@@ -191,7 +218,7 @@ def _format_conversation(conv: dict) -> str:
         d = conv["device"]
         device_label = d.get("device_name") or d.get("hostname", "unknown")
         device_info = f" | Device: {device_label}"
-    header = f"\n{'='*60}\nSource: {conv['source']} | Project: {conv.get('project', 'N/A')} | Time: {conv['timestamp']}{device_info}\n{'='*60}\n"
+    header = f"\n{'='*60}\nSource: {conv['source']} | Project: {project_label(conv.get('project'))} | Time: {conv['timestamp']}{device_info}\n{'='*60}\n"
     parts = [header]
     for msg in conv["messages"]:
         role_label = "👤 User" if msg["role"] == "user" else "🤖 Assistant"

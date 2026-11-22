@@ -142,7 +142,8 @@ _PROBLEM_RULES = (
     "(generalized across the occurrences), and the reusable lesson. Use an empty array if nothing recurred.\n"
     "unresolved_problems: every problem worked on but not solved. For each: what it is, how far it got, why work "
     "did not continue, and how to pick it up quickly (files, commands, first next step). Only state reasons and "
-    "next steps the logs support; use an empty array if everything was resolved."
+    "next steps the logs support; if the logs give no reason it stopped, write \"No reason recorded\" — never "
+    "\"In progress\" or a restatement of progress. Use an empty array if everything was resolved."
 )
 
 
@@ -157,10 +158,15 @@ def problem_rules(thread_key: str) -> str:
 
 
 def _by_project(items: list) -> dict:
+    """Group by project; names differing only by case/separators merge under the first spelling."""
     groups: dict = {}
+    names: dict = {}
     for it in items or []:
         if isinstance(it, dict):
-            groups.setdefault(it.get("project") or "Other", []).append(it)
+            name = it.get("project") or ""
+            name = "Other" if name in ("", "(none)") else name
+            name = names.setdefault(re.sub(r"[^0-9a-z]", "", name.lower()) or name, name)
+            groups.setdefault(name, []).append(it)
     for g in groups.values():
         g.sort(key=lambda x: -int(x.get("importance") or 0))
     return groups

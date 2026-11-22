@@ -182,7 +182,7 @@ for one week (JSON format). Please analyze this week's work progress and problem
 Requirements:
 __NEGATIVE__
 1. Aggregate progress from a weekly perspective; do not list day by day
-2. project_progress: exactly one entry per project (treat case/plural/path variants as the same project), sorted by days_active descending. Inside each project, merge the daily conversation_summaries workstreams that describe the same work across days into one workstream (list its dates, sum its sessions) and keep every distinct workstream with a 1-2 sentence summary. Never drop a project or a workstream
+2. project_progress: exactly one entry per project. Use the project names from the input reports verbatim, in every section; names that differ only by case, separators or plural (ErrorRecoveryBenchmark / error-recovery-benchmark / error_recovery_benchmark) are one project — use its most frequent spelling. Never invent, prettify or split names, sorted by days_active descending. Inside each project, merge the daily conversation_summaries workstreams that describe the same work across days into one workstream (list its dates, sum its sessions) and keep every distinct workstream with a 1-2 sentence summary. Never drop a project or a workstream
 3. __PROBLEM_RULES__
 4. key_tasks: include every task with importance >= 5; do not cap the number of items
 5. learnings should be deduplicated, merged, and grouped by category

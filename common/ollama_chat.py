@@ -14,6 +14,10 @@ class LLMTimeout(LLMError):
     pass
 
 
+class LLMOutputTruncated(LLMError):
+    """The answer hit max_tokens: the output, not the input, was too long."""
+
+
 class LLMRefused(LLMError):
     """The configured lease API is missing or denied the call. Nothing was sent."""
 
@@ -104,7 +108,8 @@ def complete(endpoint, model, messages, timeout, *, schema=None, max_tokens=None
             return LLMResult(content, uuid.uuid4().hex, model,
                              {'attempts': attempts, 'direct_answer_recovery': not thinking})
         if not thinking:
-            raise LLMError("Gemma 在生成预算内仍未返回完整正文（停止原因："
+            raise (LLMOutputTruncated if body.get('done_reason') == 'length' else LLMError)(
+                "Gemma 在生成预算内仍未返回完整正文（停止原因："
                            + str(body.get('done_reason'))[:30] + "）；请缩小问题范围")
     raise LLMTimeout("本地模型未能在预算内完成")
 

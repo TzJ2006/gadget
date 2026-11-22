@@ -582,6 +582,11 @@ def timed_llm_call(api: str, config: LLMCallConfig,
                 elapsed, config.timeout)
 
     result = try_repair_result(result, api, config.timeout)
+    if result.get("parse_error"):
+        # Repair sees only the first 5K chars and can time out; a fresh sample
+        # of the same chunk is the reliable fix.
+        logger.warning("Chunk %d/%d JSON still broken after repair, regenerating once", chunk_idx, total)
+        result = try_repair_result(call_llm(api, config), api, config.timeout)
     return result
 
 
@@ -637,7 +642,8 @@ def hierarchical_merge(api: str, summaries: list[dict],
                        merge_prompt: str,
                        make_config: Callable[[str], LLMCallConfig],
                        timeout: int = 600, *, max_chars: int = 150000, _depth: int = 0,
-                       cache_dir: Optional[Path] = None, cache_context: str = "") -> dict:
+                       cache_dir: Optional[Path] = None, cache_context: str = "",
+                       _output_split: bool = False) -> dict:
     """Recursively merge chunk summaries until everything fits in one call.
 
     Args:
@@ -649,6 +655,7 @@ def hierarchical_merge(api: str, summaries: list[dict],
         cache_dir: Optional intermediate results, reused after a timeout.
         cache_context: Source/implementation identity supplied by the caller.
     """
+    from common.ollama_chat import LLMOutputTruncated  # lazy: ollama_chat → engine → llm cycle
     if _depth >= 16:
         raise ValueError("Summary merge did not converge")
     valid = [s for s in summaries
@@ -678,6 +685,17 @@ def hierarchical_merge(api: str, summaries: list[dict],
         t0 = time.monotonic()
         try:
             result = call_llm(api, config)
+        except LLMOutputTruncated:
+            # Input fit but the merged answer overflowed max_tokens: add a round —
+            # compact halves into notes, then merge the notes. Once only; a second
+            # overflow on compact notes means the report itself is too long.
+            if _output_split or len(summaries) < 2:
+                raise
+            logger.warning("Merge output overflowed max_tokens; adding a compacting round")
+            return hierarchical_merge(api, summaries, merge_prompt, make_config, timeout,
+                                      max_chars=len(combined) // 2 + 1, _depth=_depth + 1,
+                                      cache_dir=cache_dir, cache_context=cache_context,
+                                      _output_split=True)
         except (subprocess.TimeoutExpired, Exception) as e:
             elapsed = time.monotonic() - t0
             if elapsed >= merge_timeout * 0.9:
@@ -742,4 +760,5 @@ def hierarchical_merge(api: str, summaries: list[dict],
     # fresh final answer without repeating all the completed lower levels.
     return hierarchical_merge(api, merged_results, merge_prompt, make_config, timeout,
                               max_chars=max_chars, _depth=_depth + 1,
-                              cache_dir=cache_dir, cache_context=cache_context)
+                              cache_dir=cache_dir, cache_context=cache_context,
+                              _output_split=_output_split)

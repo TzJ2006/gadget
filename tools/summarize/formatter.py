@@ -70,8 +70,8 @@ def _sort_report_by_importance(report: dict) -> dict:
     if conv_summaries:
         grouped = {}
         for cs in conv_summaries:
-            proj = cs.get("project", "Unknown Project")
-            grouped.setdefault(proj, []).append(cs)
+            proj = cs.get("project") or "Other"
+            grouped.setdefault("Other" if proj == "(none)" else proj, []).append(cs)
         sorted_summaries = []
         for proj, items in grouped.items():
             sorted_summaries.extend(sorted(items, key=_importance_sort_key))
@@ -260,8 +260,8 @@ def generate_markdown(report: dict, target_date: date,
         # 按 project 分组（保持顺序）
         grouped = {}
         for cs in conv_summaries:
-            proj = cs.get("project", "Unknown Project")
-            grouped.setdefault(proj, []).append(cs)
+            proj = cs.get("project") or "Other"
+            grouped.setdefault("Other" if proj == "(none)" else proj, []).append(cs)
 
         multi_project = len(grouped) > 1
         for proj, items in grouped.items():
