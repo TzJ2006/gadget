@@ -286,6 +286,25 @@ def is_probe(conv: dict) -> bool:
     return len(users) <= 1 and sum(len(str(m.get("content", ""))) for m in msgs) < 80
 
 
+def dedupe_conversations(conversations: list[dict]) -> list[dict]:
+    """Drop repeated sessions, keeping the first copy.
+
+    A session can be collected more than once (2026-11-07 had one 5x), which
+    doubles the input and overflows the final merge. Sessions without a
+    timestamp are always kept — the key can't tell them apart.
+    """
+    seen, kept = set(), []
+    for c in conversations:
+        key = (c.get("source"), c.get("project"), c.get("timestamp"), len(c.get("messages") or []))
+        if c.get("timestamp") and key in seen:
+            continue
+        seen.add(key)
+        kept.append(c)
+    if len(kept) < len(conversations):
+        print(f"[info] 去除 {len(conversations) - len(kept)} 个重复会话")
+    return kept
+
+
 def drop_probes(conversations: list[dict]) -> list[dict]:
     kept = [c for c in conversations if not is_probe(c)]
     if len(kept) < len(conversations):

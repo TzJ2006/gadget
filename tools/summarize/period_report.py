@@ -660,6 +660,8 @@ def add_generate_arguments(parser, *, timeout_default: int) -> None:
                         help="Reports directory (default: outputs/reports/summarize/)")
     parser.add_argument("--deploy", action="store_true",
                         help="Also deploy to Hugo site")
+    parser.add_argument("--no-deploy", dest="deploy", action="store_false",
+                        help="Do not deploy (overrides deploy=true in config)")
     parser.add_argument("--hugo-site", type=str, default=str(resolve_hugo_site()),
                         help="Hugo site root directory")
     parser.add_argument("--timeout", type=int, default=timeout_default,

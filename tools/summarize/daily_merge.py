@@ -22,7 +22,7 @@ from .config import _resolve_output_dir, resolve_hugo_site
 from .daily_helpers import _parse_date, _DEFAULT_LOGS_DIR, _DEFAULT_REPORTS_DIR, _DEFAULT_CACHE_DIR
 from .formatter import generate_markdown, _sort_report_by_importance, save_report, generate_hugo_post
 from .remote import _rclone_download_logs, _rclone_download_reports, _rclone_upload
-from .parsers import drop_probes
+from .parsers import dedupe_conversations, drop_probes
 from .summarizer import (MERGE_PROMPT_PREFIX, MERGE_DEVICE_SUMMARY_PREFIX,
                          _call_summarize, _build_summary_prompt, _get_device_label)
 from .usage import load_ccusage_for_date, _merge_token_usages
@@ -121,6 +121,9 @@ def _cmd_merge_sync_all(args):
         print("[info] 所有日期均已 finalized，无需处理（使用 --force 强制重新生成）")
         return
 
+    if getattr(args, "newest_first", False):
+        dates_to_process.reverse()
+
     workers = max(1, int(getattr(args, "workers", 1) or 1))
     workers = min(workers, len(dates_to_process))
     print(f"[info] 需处理 {len(dates_to_process)} 天: {', '.join(dates_to_process)}")
@@ -133,8 +136,10 @@ def _cmd_merge_sync_all(args):
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # 构建子进程参数
+    # Children never deploy: config deploy=true would otherwise run a full site
+    # update per day; the batch deploy below runs once after every day is done.
     base_cmd = [sys.executable, "-m", "summarize.cli",
-                "merge", "--timeout", str(chunk_timeout)]
+                "merge", "--no-deploy", "--timeout", str(chunk_timeout)]
     if args.api:
         base_cmd += ["--api", args.api]
     if args.output:
@@ -320,6 +325,7 @@ def cmd_merge(args):
                 "usage": tu,
             })
 
+    all_conversations = dedupe_conversations(all_conversations)
     if not all_conversations:
         print("[warn] 没有找到任何对话记录")
         sys.exit(0)

@@ -70,6 +70,11 @@ def _quote_field(quote: str, value: str) -> str:
     the invalid YAML escape `"\\p"`."""
     if quote == '"':
         return json.dumps(value, ensure_ascii=False)
+    # An unquoted source value can gain ": " or " #" in translation, which breaks
+    # the whole page's YAML (Hugo refuses to build) — quote it then.
+    if not quote and (": " in value or " #" in value or value.endswith(":")
+                      or value[:1] in "&*!|>'\"%@`{[]}?,#-"):
+        return json.dumps(value, ensure_ascii=False)
     return f"{quote}{value}{quote}"
 
 

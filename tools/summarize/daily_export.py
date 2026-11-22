@@ -12,7 +12,7 @@ from common.llm import ChunkTimeoutError
 
 from .config import _resolve_output_dir, _get_device_name
 from .daily_helpers import _parse_date, _DEFAULT_LOGS_DIR
-from .parsers import discover_all_dates, collect_conversations
+from .parsers import discover_all_dates, collect_conversations, dedupe_conversations
 from .remote import _rclone_upload, _rclone_upload_dir
 from .summarizer import _call_summarize
 from .formatter import _sort_report_by_importance
@@ -29,7 +29,8 @@ def cmd_export(args):
                                    "logs_dir", _DEFAULT_LOGS_DIR)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    conversations = collect_conversations(target_date, args.chatgpt, args.generic)
+    conversations = dedupe_conversations(
+        collect_conversations(target_date, args.chatgpt, args.generic))
 
     if not conversations:
         print(f"[warn] {target_date.isoformat()} 没有找到任何对话记录")
@@ -122,16 +123,8 @@ def cmd_export(args):
     # 若已有同名 log 文件，合并对话（按 source+project+timestamp 去重）
     if existing_data is not None:
         old_convs = existing_data.get("conversations", [])
-        seen = {(c.get("source"), c.get("project"), c.get("timestamp"))
-                for c in conversations}
-        merged = list(conversations)
-        added = 0
-        for c in old_convs:
-            key = (c.get("source"), c.get("project"), c.get("timestamp"))
-            if key not in seen:
-                merged.append(c)
-                seen.add(key)
-                added += 1
+        merged = dedupe_conversations(list(conversations) + old_convs)
+        added = len(merged) - len(conversations)
         export_data["conversations"] = merged
         print(f"[info] 检测到已有 log，合并: 新 {len(conversations)} + 旧增量 {added} = {len(merged)} 个会话")
 

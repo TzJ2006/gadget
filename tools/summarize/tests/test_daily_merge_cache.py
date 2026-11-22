@@ -91,3 +91,28 @@ def test_default_merge_still_writes_summary_cache(tmp_path, monkeypatch):
     assert calls
     cached = json.loads((cache_dir / f"{DATE}.json").read_text(encoding="utf-8"))
     assert cached["summary"] == "fresh-from-llm"
+
+
+def test_merge_drops_verbatim_duplicate_sessions(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    seen = []
+    monkeypatch.setattr("summarize.daily_merge._call_summarize",
+                        lambda api, convs, *a, **k: seen.append(len(convs)) or {"summary": "x", "tasks": []})
+    msg = [{"role": "user", "content": "please refactor the research module"}, {"role": "assistant", "content": "done: moved scout code into its own package and added unit tests for the new layout"}]
+    conv = {"source": "claude_code", "project": "p", "timestamp": "2020-01-02T01:00:00Z", "messages": msg}
+    other = dict(conv, timestamp="2020-01-02T02:00:00Z")
+    log = tmp_path / "log.json"
+    log.write_text(json.dumps({"date": DATE, "device": {"device_name": "pa31"}, "_finalized": True,
+                               "conversations": [conv, conv, other, conv]}), encoding="utf-8")
+
+    cmd_merge(_args(log, tmp_path / "reports", no_cache=True))
+
+    assert seen == [2]
+
+
+def test_dedupe_conversations_keeps_first_and_untimestamped():
+    from summarize.parsers import dedupe_conversations
+    a = {"source": "s", "project": "p", "timestamp": "t1", "messages": [1]}
+    b = {"source": "s", "project": "p", "timestamp": "t2", "messages": [1]}
+    no_ts = {"source": "s", "project": "p", "messages": [1]}
+    assert dedupe_conversations([a, dict(a), b, no_ts, dict(no_ts)]) == [a, b, no_ts, no_ts]

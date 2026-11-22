@@ -71,6 +71,10 @@ def build_parser():
                           help="输出目录 (默认 outputs/reports/summarize/)")
     sp_merge.add_argument("--deploy", action="store_true",
                           help="同时部署到 Hugo 站点")
+    sp_merge.add_argument("--no-deploy", dest="deploy", action="store_false",
+                          help="不部署（覆盖 config 里的 deploy=true）")
+    sp_merge.add_argument("--newest-first", action="store_true",
+                          help="--sync-all 从最新日期往前处理")
     add_hugo_site_flag(sp_merge)
     sp_merge.add_argument("--timeout", type=int, default=600,
                           help="每 150K chunk 的 LLM 调用时限秒数 (默认 600)")

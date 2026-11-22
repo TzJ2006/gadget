@@ -267,3 +267,11 @@ def test_report_prompt_translates_headings_and_terms():
     assert "保留英文，不要强行意译" in normal and "保留英文，不要强行意译" not in report
     assert "所有标题和正文都必须翻译成中文" in report
     assert build_translation_prompt("x", "en", report=True) == build_translation_prompt("x", "en")
+
+
+def test_unquoted_frontmatter_value_gets_quoted_when_translation_adds_colon():
+    import yaml
+    from common.translation.frontmatter import _quote_field
+    assert _quote_field("", "plain text") == "plain text"
+    line = "description: " + _quote_field("", "2127. Meeting: analyzing cycles")
+    assert yaml.safe_load(line)["description"] == "2127. Meeting: analyzing cycles"
