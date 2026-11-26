@@ -7,27 +7,16 @@
     python scripts/sync.py status            # 显示差异
     python scripts/sync.py config --init     # 初始化配置
     python scripts/sync.py bootstrap --remote gdrive:gadget  # 新设备一键初始化
-    python scripts/sync.py --category dag    # 生成并部署 DAG 站 (非 GDrive 同步)
 
 选项:
     --dry-run                        # 预览，不实际传输
-    --category <name>                # 只同步某一类 (summarize/website/research/benchmark/backups/dag; test = benchmark 旧名)
+    --category <name>                # 只同步某一类 (summarize/website/research/benchmark/backups; test = benchmark 旧名)
     --include-config                 # push 时同时备份配置文件
     --include-tokens                 # push/bootstrap 时包含 tokens/ 目录
-
-特殊类目 dag:
-    dag 类目语义不同于 rclone 同步——它「生成 + 部署 DAG 站」，而非 GDrive 同步。
-    `python scripts/sync.py --category dag` 会:
-      1. 运行 `npx tsx ../ai-companion/scripts/build-dag-site.ts stage`
-         (生成 overview + 各项目详情页 → 加密 → 落 tools/website/static/dag/)，
-         密码经环境变量 STATICRYPT_PASSWORD 传入；
-      2. 触发 website 发布 (tools/website/update.sh)。
-    `--dry-run` 时仅打印将运行的命令与目标路径，不实际执行。
 """
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -46,15 +35,6 @@ from common import config as gadget_config
 CONFIG_FILE = gadget_config.DEFAULT_CONFIG_PATH
 
 
-# DAG site — generated + deployed (not a GDrive-synced category).
-# ai-companion is now a separate repo checked out as a sibling (../ai-companion);
-# override with AI_COMPANION_ROOT if it lives elsewhere.
-# ponytail: sibling-dir assumption; AI_COMPANION_ROOT env is the escape hatch.
-_AI_COMPANION_ROOT = Path(
-    os.environ.get("AI_COMPANION_ROOT", GADGET_ROOT.parent / "ai-companion")
-).expanduser()
-DAG_BUILD_SCRIPT = _AI_COMPANION_ROOT / "scripts" / "build-dag-site.ts"
-DAG_STAGE_DIR = GADGET_ROOT / "tools" / "website" / "static" / "dag"
 WEBSITE_DIR = GADGET_ROOT / "tools" / "website"
 WEBSITE_UPDATE_SCRIPT = WEBSITE_DIR / "update.sh"
 
@@ -78,9 +58,26 @@ SYNC_DIRS: dict[str, list[tuple[str, str]]] = {
         ("tools/website/content/bugJournal/weekly", "website/bugJournal/weekly"),
         ("tools/website/content/bugJournal/monthly", "website/bugJournal/monthly"),
         ("tools/website/content/research", "website/research"),
+        # One entry per level that publishes a usage chart. A published level
+        # whose directory is missing here self-deletes: static/images/ is
+        # gitignored, and publish.py wipes public/ and rebuilds from static/,
+        # so the next publish from a machine without the PNGs stages their
+        # deletion while the markdown keeps linking them. That is exactly how
+        # /dag/ deleted itself before 0984632.
+        ("tools/website/static/images/daily", "website/static/images/daily"),
         ("tools/website/static/images/weekly", "website/static/images/weekly"),
         ("tools/website/static/images/monthly", "website/static/images/monthly"),
         ("tools/website/static/benchmark-report", "website/static/benchmark-report"),
+        # Built by ../ai-companion, not by this repo (the dag category was
+        # removed here), but it lands in this site tree and is published from
+        # it — so it needs a way onto the other machines for exactly the reason
+        # above. Without this the page deletes itself again the moment a second
+        # machine publishes.
+        ("tools/website/static/dag", "website/static/dag"),
+        # Same story, never yet triggered: both are gitignored and published,
+        # so a machine without them stages their deletion on the next publish.
+        ("tools/website/static/videos", "website/static/videos"),
+        ("tools/website/static/pdfs", "website/static/pdfs"),
         ("tools/website/content/leetcode", "website/leetcode"),
         ("tools/website/content/posts", "website/posts"),
     ],
@@ -95,9 +92,11 @@ SYNC_DIRS: dict[str, list[tuple[str, str]]] = {
         ("outputs/reports/research-profiler", "research/reports-profiler"),
         ("outputs/data/research-profiler", "research/data-profiler"),
     ],
-    "benchmark": [
-        ("outputs/data/benchmark", "benchmark/data"),
-    ],
+    # The results ledger is a tracked file, not a synced directory, and the
+    # submission queue under tools/benchmark/data/ is tracked too — so this
+    # category has no directories to sync. It kept a mapping for
+    # outputs/data/benchmark, which nothing has ever written.
+    "benchmark": [],
     # 强制重生成前的自动备份（website-force）+ 报告覆盖备份（summarize）
     "backups": [
         ("outputs/backups/website-force", "backups/website-force"),
@@ -116,9 +115,64 @@ SYNC_FILES: dict[str, list[tuple[str, str]]] = {
         ("tools/website/content/Random.md", "website/personal/Random.md"),
     ],
     "benchmark": [
-        ("outputs/data/benchmark/results.csv", "benchmark/data/benchmark_results.csv"),
+        # Was outputs/data/benchmark/results.csv — a path nothing writes, so
+        # `push --category benchmark` copied nothing. The real ledger is here
+        # (cli.py:23, core.py:171, report.py:595 all agree). Remote name kept
+        # so existing objects stay where they are.
+        ("tools/benchmark/benchmark_results.csv", "benchmark/data/benchmark_results.csv"),
     ],
 }
+
+# Files a pull must never replace wholesale. A pull is a whole-file copy, which
+# for an append-only ledger means the remote silently discards every row this
+# machine added since its last push — and the ledger's entire purpose is to
+# accumulate rows from several machines. AGENTS.md: "results append to
+# benchmark_results.csv by design — never rewrite or dedupe it."
+# Before the mapping was repointed at the real ledger this was harmless: it
+# named a path nothing writes, so pull had nothing to clobber.
+APPEND_ONLY_FILES = {
+    "tools/benchmark/benchmark_results.csv",
+}
+
+
+def merge_append_only_csv(src: Path, dst: Path) -> tuple[bool, str]:
+    """Union *src*'s rows into *dst*, keeping dst's rows and their order.
+
+    Row identity is the whole line. Every row carries a timestamp, so two
+    byte-identical lines are one measurement synced twice, not two runs that
+    happened to agree — which is why this adds rows and never drops any.
+    Returns (ok, message).
+    """
+    src_lines = src.read_text(encoding="utf-8").splitlines()
+    if not src_lines:
+        return True, "远端为空，本地不变"
+    if not dst.exists():
+        shutil.copy2(str(src), str(dst))
+        return True, f"本地不存在，直接写入 {len(src_lines) - 1} 行"
+
+    dst_lines = dst.read_text(encoding="utf-8").splitlines()
+    if not dst_lines:
+        shutil.copy2(str(src), str(dst))
+        return True, f"本地为空，直接写入 {len(src_lines) - 1} 行"
+
+    if src_lines[0] != dst_lines[0]:
+        # Merging rows under mismatched headers would put values in the wrong
+        # columns. Refuse rather than corrupt the ledger.
+        return False, "表头不一致，拒绝合并（先统一列定义再同步）"
+
+    have = set(dst_lines[1:])
+    added = [ln for ln in src_lines[1:] if ln and ln not in have]
+    if not added:
+        return True, "远端没有本地缺的行"
+
+    needs_newline = not dst.read_text(encoding="utf-8").endswith("\n")
+    with open(dst, "a", newline="", encoding="utf-8") as f:
+        if needs_newline:
+            f.write("\n")
+        for ln in added:
+            f.write(ln + "\n")
+    return True, f"追加 {len(added)} 行（本地 {len(dst_lines) - 1} 行一行未动）"
+
 
 # Pre-2026-08 category name. Same mappings as `benchmark`; remote layout moved
 # from test/data → benchmark/data (old GDrive objects are not auto-migrated).
@@ -326,8 +380,16 @@ def sync_files(direction: str, *, category: str | None = None, dry_run: bool = F
                     for local_rel, remote_name, cat in files:
                         src = Path(tmpdir) / remote_name
                         dst = GADGET_ROOT / local_rel
-                        if src.is_file():
-                            dst.parent.mkdir(parents=True, exist_ok=True)
+                        if not src.is_file():
+                            continue
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        if local_rel in APPEND_ONLY_FILES:
+                            merged, msg = merge_append_only_csv(src, dst)
+                            print(f"  [{cat}] → {local_rel}（追加合并）：{msg}")
+                            if not merged:
+                                fail += 1
+                                continue
+                        else:
                             shutil.copy2(str(src), str(dst))
                             print(f"  [{cat}] → {local_rel}")
                 ok += 1
@@ -409,6 +471,21 @@ def cmd_status(args: argparse.Namespace) -> None:
             print(f"  [{cat}] {local_rel}/ ↔ {remote_path}/")
             run_rclone(["check", str(local_path), remote_path, "--combined", "-"], dry_run=False)
             print()
+
+    # SYNC_FILES too, or a category whose mappings are all files reports
+    # nothing at all — which is what `status --category benchmark` did once its
+    # directory list was emptied, even though push and pull both covered it.
+    for cat, mappings in SYNC_FILES.items():
+        if category and cat != category:
+            continue
+        for local_rel, remote_rel in mappings:
+            local_path = GADGET_ROOT / local_rel
+            remote_path = f"{remote_base}/{remote_rel}"
+            if not local_path.is_file():
+                print(f"  [{cat}] {local_rel} — 本地不存在")
+                continue
+            size = local_path.stat().st_size
+            print(f"  [{cat}] {local_rel} ({size} B) ↔ {remote_path}")
 
 
 def cmd_bootstrap(args: argparse.Namespace) -> None:
@@ -519,89 +596,6 @@ def cmd_config(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# DAG site — generate + deploy (not a GDrive sync category)
-# ---------------------------------------------------------------------------
-
-
-def sync_dag(*, dry_run: bool = False) -> bool:
-    """Generate the encrypted DAG site and deploy it via the website pipeline.
-
-    Unlike the rclone categories, this does not touch Google Drive. It:
-      1. Runs `npx tsx ../ai-companion/scripts/build-dag-site.ts stage` — assembles
-         the overview + per-project detail pages, encrypts each with StatiCrypt
-         (password from STATICRYPT_PASSWORD), and stages them into
-         website/static/dag/ for Hugo to publish at /dag/.
-      2. Runs website/update.sh — Hugo build + push to tzj2006.github.io.
-
-    Returns True on success. With dry_run=True it only prints what would run and
-    always returns True (no generation/deploy is performed).
-    """
-    stage_cmd = ["npx", "tsx", str(DAG_BUILD_SCRIPT), "stage"]
-    deploy_cmd = ["bash", str(WEBSITE_UPDATE_SCRIPT)]
-
-    if dry_run:
-        print("=== DAG: 生成 + 部署 (dry-run) ===\n")
-        print("将执行 (步骤 1/2 — 生成 + 加密 DAG 站):")
-        print(f"  $ STATICRYPT_PASSWORD=*** {' '.join(stage_cmd)}")
-        print(f"  → 加密产物落地: {DAG_STAGE_DIR}/ (overview index.html + 各项目 <name>.html)")
-        print("\n将执行 (步骤 2/2 — 发布 website):")
-        print(f"  $ {' '.join(deploy_cmd)}  (cwd={WEBSITE_DIR})")
-        print(f"  → Hugo 构建并推送 (发布站点的 /dag/ 路径)")
-        print("\n[dry-run] 以上为预览，未实际生成或部署。")
-        return True
-
-    print("=== DAG: 生成 + 部署 ===\n")
-
-    # Step 0:密码必须来自环境变量，绝不硬编码。
-    password = os.environ.get("STATICRYPT_PASSWORD")
-    if not password:
-        print("[error] 未设置环境变量 STATICRYPT_PASSWORD。")
-        print("  DAG 站每个页面都会用该密码做 StatiCrypt 加密，请先设置后再运行，例如:")
-        print("    STATICRYPT_PASSWORD='<your-password>' python scripts/sync.py --category dag")
-        return False
-
-    if not DAG_BUILD_SCRIPT.is_file():
-        print(f"[error] 找不到 DAG 构建脚本: {DAG_BUILD_SCRIPT}")
-        return False
-
-    # Step 1: 生成 + 加密 → website/static/dag/
-    print(f"--- 生成 DAG 站 (→ {DAG_STAGE_DIR}/) ---\n")
-    print(f"  $ {' '.join(stage_cmd)}")
-    try:
-        result = subprocess.run(stage_cmd, cwd=str(GADGET_ROOT), text=True, timeout=600)
-    except subprocess.TimeoutExpired:
-        print("  [error] DAG 站生成超时")
-        return False
-    except OSError as e:
-        print(f"  [error] 无法运行 npx/tsx (是否已安装 Node.js?): {e}")
-        return False
-    if result.returncode != 0:
-        print(f"  [error] DAG 站生成失败 (退出码 {result.returncode})")
-        return False
-
-    # Step 2: 发布 website
-    if not WEBSITE_UPDATE_SCRIPT.is_file():
-        print(f"[error] 找不到 website 发布脚本: {WEBSITE_UPDATE_SCRIPT}")
-        return False
-    print(f"\n--- 发布 website (→ /dag/) ---\n")
-    print(f"  $ {' '.join(deploy_cmd)}  (cwd={WEBSITE_DIR})")
-    try:
-        result = subprocess.run(deploy_cmd, cwd=str(WEBSITE_DIR), text=True, timeout=600)
-    except subprocess.TimeoutExpired:
-        print("  [error] website 发布超时")
-        return False
-    except OSError as e:
-        print(f"  [error] 无法运行 website/update.sh: {e}")
-        return False
-    if result.returncode != 0:
-        print(f"  [error] website 发布失败 (退出码 {result.returncode})")
-        return False
-
-    print("\n[done] DAG 站已生成并部署。")
-    return True
-
-
-# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -611,12 +605,11 @@ def main() -> None:
         description="gadget 个人数据 rclone 同步工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    # Top-level --category supports the special `dag` target (generate + deploy
-    # the DAG site, no subcommand needed). rclone categories still go through
-    # push/pull/status subcommands as before.
+    # rclone categories go through the push/pull/status subcommands; a bare
+    # top-level --category has no meaning on its own.
     parser.add_argument(
-        "--category", choices=rclone_category_choices() + ["dag"],
-        help="顶层用法仅支持 dag (生成+部署 DAG 站); 其余类目请配合 push/pull/status 子命令",
+        "--category", choices=rclone_category_choices(),
+        help="类目需配合 push/pull/status 子命令使用",
     )
     # Separate dest so a subparser's own --dry-run default does not clobber a
     # global `--dry-run push`. The two are OR-ed after parsing (see below).
@@ -660,15 +653,9 @@ def main() -> None:
     # Honor --dry-run regardless of position (before or after the subcommand).
     args.dry_run = getattr(args, "dry_run", False) or args.global_dry_run
 
-    # Special top-level usage: `python scripts/sync.py --category dag` — generate +
-    # deploy the DAG site (no subcommand). Handle before subcommand dispatch.
     if not args.command:
-        if args.category == "dag":
-            ok = sync_dag(dry_run=args.dry_run)
-            sys.exit(0 if ok else 1)
         if args.category:
-            print(f"[error] 顶层 --category {args.category} 仅 dag 受支持；"
-                  f"其余类目请用 push/pull/status 子命令，例如 "
+            print(f"[error] --category {args.category} 需配合子命令使用，例如 "
                   f"`python scripts/sync.py push --category {args.category}`。")
             sys.exit(1)
         parser.print_help()

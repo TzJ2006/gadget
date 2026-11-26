@@ -126,7 +126,7 @@ python -m summarize onboard --deploy
 python -m summarize onboard --init-config
 ```
 
-> 旧入口 `python tools/summarize/daily_summary.py ...` / `weekly_summary.py` / `monthly_summary.py` 仍可用（向后兼容 re-export shim），推荐使用上面的 `python -m summarize` 形式。
+> 旧入口 `python tools/summarize/weekly_summary.py ...` / `monthly_summary.py` 仍可用（完整实现，各自带 `main()`），推荐使用上面的 `python -m summarize` 形式。`daily_summary.py` 已删除（纯 re-export shim，声明的消费者 `mcp_server.py` 不在仓里）。
 
 ## 配置文件
 

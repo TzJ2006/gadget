@@ -1,4 +1,4 @@
-"""Publish orchestrator: abort on preflight exit 1, continue on exit 2.
+"""Publish orchestrator: preflight exit-code routing, and when the stamp moves.
 
 Run: ``python -m pytest tools/website/tests/test_publish.py -q``
 """
@@ -30,9 +30,9 @@ def _stub_steps(monkeypatch, preflight_rc: int) -> list[str]:
     monkeypatch.setattr(pub, "compress_images", lambda *_a: called.append("img"))
     monkeypatch.setattr(pub, "compress_videos", lambda *_a: called.append("vid"))
     monkeypatch.setattr(pub, "run_preflight", lambda: preflight_rc)
+    monkeypatch.setattr(pub, "protect_reports", lambda: called.append("protect") or 0)
     monkeypatch.setattr(pub, "clean_public", lambda: called.append("clean"))
     monkeypatch.setattr(pub, "run_hugo", lambda: called.append("hugo"))
-    monkeypatch.setattr(pub, "protect_reports", lambda: called.append("protect") or 0)
     monkeypatch.setattr(pub, "commit_and_push", lambda: called.append("push"))
     monkeypatch.setattr(pub, "TIMESTAMP_FILE", Stamp())
     return called
@@ -52,14 +52,28 @@ def test_main_aborts_on_preflight_exit_1(monkeypatch):
     assert pub.main() == 1
     assert "hugo" not in called
     assert "push" not in called
-    assert "stamp" not in called
+
+
+def test_an_abort_still_records_that_the_media_was_compressed(monkeypatch):
+    """The stamp is the compression boundary, not a "we shipped" marker.
+
+    It used to move only after a successful push, which reads naturally from
+    the name .last_build — but compression is lossy, so every preflight abort
+    left the images looking unmodified-since and the next run quantized them
+    all over again, one notch worse each time. The work it records did happen,
+    so it is recorded. (This assertion is the inverse of what this test file
+    pinned before; the change is deliberate.)
+    """
+    called = _stub_steps(monkeypatch, preflight_rc=1)
+    assert pub.main() == 1
+    assert "stamp" in called, "an aborted run will re-compress everything"
 
 
 def test_main_continues_on_preflight_exit_2(monkeypatch):
     called = _stub_steps(monkeypatch, preflight_rc=2)
     assert pub.main() == 0
     assert called == [
-        "translate", "rewrite", "img", "vid", "clean", "hugo", "protect", "push", "stamp",
+        "translate", "rewrite", "img", "vid", "stamp", "clean", "hugo", "protect", "push",
     ]
 
 

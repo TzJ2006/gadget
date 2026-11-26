@@ -580,8 +580,8 @@ outputs/
 ### Q: 缓存？
 
 - 搜索：`outputs/cache/research-scout/papers/`（同日同项目）
-- Stage 1/2：`eval/`（项目上下文 + 论文 ID + 摘要前缀哈希）
-- Stage 3 / S2：引用图缓存
+- Stage 1/2/3：`eval/`（`screening_*` / `deep_*` / `citations_*`；键为项目上下文 + 论文 ID + 摘要前缀哈希）
+- Stage 3 / S2：引用图缓存（`api/semantic_scholar`），分析结果另有 `eval/citations_*` 一层
 - Insight：全文是否可用纳入缓存键
 - Profiler：`outputs/cache/research-profiler/{api,llm}/`
 - `--no-cache` 跳过上述缓存

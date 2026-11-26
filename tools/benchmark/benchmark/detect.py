@@ -143,11 +143,20 @@ def get_gpu_info() -> List[Dict[str, Any]]:
     # Try PyTorch first
     try:
         import torch
-        _detect_nvidia_gpus(torch, gpus)
-        _detect_apple_gpus(torch, gpus)
-        _detect_intel_xpu_gpus(torch, gpus)
     except ImportError:
-        pass
+        torch = None
+
+    if torch is not None:
+        # Per-probe, and catching more than ImportError: a partial or mismatched
+        # install (CUDA driver older than the build, missing XPU runtime) imports
+        # fine and then raises on attribute access. One vendor failing must not
+        # lose the other two or the OpenCL fallback — reporting what we can find
+        # is this function's whole job.
+        for probe in (_detect_nvidia_gpus, _detect_apple_gpus, _detect_intel_xpu_gpus):
+            try:
+                probe(torch, gpus)
+            except Exception as e:
+                print(f"[warn] {probe.__name__} failed, skipping: {e}")
 
     # Fallback to PyOpenCL for Intel/AMD GPUs
     if not gpus:

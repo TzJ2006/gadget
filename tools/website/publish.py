@@ -12,7 +12,9 @@ Steps:
   5. Preflight — abort only on exit 1; exit 2 (warnings) continues
   6. Clean public/ (keep .git) and run hugo
   7. Commit and push public/ if there are changes
-  8. Touch .last_build
+(.last_build advances right after step 4, not at the end: it is the incremental
+ boundary for the two lossy compression steps, so an abort after them must not
+ make the next run compress the same files again.)
 """
 
 from __future__ import annotations
@@ -29,6 +31,13 @@ from pathlib import Path
 
 SITE_ROOT = Path(__file__).resolve().parent
 
+# Loose sibling scripts, the same way preflight_check.py reaches them: this is
+# run as `python publish.py` from its own directory, but also imported by tests.
+if str(SITE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SITE_ROOT))
+
+from generated_paths import is_generated_path  # noqa: E402
+
 SRC_DIR = SITE_ROOT / "content"
 IMAGE_DIR = SITE_ROOT / "static" / "images"
 VIDEO_DIR = SITE_ROOT / "static" / "videos"
@@ -44,16 +53,6 @@ TRANSLATE_SCRIPT = SITE_ROOT / "translate_site_batch.py"
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
-
-# Pipeline-managed trees — Step 2 rewrite is handwritten content only.
-GENERATED_CONTENT_DIRS = (
-    "bugJournal/daily",
-    "bugJournal/weekly",
-    "bugJournal/monthly",
-    "bugJournal/yearly",
-    "research",
-)
-GENERATED_CONTENT_FILES = ("benchmark.md", "benchmark.zh.md")
 
 _STATIC_RE = re.compile(r"\.\./\.\./static")
 # Word-boundary so `.jpeg` does not become `.pngpeg` (bash s/\.jpg/ bug).
@@ -127,13 +126,12 @@ def ensure_timestamp(path: Path) -> float:
 
 
 def _is_generated(path: Path) -> bool:
-    try:
-        rel = path.resolve().relative_to(SRC_DIR.resolve()).as_posix()
-    except ValueError:
-        return False
-    if path.name in GENERATED_CONTENT_FILES or rel in GENERATED_CONTENT_FILES:
-        return True
-    return any(rel == d or rel.startswith(d + "/") for d in GENERATED_CONTENT_DIRS)
+    """Step 2's rewrite is hand-written content only.
+
+    This had its own copy of the path lists and its own matching rule; it now
+    asks the one matcher, so preflight and publish cannot disagree about a file.
+    """
+    return is_generated_path(path, SRC_DIR)
 
 
 def _newer_files(root: Path, exts: set[str], since: float) -> list[Path]:
@@ -361,6 +359,14 @@ def main() -> int:
     rewrite_modified_markdown(since, site_url)
     compress_images(since)
     compress_videos(since)
+    # Advance the boundary as soon as the destructive work is done, not after
+    # the push. Compression is lossy: while the timestamp only moved on a
+    # successful push, every preflight abort or failed build meant the next run
+    # re-compressed images it had already compressed, and the quality dropped
+    # another notch each time. Everything after this point is idempotent --
+    # Hugo rebuilds from a wiped public/, and a retried push re-pushes the same
+    # tree -- so nothing is lost by moving it here.
+    TIMESTAMP_FILE.touch()
 
     preflight_rc = run_preflight()
     if preflight_rc == 1:
@@ -383,8 +389,6 @@ def main() -> int:
     timer.step("Step 7 提交推送")
 
     print("\n─────────────────────────────────────────────────", flush=True)
-    print("> Step 8/8：更新时间戳：", flush=True)
-    TIMESTAMP_FILE.touch()
     print(f"Done!（总耗时 {timer.total():.0f}s）", flush=True)
     return 0
 

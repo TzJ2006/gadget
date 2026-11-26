@@ -2,19 +2,6 @@
 
 A unified benchmarking solution for measuring CPU and GPU FLOPS performance across different hardware platforms.
 
-The language-ability benchmark (story opening and README tutorial) is [LLM_benchmark/README.md](LLM_benchmark/README.md).
-
-## Entry point and where to add
-
-Run commands from this directory. The importable package is `tools/benchmark/benchmark/` because the directory name and the import name collide.
-
-```bash
-cd tools/benchmark
-python -m benchmark.cli
-```
-
-The CLI appends to `tools/benchmark/benchmark_results.csv`. Do not rewrite or dedupe that file. New benchmark modules go in `tools/benchmark/benchmark/`. Submission helpers stay in `scripts/`.
-
 ## Features
 
 - **Cross-platform**: macOS, Linux, Windows
@@ -73,9 +60,27 @@ python -m benchmark.cli --duration 60
 
 Output paths are relative to the project root (`gadget/`). Override with `--output` (CSV) and `--report-output` (HTML).
 
-## Website Auto-Update Pipeline
+## Website Auto-Update Pipeline (designed, not built)
 
-Queued submissions can still be ingested locally (helpers below). This repo has no `tools/benchmark/.github/workflows/`, and no `accept-submission.yml`, `daily-publish.yml`, or `pages-deploy.yml`.
+> **There is no CI driving any of this.** The submission helpers below are
+> real and work when you run them by hand, but this repository has no
+> `.github/` directory and never has — so nothing receives a dispatch, nothing
+> consumes the queue on a schedule, and nothing deploys a leaderboard page.
+> `data/ingest_log.json` records zero submissions ever processed. Treat this
+> section as manual tooling plus a design for a pipeline that has not been
+> built, not as a service you can submit to.
+
+### Workflow Files (none of these exist)
+
+- `.github/workflows/accept-submission.yml`
+  - Receives `repository_dispatch` event `benchmark_submission`
+  - Appends payload to `data/pending_submissions.ndjson`
+- `.github/workflows/daily-publish.yml`
+  - Runs daily (`00:00 UTC`) or manually
+  - Ingests queue with strict validation/dedupe/sanitization
+  - Regenerates `benchmark_report.html` when dataset changes
+- `.github/workflows/pages-deploy.yml`
+  - Deploys `benchmark_report.html` to GitHub Pages
 
 ### Submission Helpers
 
@@ -193,10 +198,11 @@ tools/benchmark/               # https://github.com/TzJ2006/gadget/tree/main/too
 │   ├── detect.py      # Hardware detection (CPU, GPU, system info)
 │   ├── gpu.py         # GPU benchmarks (CUDA, MPS, XPU)
 │   ├── report.py      # HTML report generation (Plotly charts, leaderboards)
-│   └── README.md      # Pointer to the parent README
-├── scripts/           # Submission helpers (submit_result.py, ingest_submissions.py)
-├── data/              # Queue/audit files (pending/rejected submissions)
+│   └── README.md      # Detailed module documentation
+├── scripts/           # Submission helpers, manual only (submit_result.py, ingest_submissions.py)
+├── data/              # Queue/audit files (pending/rejected submissions) — empty; nothing has run
 ├── results/           # Historical GPU test screenshots
+├── tests/             # Pure-mock pytest suite (append-only CSV, timer, no-GPU paths)
 ├── README.md          # This file
 ├── CLAUDE.md          # Dev guide
 └── requirements.txt   # Dependencies

@@ -221,7 +221,7 @@ python scripts/sync.py pull --dry-run                   # Preview pull
 | `summarize` | `outputs/logs/summarize`, `outputs/reports/summarize`, `outputs/images/summarize` |
 | `website` | `tools/website/content/bugJournal/{daily,weekly,monthly}`, `tools/website/content/research`, `tools/website/static/images/{weekly,monthly}`, `tools/website/static/benchmark-report`, `tools/website/content/{leetcode,posts}` and several loose files (About.pdf, Resume.md/pdf, Random.md, benchmark.md/zh.md) |
 | `research` | `outputs/cache/research-scout`, `tools/research/projects`, `outputs/reports/research-scout`, `outputs/logs/research-scout`, `outputs/{reports,data}/research-profiler` |
-| `benchmark` | `outputs/data/benchmark` (including `results.csv`); `--category test` is a backward alias |
+| `benchmark` | `tools/benchmark/benchmark_results.csv`; `--category test` is a backward alias |
 | `backups` | `outputs/backups/website-force`, `outputs/backups/summarize` (pre-overwrite backups) |
 
 #### First-time configuration (`config --init`)
@@ -242,22 +242,6 @@ python scripts/sync.py bootstrap --dry-run
 ```
 
 `bootstrap` proceeds in order: write a minimal `sync` section into repo-root `config.json` → verify remote connectivity (`rclone lsd`) → pull the config files → (optionally `--include-tokens`) pull tokens → pull all data directories. `--remote` defaults to `gdrive:gadget`.
-
-#### Special category `dag` (generate + deploy, not a GDrive sync)
-
-The `dag` category has different semantics from rclone sync — it "generates + deploys the DAG site". It can only be used at the top level, without a subcommand:
-
-```bash
-STATICRYPT_PASSWORD='<your-password>' python scripts/sync.py --category dag
-python scripts/sync.py --category dag --dry-run     # Only print the commands to be run and the target paths
-```
-
-It will:
-
-1. Run `npx tsx ../ai-companion/scripts/build-dag-site.ts stage` (generate the overview + per-project detail pages → StatiCrypt encryption → land in `tools/website/static/dag/`), with the password passed in via the `STATICRYPT_PASSWORD` environment variable (never hardcoded);
-2. Trigger the website publish (`tools/website/update.sh`, Hugo build and push to the `/dag/` path).
-
-On `--dry-run`, it only prints the commands to be run, without actually generating or deploying.
 
 ---
 
@@ -450,7 +434,6 @@ summarize/                   # pip-installable package (python -m summarize)
 ├── auto.py                  # Full-pipeline automation: daily export → merge → weekly → monthly
 ├── monthly_summary.py       # Monthly summary (generate / list)
 ├── weekly_summary.py        # Weekly summary (generate / list)
-├── daily_summary.py         # Backward-compat re-export shim (old import paths still work)
 ├── llm_backends.py          # Re-export shim → common/
 ├── requirements.txt         # Python dependencies
 └── tests/                   # pytest test suite
@@ -500,7 +483,7 @@ pip install -e .
 pip install -r tools/summarize/requirements.txt
 ```
 
-> **CLI usage change**: After the refactor, the recommended form is `python -m summarize daily ...`. The old `python tools/summarize/daily_summary.py ...` still works (backward compatible). All commands in this tutorial use the new form.
+> **CLI usage change**: After the refactor, the form is `python -m summarize daily ...`. The old `python tools/summarize/daily_summary.py ...` no longer exists — that file was a re-export shim for a consumer outside this repository and has been removed. All commands in this tutorial use the new form.
 
 > Install with `pip install -e .`, then run `python -m summarize` from the repository root.
 
@@ -700,6 +683,14 @@ python -m summarize daily export --date 2026-02-13 --summarize
 ```
 
 Adding `--summarize` calls the API to first produce a summary of this device's conversations; the result is stored in the log's `device_summary` field. Later, merge uses these summaries as context to improve the quality of the final daily report.
+
+> **This is a manual-only option.** `auto` runs `daily export` without it
+> (`auto.py`), so a `device_summary` exists only for days you exported by hand
+> with this flag. Merge reads the field when it is there and does without it
+> when it is not, so mixing the two is safe. Whether the pipeline should pass
+> it by default is an open question: it costs one extra model call per device
+> per day, and nothing has yet measured whether summarize-then-merge beats
+> merging the raw conversations.
 
 #### Phase 2: Merge (run on any device)
 
@@ -1285,7 +1276,7 @@ The generated daily report contains the following sections:
 
 ISO 8601 weeks (Monday to Sunday). Each item in tasks/problems/learnings carries `level: "high"|"low"` and `importance: 1-10`, used for priority sorting.
 
-**Import contract**: `daily_summary.py` is a backward-compatible re-export shim and is a stable API surface (referenced by the monthly/weekly pipelines and external consumers). The key exports consumed externally: `_atomic_write`, `_resolve_output_dir`, `_load_config`, `run_hugo_update`, `format_reports_for_llm`, `aggregate_token_usage`. `tests/test_imports.py` parametrically verifies that all expected symbols are still importable after the refactor; it must be run after structural changes. New code should import the specific submodules directly.
+**Import contract**: `weekly_summary.py` and `monthly_summary.py` are stable API surfaces — full implementations that each expose a documented symbol set. `tests/test_imports.py` parametrically verifies those symbols stay importable after structural changes; run it after any refactor. New code should import the specific submodules directly. (`daily_summary.py` used to be listed here as a shim "referenced by the monthly/weekly pipelines"; neither file ever imported it, and it has been removed.)
 
 ### `--api` parameter description
 
@@ -2466,7 +2457,7 @@ Running GPU benchmarks...
     [5/5] FP8_exp... ✗ (not supported)
 ✓ GPU benchmarks complete.
 
-Results saved to: outputs/data/benchmark/results.csv
+Results saved to: tools/benchmark/benchmark_results.csv
 Total records in file: 8
 ```
 
@@ -2532,7 +2523,7 @@ The report includes:
 
 Default output paths:
 
-- CSV: `outputs/data/benchmark/results.csv` (relative to the gadget project root)
+- CSV: `tools/benchmark/benchmark_results.csv` (relative to the gadget project root)
 - HTML: `outputs/reports/benchmark/report.html`
 
 #### Customizing Output Paths
@@ -2620,6 +2611,14 @@ Deployment copies the HTML report into `tools/website/static/benchmark-report/`,
 
 ### 8. Submitting Results to the Public Leaderboard
 
+> **There is no CI driving any of this.** The submission helpers below are
+> real and work when you run them by hand, but this repository has no
+> `.github/` directory and never has — so nothing receives a dispatch, nothing
+> consumes the queue on a schedule, and nothing deploys a leaderboard page.
+> `data/ingest_log.json` records zero submissions ever processed. Treat this
+> section as manual tooling plus a design for a pipeline that has not been
+> built, not as a service you can submit to.
+
 If a relay server is configured, you can submit your test results to the public leaderboard:
 
 ```bash
@@ -2684,9 +2683,11 @@ Validation rules in `ingest_submissions.py`:
 - PII redaction: emails, IPs, hostnames, and user paths are masked
 - SHA-256 fingerprint deduplication (based on date + hardware + benchmark type + result)
 
-#### Website Auto-Update Pipeline
+#### Website Auto-Update Pipeline (designed, not built)
 
-The repository contains a GitHub-based pipeline that publishes benchmark reports as a website and continuously updates from queued submissions:
+The workflow files below **do not exist in this repository**. They describe the
+pipeline the submission helpers were written against; building it is an open
+decision, and until then `ingest_submissions.py` is something you run by hand.
 
 - `.github/workflows/accept-submission.yml` — receives the `repository_dispatch` event `benchmark_submission` and appends the payload to `data/pending_submissions.ndjson`
 - `.github/workflows/daily-publish.yml` — runs daily (`00:00 UTC`) or manually: consumes the queue with strict validation/deduplication/redaction and regenerates the report when the dataset changes

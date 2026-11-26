@@ -86,7 +86,7 @@ python -m summarize monthly generate --month 2026-02 --deploy      # Monthly rep
 python -m summarize auto --deploy                                  # One-click full pipeline: export → merge → weekly → monthly + deploy
 ```
 
-> The legacy entry points `python tools/summarize/daily_summary.py ...` / `weekly_summary.py` / `monthly_summary.py` still work (backward-compatible re-export shims), but the new `python -m summarize` form above is recommended.
+> The legacy entry points `python tools/summarize/weekly_summary.py ...` / `monthly_summary.py` still work (they are full implementations with their own `main()`), but the new `python -m summarize` form above is recommended. `daily_summary.py` was removed — it was a pure re-export shim whose only declared consumer, `mcp_server.py`, is not in this repository.
 
 For detailed step-by-step instructions see [TUTORIAL.md — Summarize](TUTORIAL.md#summarize) and the source doc [tools/summarize/tutorial.md](tools/summarize/tutorial.md).
 

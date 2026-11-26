@@ -5,6 +5,30 @@ import os
 import sys
 import subprocess
 
+
+def _is_palette_png(path: str) -> bool:
+    """True if `path` is a PNG already in palette (colour type 3) form.
+
+    pngquant's output is palettized, and running it again re-quantizes in place
+    (source and destination are the same file for a .png input, with --force),
+    losing a little more each pass. The publish pipeline makes that easy to hit:
+    .last_build only moves after a successful push, so every aborted run leaves
+    the images "modified" and compresses them again.
+
+    Read from the IHDR header rather than via Pillow — this must not add a
+    dependency to a path that currently has none. PNG layout: 8-byte signature,
+    4-byte length, "IHDR", then width(4) height(4) bit-depth(1) colour-type(1).
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(26)
+    except OSError:
+        return False
+    if len(head) < 26 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return False
+    return head[25] == 3
+
+
 def compress_with_pngquant(input_path: str, quality_low: int = 60, quality_high: int = 80):
     """
     使用 pngquant 压缩 PNG 文件。将输出写到 base.png
@@ -33,6 +57,9 @@ def compress_with_pngquant(input_path: str, quality_low: int = 60, quality_high:
             print(f"Error: JPEG 转 PNG 失败：{e}")
             return
     elif ext_lower == ".png":
+        if _is_palette_png(input_path):
+            print(f"↷ 跳过：已是调色板 PNG，再压一次只会继续掉质量：{input_path}")
+            return
         source_png = input_path
     else:
         print(f"Error: 仅支持 .jpg/.jpeg/.png 文件，当前扩展名：{ext}")

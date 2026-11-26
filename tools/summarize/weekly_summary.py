@@ -371,7 +371,7 @@ def _generate_chart(usage_by_source: dict,
                     iso_year: int, iso_week: int) -> Optional[Path]:
     """生成周报 usage 图表（单 PNG 三子图，按来源）。"""
     monday, _ = _week_date_range(iso_year, iso_week)
-    return generate_period_chart(usage_by_source, monday)
+    return generate_period_chart(usage_by_source, monday, "weekly")
 
 
 # ─── 4. 输出渲染 ────────────────────────────────────────────────────
@@ -537,6 +537,11 @@ def generate_weekly_markdown(report: dict, iso_year: int, iso_week: int,
         if card:
             lines.append(card + "\n")
 
+        # Site-absolute path: generate_period_hugo_post copies the PNG to
+        # static/images/weekly/, which Hugo serves at /images/weekly/.
+        if chart_filename:
+            lines.append(f"![AI Usage · {week_label}](/images/weekly/{chart_filename})\n")
+
         peak = combined_summary.get("peak_day")
         if peak:
             lines.append(f"**Peak Day:** {peak['date']} — "
@@ -698,8 +703,12 @@ def cmd_generate(args):
     if is_past_week:
         report["_finalized"] = True
 
-    # 渲染 Markdown（usage 卡片内嵌，无需图表文件）
-    markdown = generate_weekly_markdown(report, iso_year, iso_week)
+    # 渲染 Markdown（内嵌 usage 卡片 + 逐源用量图表）
+    # matplotlib 缺失时 _generate_chart 返回 None，报告照常生成、只是没有图。
+    chart_path = _generate_chart(usage_by_source, iso_year, iso_week)
+    markdown = generate_weekly_markdown(
+        report, iso_year, iso_week,
+        chart_filename=chart_path.name if chart_path else None)
 
     # 保存
     save_weekly_report(report, markdown, iso_year, iso_week, reports_dir)
@@ -709,7 +718,8 @@ def cmd_generate(args):
         hugo_site = require_hugo_site(args)
 
         generate_weekly_hugo_post(markdown, iso_year, iso_week,
-                                  hugo_site, api=args.api, force=force,
+                                  hugo_site, chart_path=chart_path,
+                                  api=args.api, force=force,
                                   overwrite_human=getattr(args, "overwrite_human", False))
         run_hugo_update(hugo_site)
 
@@ -748,12 +758,12 @@ def cmd_deploy(args):
         print("[ok] 所有周报均已部署")
         return
 
-    from common.paths import IMAGES_DIR
+    from .charts import chart_path_for
     for md_file in to_deploy:
         week_label = md_file.stem[:-len("-weekly")]
         iso_year, iso_week = _parse_week(week_label)
         monday, _ = _week_date_range(iso_year, iso_week)
-        chart = IMAGES_DIR / "summarize" / f"{monday.isoformat()}-usage.png"
+        chart = chart_path_for("weekly", monday)
         generate_weekly_hugo_post(
             md_file.read_text(encoding="utf-8"), iso_year, iso_week, hugo_site,
             chart_path=chart if chart.exists() else None,

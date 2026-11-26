@@ -521,7 +521,7 @@ def _call_monthly_summarize_chunked(api: str, daily_reports: list[dict],
 
 def _generate_chart(usage_by_source: dict, year: int, month: int) -> Optional[Path]:
     """生成月报 usage 图表（单 PNG 三子图，按来源）。"""
-    return generate_period_chart(usage_by_source, date(year, month, 1))
+    return generate_period_chart(usage_by_source, date(year, month, 1), "monthly")
 
 
 # ─── 4. 输出渲染 ───────────────────────────────────────────────────
@@ -673,6 +673,11 @@ def generate_monthly_markdown(report: dict, year: int, month: int,
         card = render_usage_card(by_source, f"AI Usage · {month_str}")
         if card:
             lines.append(card + "\n")
+
+        # Site-absolute path: generate_period_hugo_post copies the PNG to
+        # static/images/monthly/, which Hugo serves at /images/monthly/.
+        if chart_filename:
+            lines.append(f"![AI Usage · {month_str}](/images/monthly/{chart_filename})\n")
 
         peak = combined_summary.get("peak_day")
         if peak:
@@ -829,8 +834,12 @@ def cmd_generate(args):
     if is_past_month:
         report["_finalized"] = True
 
-    # 渲染 Markdown（usage 卡片内嵌，无需图表文件）
-    markdown = generate_monthly_markdown(report, year, month)
+    # 渲染 Markdown（内嵌 usage 卡片 + 逐源用量图表）
+    # matplotlib 缺失时 _generate_chart 返回 None，报告照常生成、只是没有图。
+    chart_path = _generate_chart(usage_by_source, year, month)
+    markdown = generate_monthly_markdown(
+        report, year, month,
+        chart_filename=chart_path.name if chart_path else None)
 
     # 保存
     save_monthly_report(report, markdown, year, month, reports_dir)
@@ -840,6 +849,7 @@ def cmd_generate(args):
         hugo_site = require_hugo_site(args)
 
         generate_monthly_hugo_post(markdown, year, month, hugo_site,
+                                   chart_path=chart_path,
                                    api=args.api, force=force,
                                    overwrite_human=getattr(args, "overwrite_human", False))
 
@@ -879,11 +889,11 @@ def cmd_deploy(args):
         print("[ok] All monthly reports already deployed")
         return
 
-    from common.paths import IMAGES_DIR
+    from .charts import chart_path_for
     for md_file in to_deploy:
         month_str = md_file.stem[:-len("-monthly")]
         year, month = int(month_str[:4]), int(month_str[5:7])
-        chart = IMAGES_DIR / "summarize" / f"{date(year, month, 1).isoformat()}-usage.png"
+        chart = chart_path_for("monthly", date(year, month, 1))
         generate_monthly_hugo_post(
             md_file.read_text(encoding="utf-8"), year, month, hugo_site,
             chart_path=chart if chart.exists() else None,

@@ -221,7 +221,7 @@ python scripts/sync.py pull --dry-run                   # 预览 pull
 | `summarize` | `outputs/logs/summarize`、`outputs/reports/summarize`、`outputs/images/summarize` |
 | `website` | `tools/website/content/bugJournal/{daily,weekly,monthly}`、`tools/website/content/research`、`tools/website/static/images/{weekly,monthly}`、`tools/website/static/benchmark-report`、`tools/website/content/{leetcode,posts}` 及若干松散文件（About.pdf、Resume.md/pdf、Random.md、benchmark.md/zh.md） |
 | `research` | `outputs/cache/research-scout`、`tools/research/projects`、`outputs/reports/research-scout`、`outputs/logs/research-scout`、`outputs/{reports,data}/research-profiler` |
-| `benchmark` | `outputs/data/benchmark`（含 `results.csv`）；`--category test` 为旧名别名 |
+| `benchmark` | `tools/benchmark/benchmark_results.csv`；`--category test` 为旧名别名 |
 | `backups` | `outputs/backups/website-force`、`outputs/backups/summarize`（覆盖前自动备份） |
 
 #### 首次配置（`config --init`）
@@ -242,22 +242,6 @@ python scripts/sync.py bootstrap --dry-run
 ```
 
 `bootstrap` 依次：向仓库根 `config.json` 写入最小 `sync` 段 → 校验远端连通性（`rclone lsd`）→ 拉取配置文件 → （可选 `--include-tokens`）拉取 tokens → 拉取全部数据目录。`--remote` 默认 `gdrive:gadget`。
-
-#### 特殊类目 `dag`（生成 + 部署，非 GDrive 同步）
-
-`dag` 类目语义不同于 rclone 同步——它「生成 + 部署 DAG 站」。只能在顶层用、不带子命令：
-
-```bash
-STATICRYPT_PASSWORD='<your-password>' python scripts/sync.py --category dag
-python scripts/sync.py --category dag --dry-run     # 仅打印将运行的命令与目标路径
-```
-
-它会：
-
-1. 运行 `npx tsx ../ai-companion/scripts/build-dag-site.ts stage`（生成 overview + 各项目详情页 → StatiCrypt 加密 → 落地 `tools/website/static/dag/`），密码经环境变量 `STATICRYPT_PASSWORD` 传入（绝不硬编码）；
-2. 触发 website 发布（`tools/website/update.sh`，Hugo 构建并推送到 `/dag/` 路径）。
-
-`--dry-run` 时仅打印将运行的命令，不实际生成或部署。
 
 ---
 
@@ -450,7 +434,6 @@ summarize/                   # pip 可安装包（python -m summarize）
 ├── auto.py                  # 全流程自动化：daily export → merge → weekly → monthly
 ├── monthly_summary.py       # 月度总结 (generate / list)
 ├── weekly_summary.py        # 周报总结 (generate / list)
-├── daily_summary.py         # 向后兼容 re-export shim（旧 import 路径仍可用）
 ├── llm_backends.py          # 重导出 shim → common/
 ├── requirements.txt         # Python 依赖
 └── tests/                   # pytest 测试套件
@@ -500,7 +483,7 @@ pip install -e .
 pip install -r tools/summarize/requirements.txt
 ```
 
-> **CLI 用法变更**：重构后推荐使用 `python -m summarize daily ...` 形式。旧的 `python tools/summarize/daily_summary.py ...` 仍然可用（向后兼容）。本教程中的命令均使用新形式。
+> **CLI 用法变更**：重构后统一使用 `python -m summarize daily ...` 形式。旧的 `python tools/summarize/daily_summary.py ...` 已不存在——那个文件是为仓外消费者留的 re-export shim，已删除。本教程中的命令均使用新形式。
 
 > 请先 `pip install -e .`，再从仓库根目录运行 `python -m summarize`。
 
@@ -700,6 +683,12 @@ python -m summarize daily export --date 2026-02-13 --summarize
 ```
 
 加了 `--summarize` 后会调 API 为这台设备的对话先做一次总结，结果存在 log 的 `device_summary` 字段里。后续 merge 时会利用这些总结作为上下文，提高最终日报质量。
+
+> **这是只能手动用的选项。** `auto` 调 `daily export` 时不传它（`auto.py`），
+> 所以只有你手动带这个 flag 导出过的那些天才会有 `device_summary`。
+> merge 有就用、没有就算，所以两种混着用是安全的。
+> 要不要让流水线默认传它是个悬而未决的问题：每设备每天多一次模型调用，
+> 而「先摘要再合并」是否真的比直接合并原始对话好，还没有量过。
 
 #### Phase 2: Merge（任意设备上运行）
 
@@ -1285,7 +1274,7 @@ python -m summarize daily deploy --force
 
 ISO 8601 周（周一至周日）。tasks/problems/learnings 中每一项都带 `level: "high"|"low"` 和 `importance: 1-10`，用于优先级排序。
 
-**导入契约**：`daily_summary.py` 是向后兼容 re-export shim，是稳定的 API surface（被 monthly/weekly 管线和外部消费者引用）。被外部消费的关键导出：`_atomic_write`、`_resolve_output_dir`、`_load_config`、`run_hugo_update`、`format_reports_for_llm`、`aggregate_token_usage`。`tests/test_imports.py` 参数化验证重构后所有期望符号仍可导入，结构变动后必跑。新代码应直接 import 具体子模块。
+**导入契约**：`weekly_summary.py` 与 `monthly_summary.py` 是稳定的 API surface——它们是完整实现，各自对外暴露一组有文档的符号。`tests/test_imports.py` 参数化验证这些符号在结构变动后仍可导入，改完必跑。新代码应直接 import 具体子模块。（这里原来写着 `daily_summary.py` 是「被 monthly/weekly 管线引用」的 shim；两份文件从未 import 过它，该文件已删除。）
 
 ### `--api` 参数说明
 
@@ -2466,7 +2455,7 @@ Running GPU benchmarks...
     [5/5] FP8_exp... ✗ (not supported)
 ✓ GPU benchmarks complete.
 
-Results saved to: outputs/data/benchmark/results.csv
+Results saved to: tools/benchmark/benchmark_results.csv
 Total records in file: 8
 ```
 
@@ -2532,7 +2521,7 @@ python -m benchmark.cli --report-only
 
 默认输出路径：
 
-- CSV：`outputs/data/benchmark/results.csv`（相对于 gadget 项目根目录）
+- CSV：`tools/benchmark/benchmark_results.csv`（相对于 gadget 项目根目录）
 - HTML：`outputs/reports/benchmark/report.html`
 
 #### 自定义输出路径
@@ -2620,6 +2609,12 @@ python -m benchmark.cli --report-only --deploy
 
 ### 8. 提交结果到公共排行榜
 
+> **没有任何 CI 在驱动这套东西。** 下面这些提交工具是真的、手动跑也能用，
+> 但本仓库没有 `.github/` 目录，也从来没有过——所以没有任何东西在接收 dispatch、
+> 没有任何东西在按时消费队列、也没有任何东西在部署排行榜页面。
+> `data/ingest_log.json` 记录的处理数是 0。请把这一节当成「手动工具 + 一份还没搭的
+> 流水线设计」，而不是一个你可以提交上去的服务。
+
 如果有配置 relay 服务器，可以把测试结果提交到公共排行榜：
 
 ```bash
@@ -2686,7 +2681,9 @@ python scripts/ingest_submissions.py \
 
 #### Website 自动更新流水线
 
-仓库内含一套基于 GitHub 的流水线，把基准报告发布为网站并从排队投稿持续更新：
+下面这些 workflow 文件**在本仓库里并不存在**。它们描述的是这些提交工具当初对着写的
+那套流水线；要不要真的搭起来是一个待定的决定，在那之前 `ingest_submissions.py`
+是一个手动运行的脚本。
 
 - `.github/workflows/accept-submission.yml` — 接收 `repository_dispatch` 事件 `benchmark_submission`，把 payload 追加到 `data/pending_submissions.ndjson`
 - `.github/workflows/daily-publish.yml` — 每日（`00:00 UTC`）或手动运行：以严格校验/去重/脱敏方式消费队列，数据集变化时重新生成报告
