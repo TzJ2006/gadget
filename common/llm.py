@@ -555,7 +555,17 @@ class ChunkTimeoutError(Exception):
 def chunk_text(texts: list[str], max_chars: int = 150000) -> list[list[str]]:
     """Split a list of texts into groups that fit within *max_chars*."""
     chunks, current, size = [], [], 0
+    # A single text over the limit (one big project group) is cut at line breaks;
+    # Ollama ≥0.40 rejects over-context prompts with HTTP 400 instead of truncating.
+    pieces = []
     for t in texts:
+        while len(t) > max_chars:
+            cut = t.rfind("\n", 0, max_chars)
+            cut = cut if cut > 0 else max_chars
+            pieces.append(t[:cut])
+            t = t[cut:]
+        pieces.append(t)
+    for t in pieces:
         if size + len(t) > max_chars and current:
             chunks.append(current)
             current, size = [], 0

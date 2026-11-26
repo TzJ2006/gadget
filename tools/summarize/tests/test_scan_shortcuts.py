@@ -75,3 +75,47 @@ def test_merge_single_date_passes_synced_files_instead_of_resyncing(tmp_path):
         _merge_single_date("2026-03-10", ["py", "merge"], {"2026-03-10": files}, 10, tmp_path)
     assert run.call_args.args[0] == ["py", "merge", "--date", "2026-03-10",
                                      str(files[0]), str(files[2])]
+
+
+def test_sync_all_retries_a_failed_day_once(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    import summarize.daily_merge as dm
+    log = tmp_path / "2026-03-10_pc.json"
+    log.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(dm, "_rclone_download_logs", lambda *a: [log])
+    monkeypatch.setattr(dm, "_rclone_download_reports", lambda *a: None)
+    monkeypatch.setattr(dm, "LOGS_DIR", tmp_path)
+    calls = []
+    monkeypatch.setattr(dm, "_wait_for_ollama", lambda *a: None)
+    monkeypatch.setattr(dm, "_merge_single_date",
+                        lambda d, *a: (calls.append(d), (d, len(calls) > 1, ""))[1])
+    args = SimpleNamespace(output=str(tmp_path), force=True, before=None, newest_first=False, workers=1,
+                           timeout=10, api=None, no_cache=False, deploy=False, hugo_site=None)
+    dm._cmd_merge_sync_all(args)
+    assert calls == ["2026-03-10", "2026-03-10"]
+    assert "成功 1, 失败 0" in capsys.readouterr().out
+
+
+def test_merge_single_date_retries_when_report_is_bad(tmp_path, monkeypatch):
+    import json, subprocess
+    import summarize.daily_merge as dm
+    reports = tmp_path / "reports"; reports.mkdir()
+    runs = []
+
+    def fake_run(cmd, **kw):
+        runs.append(1)
+        body = {"parse_error": True} if len(runs) == 1 else {"conversation_summaries": [{"title": "x"}]}
+        (reports / "2026-03-10.json").write_text(json.dumps(body), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(dm.subprocess, "run", fake_run)
+    monkeypatch.setattr(dm, "_wait_for_ollama", lambda *a: None)
+    d, ok, _ = dm._merge_single_date("2026-03-10", ["py"], {}, 10, tmp_path, reports)
+    assert ok and len(runs) == 2
+
+    runs.clear()
+    monkeypatch.setattr(dm.subprocess, "run", lambda cmd, **kw: (runs.append(1), subprocess.CompletedProcess(cmd, 0))[1])
+    (reports / "2026-03-11.json").write_text(json.dumps({"conversation_summaries": [1]}), encoding="utf-8")
+    import os; os.utime(reports / "2026-03-11.json", (0, 0))   # stale report from an older run
+    assert dm._merge_single_date("2026-03-11", ["py"], {}, 10, tmp_path, reports)[1] is False
+    assert len(runs) == 2

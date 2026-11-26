@@ -88,6 +88,11 @@ def complete(endpoint, model, messages, timeout, *, schema=None, max_tokens=None
             raise LLMTimeout("Gemma 思考和直接回答均未在预算内完成") from exc
         except httpx.HTTPError as exc:
             raise LLMError("无法连接本地 Ollama") from exc
+        if response.status_code >= 500 and thinking:
+            # Transient server error (busy/crashed runner): fall through to the direct attempt.
+            attempts.append({'thinking': thinking, 'outcome': f'http {response.status_code}',
+                             'seconds': round(time.monotonic() - started, 3)})
+            continue
         if response.status_code >= 400:
             raise LLMError(f"Ollama HTTP {response.status_code}；模型未被自动替换")
         try:

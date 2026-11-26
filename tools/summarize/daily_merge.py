@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
@@ -28,10 +29,39 @@ from .summarizer import (MERGE_PROMPT_PREFIX, MERGE_DEVICE_SUMMARY_PREFIX,
 from .usage import load_ccusage_for_date, _merge_token_usages
 
 
+def _report_ok(report: Path, since: float) -> bool:
+    """The day really succeeded: report rewritten this run, valid JSON, no parse_error, has summaries."""
+    try:
+        data = json.loads(report.read_text(encoding="utf-8"))
+        return (report.stat().st_mtime >= since and isinstance(data, dict)
+                and not data.get("parse_error") and bool(data.get("conversation_summaries")))
+    except (OSError, ValueError):
+        return False
+
+
+def _wait_for_ollama(base_cmd: list[str], limit: float = 900) -> None:
+    """Before a retry, wait (up to `limit` s) for a restarting Ollama, e.g. an auto-update."""
+    if "--api" in base_cmd and base_cmd[base_cmd.index("--api") + 1] != "ollama":
+        return
+    import httpx
+    from common.engine.ollama import ollama_native_host
+    end = time.time() + limit
+    while time.time() < end:
+        try:
+            if httpx.get(ollama_native_host() + "/api/version", timeout=5).status_code == 200:
+                return
+        except httpx.HTTPError:
+            pass
+        time.sleep(15)
+
+
 def _merge_single_date(d: str, base_cmd: list[str], date_files: dict[str, list[Path]],
-                       chunk_timeout: int, log_dir: Path) -> tuple[str, bool, str]:
+                       chunk_timeout: int, log_dir: Path, reports_dir: Path | None = None,
+                       attempts: int = 2) -> tuple[str, bool, str]:
     """Worker: merge a single date in a subprocess, logging output to file.
 
+    A day counts as done only if the child exits 0 and (when reports_dir is
+    given) its report passes _report_ok; otherwise it is retried, like a timeout.
     Returns (date, success, log_path).
     """
     total_size = sum(p.stat().st_size for p in date_files.get(d, []))
@@ -41,22 +71,32 @@ def _merge_single_date(d: str, base_cmd: list[str], date_files: dict[str, list[P
     log_file = log_dir / f"merge_{d}.log"
     # The parent already synced every log; pass the same "<date>_*.json" set the child's --sync would glob.
     cmd = base_cmd + ["--date", d] + [str(p) for p in date_files.get(d, []) if p.name.startswith(f"{d}_")]
-    try:
-        with open(log_file, "w", encoding="utf-8") as flog:
-            flog.write(f"[cmd] {' '.join(cmd)}\n")
-            flog.write(f"[info] ~{total_size // 1024}KB, ~{est_chunks} chunks, "
-                       f"timeout={proc_timeout}s\n\n")
-            result = subprocess.run(cmd, timeout=proc_timeout,
-                                    stdout=flog, stderr=subprocess.STDOUT)
-        return (d, result.returncode == 0, str(log_file))
-    except subprocess.TimeoutExpired:
+    for attempt in range(1, attempts + 1):
+        if attempt > 1:
+            _wait_for_ollama(base_cmd)
+        started = time.time() - 1
+        try:
+            with open(log_file, "w" if attempt == 1 else "a", encoding="utf-8") as flog:
+                flog.write(f"[cmd] (attempt {attempt}/{attempts}) {' '.join(cmd)}\n")
+                flog.write(f"[info] ~{total_size // 1024}KB, ~{est_chunks} chunks, "
+                           f"timeout={proc_timeout}s\n\n")
+                flog.flush()
+                result = subprocess.run(cmd, timeout=proc_timeout,
+                                        stdout=flog, stderr=subprocess.STDOUT)
+            # ponytail: an all-probe day exits 0 with no report; recognised by its log line.
+            empty_day = "没有找到任何对话记录" in log_file.read_text(encoding="utf-8", errors="replace")
+            ok = result.returncode == 0 and (reports_dir is None or empty_day
+                                             or _report_ok(reports_dir / f"{d}.json", started))
+            why = f"exit {result.returncode}" if result.returncode else "报告缺失、无法解析、parse_error 或没有会话摘要"
+        except subprocess.TimeoutExpired:
+            ok, why = False, f"处理超时 ({proc_timeout}s)"
+        except Exception as exc:
+            ok, why = False, str(exc)
+        if ok:
+            return (d, True, str(log_file))
         with open(log_file, "a", encoding="utf-8") as flog:
-            flog.write(f"\n[error] 处理超时 ({proc_timeout}s)\n")
-        return (d, False, str(log_file))
-    except Exception as exc:
-        with open(log_file, "a", encoding="utf-8") as flog:
-            flog.write(f"\n[error] {exc}\n")
-        return (d, False, str(log_file))
+            flog.write(f"\n[error] attempt {attempt}/{attempts} 失败: {why}\n")
+    return (d, False, str(log_file))
 
 
 def _cmd_merge_sync_all(args):
@@ -159,7 +199,7 @@ def _cmd_merge_sync_all(args):
             iter_dates = tqdm(dates_to_process, desc="Merging", unit="day")
         for d in iter_dates:
             _, success, log_path = _merge_single_date(
-                d, base_cmd, date_files, chunk_timeout, log_dir)
+                d, base_cmd, date_files, chunk_timeout, log_dir, reports_dir)
             results[d] = success
             status = "✓" if success else "✗"
             if tqdm is not None:
@@ -179,7 +219,7 @@ def _cmd_merge_sync_all(args):
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(_merge_single_date, d, base_cmd,
-                                date_files, chunk_timeout, log_dir): d
+                                date_files, chunk_timeout, log_dir, reports_dir): d
                 for d in dates_to_process
             }
             for future in as_completed(futures):
@@ -198,6 +238,15 @@ def _cmd_merge_sync_all(args):
 
         if pbar is not None:
             pbar.close()
+
+    # A failed day is usually transient (Ollama 5xx, a stall): retry each once, sequentially.
+    for d in [d for d, s in results.items() if not s]:
+        print(f"[info] 重试失败日期 {d}")
+        _wait_for_ollama(base_cmd)
+        _, success, _ = _merge_single_date(d, base_cmd, date_files, chunk_timeout, log_dir, reports_dir)
+        if success:
+            results[d] = True
+            ok, fail = ok + 1, fail - 1
 
     # 打印汇总
     print(f"\n[ok] sync-all 完成: 成功 {ok}, 失败 {fail}, 共 {len(dates_to_process)} 天")

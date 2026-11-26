@@ -143,8 +143,10 @@ def cmd_deploy(args):
         print(f"\n{len(errors)} errors (see {log_path}):", file=sys.stderr)
         for e in errors:
             print(f"  {e}", file=sys.stderr)
-    else:
-        print(f"Done. {len(to_deploy)} reports deployed.")
+        # Don't publish a half-translated site; the failed days stay undeployed and retry next run.
+        print("[error] 有翻译失败，不推送网站", file=sys.stderr)
+        sys.exit(1)
+    print(f"Done. {len(to_deploy)} reports deployed.")
 
     run_hugo_update(hugo_site)
 

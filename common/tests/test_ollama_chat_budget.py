@@ -35,3 +35,18 @@ def test_invalid_budget_does_not_contact_the_backend(monkeypatch, limit):
     monkeypatch.setattr(httpx, "get", lambda *a, **kw: pytest.fail("must not contact backend"))
     with pytest.raises(ValueError, match="positive integer"):
         complete("http://127.0.0.1:19999", "fake", [], 60, max_tokens=limit)
+
+
+def test_server_error_on_first_attempt_falls_back_to_direct_answer(monkeypatch):
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: httpx.Response(200, json={"models": []}))
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append(kwargs["json"]["think"])
+        if len(calls) == 1:
+            return httpx.Response(500, json={"error": "runner busy"})
+        return httpx.Response(200, json={"done": True, "done_reason": "stop", "message": {"content": "{}"}})
+
+    monkeypatch.setattr(httpx, "post", post)
+    assert complete("http://127.0.0.1:19999", "fake", [], 60, schema="json").text == "{}"
+    assert calls == [True, False]

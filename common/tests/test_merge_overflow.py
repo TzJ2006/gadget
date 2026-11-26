@@ -45,3 +45,11 @@ def test_chunk_with_unrepairable_json_is_regenerated(monkeypatch):
     monkeypatch.setattr(llm, "try_repair_result", lambda r, api, t: r)
     out = llm.timed_llm_call("ollama", llm.LLMCallConfig(prompt="p", timeout=60), 1, 1)
     assert out == {"summary": "good"}
+
+
+def test_chunk_text_splits_a_single_oversized_text():
+    from common.llm import chunk_text
+    big = "\n".join("x" * 9 for _ in range(100))  # 999 chars
+    chunks = chunk_text(["a", big], max_chars=100)
+    assert all(sum(map(len, c)) <= 100 for c in chunks)
+    assert "".join("".join(c) for c in chunks) == "a" + big
